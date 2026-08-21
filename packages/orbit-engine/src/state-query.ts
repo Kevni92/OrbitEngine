@@ -234,8 +234,8 @@ export class ObjectStateQueries {
     const cached = context.rawStates.get(key);
     if (cached !== undefined) return cached;
     if (context.activeObjects.has(key)) {
-      throw new StateQueryError(
-        StateQueryErrorCode.dependencyCycle,
+      throw new PropagationError(
+        PropagationErrorCode.dependencyCycle,
         `Object motion dependency cycle detected while evaluating ${id}`,
         { objectId: id, target },
       );
