@@ -1,3 +1,8 @@
+## Task type
+
+<!-- Copy the issue classification: Architecture | Implementation | Spike -->
+Task Type: <type>
+
 ## Summary
 
 <!-- What changed and why? -->
