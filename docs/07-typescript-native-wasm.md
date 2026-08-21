@@ -2,14 +2,14 @@
 
 ## Goal
 
-OrbitEngine is consumed as an npm package through a TypeScript API while allowing performance-critical simulation code to execute in C++.
+OrbitEngine is consumed as one npm package through a TypeScript API while allowing performance-critical simulation code to execute in C++.
 
-The architecture should support two compiled backends from the same portable C++ core:
+Two compiled backends wrap the same portable C++ core:
 
-1. a native Node.js addon for maximum server/runtime performance;
-2. a WebAssembly build for portability and future non-native environments.
+1. a native Node.js addon for the primary Node runtime path;
+2. a WebAssembly build for fallback/portability.
 
-The current game target is Node.js, so the native backend is the primary production path. WebAssembly capability is designed in from the beginning to avoid coupling the core to Node-specific APIs.
+The concrete repository, packaging, initialization, artifact, test, and CI decisions are defined in [11 — Build, Package, and Backend Architecture](11-build-package-and-backend-architecture.md).
 
 ## Layering
 
@@ -28,11 +28,11 @@ binding       binding
 
 The core must:
 
-- contain physics/math/performance-critical algorithms;
-- use portable C++ without direct Node-API or Emscripten dependencies;
+- contain physics/math/performance-critical algorithms where justified;
+- use portable C++20 without direct Node-API or Emscripten dependencies;
 - expose a narrow C++ interface suitable for multiple bindings;
 - avoid game/domain concepts;
-- be testable directly in C++ where valuable.
+- be testable directly in C++.
 
 Likely C++ candidates include:
 
@@ -43,28 +43,52 @@ Likely C++ candidates include:
 - trajectory solvers;
 - batch physics calculations.
 
+Moving a feature into C++ still requires architectural or measured justification; C++ is not the default location merely because it is available.
+
 ## Native binding
 
-The native Node.js backend should use Node-API (preferably through an appropriate C++ wrapper if adopted) and translate between JavaScript/TypeScript-facing values and core data structures.
+The native backend uses Node-API through `node-addon-api`; direct V8 APIs and NAN are not part of the architecture.
 
-Native distribution will eventually require a strategy for supported Node versions/platforms and prebuilt binaries or fallback compilation. That is a packaging decision, not a core-physics concern.
+Native code is limited to the binding/adapter layer plus the portable core it links. The initial release ships prebuilt Windows x64 and glibc Linux x64 addons. Consumers do not compile the addon during normal npm installation.
+
+The initial binding targets Node-API version 8 to preserve ABI portability across the supported Node 22 and Node 24 LTS lines.
 
 ## WebAssembly binding
 
-The WASM backend should compile the same portable core with Emscripten or an equivalent toolchain. WASM-specific marshalling belongs in its adapter/binding layer only.
+The WASM backend compiles the same portable core with Emscripten. WASM-specific exports, initialization, memory handling, and marshalling belong only in the WASM adapter/binding layer.
 
-## TypeScript API
+The WASM loading path must not statically depend on Node-only APIs. Browser support is not currently a product requirement, but the WASM backend must not be needlessly prevented from running in a non-Node environment.
 
-Consumers should not need to understand which backend performs a calculation. Public contracts should be backend-neutral.
+## TypeScript API and backend selection
 
-Backend selection may eventually be explicit or automatic, but equivalent operations must have equivalent semantics.
+Consumers initialize the engine through an asynchronous factory conceptually equivalent to:
+
+```text
+await OrbitEngine.create({ backend: "auto" | "native" | "wasm" })
+```
+
+The backend option is optional and defaults to `auto`.
+
+Semantics:
+
+- `auto` — prefer a supported native addon in Node.js; fall back to WASM only when native is unavailable before successful initialization;
+- `native` — require native and fail clearly when unsupported, missing, unloadable, incompatible, or unable to initialize;
+- `wasm` — initialize WASM directly and never probe/load native code.
+
+Once a valid native module is loaded, protocol mismatch or backend initialization failures are surfaced rather than silently hidden by a WASM fallback.
+
+Raw binding objects, Emscripten modules, artifact paths, and backend implementation classes are internal and are not exported from the normal public package entry point.
 
 ## Performance boundary
 
-Crossing JavaScript ↔ native/WASM boundaries has overhead. Prefer batch-oriented interfaces for large data sets rather than thousands of tiny calls. Data ownership and transfer formats should be designed deliberately once profiling data is available.
+Crossing JavaScript ↔ native/WASM boundaries has overhead. Prefer batch-oriented interfaces for large data sets rather than thousands of tiny calls. Data ownership and transfer formats should be designed deliberately once feature-level requirements and profiling data exist.
 
-Do not move code to C++ merely because C++ is available. Keep orchestration and ergonomic API work in TypeScript unless measurement or architectural reasons justify native implementation.
+Keep orchestration, public validation, and API ergonomics in TypeScript unless measurement or architecture justifies moving work into C++.
 
 ## Testing expectation
 
-Where both backends implement the same feature, shared conformance tests should verify equivalent results within defined numerical tolerances. Backend-specific tests may additionally cover memory, marshalling, and build behavior.
+Where both backends implement the same feature, shared parity tests execute the same high-level scenario against native and WASM.
+
+Parity means equivalent public behavior, not unconditional bit-identical floating-point results. Numerical features must define their own tolerances when they are introduced.
+
+Backend-specific tests additionally cover loading, initialization, marshalling, artifact resolution, and error translation. Portable core behavior is tested directly in C++ through CTest.
