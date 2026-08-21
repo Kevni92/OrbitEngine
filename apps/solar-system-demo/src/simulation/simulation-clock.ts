@@ -6,7 +6,6 @@ import {
   type SimulationInstant,
 } from "orbit-engine";
 
-const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 const NANOSECONDS_PER_SECOND = 1_000_000_000;
 
 export interface SimulationClockState {
@@ -30,12 +29,12 @@ function assertWarpFactor(value: number): void {
 function scaledWallDuration(elapsedMilliseconds: number, warpFactor: number): Duration {
   assertTimestamp(elapsedMilliseconds);
   assertWarpFactor(warpFactor);
-  const scaledNanoseconds = Math.round(elapsedMilliseconds * NANOSECONDS_PER_MILLISECOND * warpFactor);
-  if (!Number.isSafeInteger(scaledNanoseconds)) {
+  const scaledSeconds = (elapsedMilliseconds / 1000) * warpFactor;
+  if (!Number.isFinite(scaledSeconds) || scaledSeconds > Number.MAX_SAFE_INTEGER) {
     throw new RangeError("scaled wall duration exceeds the exact time representation");
   }
-  const seconds = Math.floor(scaledNanoseconds / NANOSECONDS_PER_SECOND);
-  const nanoseconds = scaledNanoseconds - seconds * NANOSECONDS_PER_SECOND;
+  const seconds = Math.floor(scaledSeconds);
+  const nanoseconds = Math.round((scaledSeconds - seconds) * NANOSECONDS_PER_SECOND);
   return duration(seconds, nanoseconds);
 }
 

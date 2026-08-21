@@ -22,7 +22,7 @@ test("demo initializes the public WASM engine and reports rendering capability",
   await page.click("#sample-path");
   await expect(page.locator("#path-status")).toHaveAttribute("data-state", "ready");
   await expect(page.locator("#path-status")).toContainText("Sampled 96 public states");
-  await page.selectOption("#warp-select", "86400");
+  await page.selectOption("#warp-select", "2592000");
   await page.click("#play-pause");
   await page.waitForTimeout(120);
   await page.click("#play-pause");
