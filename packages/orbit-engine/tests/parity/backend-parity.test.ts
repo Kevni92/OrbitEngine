@@ -9,6 +9,7 @@ import { assertFrameRoundTrip } from "../shared/frame-roundtrip.js";
 import { assertPropagationRoundTrip } from "../shared/propagation-roundtrip.js";
 import { assertRegistryLifecycle } from "../shared/registry-lifecycle.js";
 import { assertFrameGraph } from "../shared/frame-graph.js";
+import { assertTwoBodyModel } from "../shared/two-body.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -16,7 +17,7 @@ for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngine
     const health = engine.health();
 
     assert.equal(health.backend, backend);
-    assert.equal(health.protocolVersion, 7);
+    assert.equal(health.protocolVersion, 8);
     assert.equal(health.coreVersion, 1);
     assert.equal(health.healthCode, 42);
   });
@@ -37,5 +38,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`frame graph lifecycle and exact-state semantics have parity on ${name}`, async () => {
     await assertFrameGraph(await load());
+  });
+  test(`two-body analytical propagation has parity on ${name}`, async () => {
+    await assertTwoBodyModel(await load());
   });
 }

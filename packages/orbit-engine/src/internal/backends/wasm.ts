@@ -7,6 +7,7 @@ import type { FrameWire } from "../frame-wire.js";
 import type { PropagationWire } from "../propagation-wire.js";
 import type { RegistryWire } from "../registry-wire.js";
 import type { FrameRegistryWire } from "../frame-registry-wire.js";
+import type { TwoBodyWire } from "../two-body-wire.js";
 
 type ObjectRoundTripArgs = [
   number,
@@ -51,6 +52,7 @@ type PropagationRoundTripArgs = [
 
 type RegistryRoundTripArgs = number[];
 type FrameRegistryRoundTripArgs = number[];
+type TwoBodyRoundTripArgs = number[];
 
 interface WasmModule {
   readonly _orbit_engine_binding_protocol_version: () => number;
@@ -202,6 +204,36 @@ interface WasmModule {
   readonly _orbit_engine_frame_registry_transform_angular_velocity_x: () => number;
   readonly _orbit_engine_frame_registry_transform_angular_velocity_y: () => number;
   readonly _orbit_engine_frame_registry_transform_angular_velocity_z: () => number;
+  readonly _orbit_engine_round_trip_two_body: (...args: TwoBodyRoundTripArgs) => number;
+  readonly _orbit_engine_two_body_result_code: () => number;
+  readonly _orbit_engine_two_body_central_object_id_high: () => number;
+  readonly _orbit_engine_two_body_central_object_id_low: () => number;
+  readonly _orbit_engine_two_body_mu: () => number;
+  readonly _orbit_engine_two_body_anchor_frame_high: () => number;
+  readonly _orbit_engine_two_body_anchor_frame_low: () => number;
+  readonly _orbit_engine_two_body_anchor_epoch_seconds_high: () => number;
+  readonly _orbit_engine_two_body_anchor_epoch_seconds_low: () => number;
+  readonly _orbit_engine_two_body_anchor_epoch_nanoseconds: () => number;
+  readonly _orbit_engine_two_body_anchor_position_x: () => number;
+  readonly _orbit_engine_two_body_anchor_position_y: () => number;
+  readonly _orbit_engine_two_body_anchor_position_z: () => number;
+  readonly _orbit_engine_two_body_anchor_velocity_x: () => number;
+  readonly _orbit_engine_two_body_anchor_velocity_y: () => number;
+  readonly _orbit_engine_two_body_anchor_velocity_z: () => number;
+  readonly _orbit_engine_two_body_target_epoch_seconds_high: () => number;
+  readonly _orbit_engine_two_body_target_epoch_seconds_low: () => number;
+  readonly _orbit_engine_two_body_target_epoch_nanoseconds: () => number;
+  readonly _orbit_engine_two_body_result_frame_high: () => number;
+  readonly _orbit_engine_two_body_result_frame_low: () => number;
+  readonly _orbit_engine_two_body_result_epoch_seconds_high: () => number;
+  readonly _orbit_engine_two_body_result_epoch_seconds_low: () => number;
+  readonly _orbit_engine_two_body_result_epoch_nanoseconds: () => number;
+  readonly _orbit_engine_two_body_result_position_x: () => number;
+  readonly _orbit_engine_two_body_result_position_y: () => number;
+  readonly _orbit_engine_two_body_result_position_z: () => number;
+  readonly _orbit_engine_two_body_result_velocity_x: () => number;
+  readonly _orbit_engine_two_body_result_velocity_y: () => number;
+  readonly _orbit_engine_two_body_result_velocity_z: () => number;
 }
 
 interface WasmModuleFactory {
@@ -572,6 +604,79 @@ export async function loadWasmBackend(): Promise<Backend> {
         transformAngularVelocityX: module._orbit_engine_frame_registry_transform_angular_velocity_x(),
         transformAngularVelocityY: module._orbit_engine_frame_registry_transform_angular_velocity_y(),
         transformAngularVelocityZ: module._orbit_engine_frame_registry_transform_angular_velocity_z(),
+      };
+    },
+    roundTripTwoBody: (value: TwoBodyWire) => {
+      const args: TwoBodyRoundTripArgs = [
+        value.resultCode,
+        value.centralObjectIdHigh,
+        value.centralObjectIdLow,
+        value.mu,
+        value.anchorFrameHigh,
+        value.anchorFrameLow,
+        value.anchorEpoch.secondsHigh,
+        value.anchorEpoch.secondsLow,
+        value.anchorEpoch.nanoseconds,
+        value.anchorPositionX,
+        value.anchorPositionY,
+        value.anchorPositionZ,
+        value.anchorVelocityX,
+        value.anchorVelocityY,
+        value.anchorVelocityZ,
+        value.targetEpoch.secondsHigh,
+        value.targetEpoch.secondsLow,
+        value.targetEpoch.nanoseconds,
+        value.resultFrameHigh,
+        value.resultFrameLow,
+        value.resultEpoch.secondsHigh,
+        value.resultEpoch.secondsLow,
+        value.resultEpoch.nanoseconds,
+        value.resultPositionX,
+        value.resultPositionY,
+        value.resultPositionZ,
+        value.resultVelocityX,
+        value.resultVelocityY,
+        value.resultVelocityZ,
+      ];
+      if (module._orbit_engine_round_trip_two_body(...args) === 0) {
+        throw new RangeError("WASM two-body operation was rejected");
+      }
+      return {
+        resultCode: module._orbit_engine_two_body_result_code() >>> 0,
+        centralObjectIdHigh: module._orbit_engine_two_body_central_object_id_high() >>> 0,
+        centralObjectIdLow: module._orbit_engine_two_body_central_object_id_low() >>> 0,
+        mu: module._orbit_engine_two_body_mu(),
+        anchorFrameHigh: module._orbit_engine_two_body_anchor_frame_high() >>> 0,
+        anchorFrameLow: module._orbit_engine_two_body_anchor_frame_low() >>> 0,
+        anchorEpoch: {
+          secondsHigh: module._orbit_engine_two_body_anchor_epoch_seconds_high(),
+          secondsLow: module._orbit_engine_two_body_anchor_epoch_seconds_low() >>> 0,
+          nanoseconds: module._orbit_engine_two_body_anchor_epoch_nanoseconds() >>> 0,
+        },
+        anchorPositionX: module._orbit_engine_two_body_anchor_position_x(),
+        anchorPositionY: module._orbit_engine_two_body_anchor_position_y(),
+        anchorPositionZ: module._orbit_engine_two_body_anchor_position_z(),
+        anchorVelocityX: module._orbit_engine_two_body_anchor_velocity_x(),
+        anchorVelocityY: module._orbit_engine_two_body_anchor_velocity_y(),
+        anchorVelocityZ: module._orbit_engine_two_body_anchor_velocity_z(),
+        targetEpoch: {
+          secondsHigh: module._orbit_engine_two_body_target_epoch_seconds_high(),
+          secondsLow: module._orbit_engine_two_body_target_epoch_seconds_low() >>> 0,
+          nanoseconds: module._orbit_engine_two_body_target_epoch_nanoseconds() >>> 0,
+        },
+        resultFrameHigh: module._orbit_engine_two_body_result_frame_high() >>> 0,
+        resultFrameLow: module._orbit_engine_two_body_result_frame_low() >>> 0,
+        resultEpoch: {
+          secondsHigh: module._orbit_engine_two_body_result_epoch_seconds_high(),
+          secondsLow: module._orbit_engine_two_body_result_epoch_seconds_low() >>> 0,
+          nanoseconds: module._orbit_engine_two_body_result_epoch_nanoseconds() >>> 0,
+        },
+        resultPositionX: module._orbit_engine_two_body_result_position_x(),
+        resultPositionY: module._orbit_engine_two_body_result_position_y(),
+        resultPositionZ: module._orbit_engine_two_body_result_position_z(),
+        resultVelocityX: module._orbit_engine_two_body_result_velocity_x(),
+        resultVelocityY: module._orbit_engine_two_body_result_velocity_y(),
+        resultVelocityZ: module._orbit_engine_two_body_result_velocity_z(),
       };
     },
   };

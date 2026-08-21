@@ -222,7 +222,7 @@ The analytical model is configured from a canonical handoff/anchor state plus ex
 
 Orbital elements may be derived internally for efficient evaluation, but they are never the global authoritative physical object representation and can always be reconstructed from the anchor state plus model configuration.
 
-The concrete Kepler solver and its validation/error window are separate implementation work.
+Issue #23 implements the analytical model with a universal-variable Kepler solver in the portable C++ core. The canonical Cartesian anchor is the only authoritative state; the solver derives its universal anomaly at each query using the exact `Duration` between anchor and target epochs, and supports elliptic, parabolic, and hyperbolic cases for finite states with non-zero radius and positive `mu` in the declared inertial propagation frame. Stumpff functions use series evaluation near zero and a safeguarded Newton/bisection solve with a relative residual target of `1e-13` and a maximum of 128 iterations. Invalid domains or non-convergence are reported as explicit propagation errors. The default model error contract is `1e-8 m` position and `1e-11 m/s` velocity; callers may provide a stricter model-specific contract when its validity evidence supports it.
 
 ### Numerical
 

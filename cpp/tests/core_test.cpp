@@ -3,10 +3,12 @@
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
+#include "orbit_engine/two_body.hpp"
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/time.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -27,7 +29,7 @@ int main() {
     return 1;
   }
 
-  if (orbit_engine::kBindingProtocolVersion != 7) {
+  if (orbit_engine::kBindingProtocolVersion != 8) {
     std::cerr << "unexpected binding protocol version\n";
     return 1;
   }
@@ -566,6 +568,54 @@ int main() {
   CHECK(frameRegistry.command(frameRemoveChild).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::success));
   CHECK(frameRegistry.command(frameRemoveParent).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::success));
   CHECK(frameRegistry.command(frameRemoveParent).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::retired_id));
+
+  using TwoBody = orbit_engine::two_body::TwoBodyWire;
+  using TwoBodyResultCode = orbit_engine::two_body::ResultCode;
+  const auto twoBodyWire = [](double velocity, orbit_engine::time::TimeWire target) {
+    const auto objectId = orbit_engine::object::object_id_to_wire(2);
+    const auto frameId = orbit_engine::frame::reference_frame_id_to_wire(1);
+    const auto epoch = orbit_engine::time::TimeWire{0, 0, 0};
+    return TwoBody{
+      0,
+      objectId.high,
+      objectId.low,
+      1.0,
+      frameId.high,
+      frameId.low,
+      epoch,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      velocity,
+      0.0,
+      target,
+      frameId.high,
+      frameId.low,
+      target,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      velocity,
+      0.0,
+    };
+  };
+  const auto circular = orbit_engine::two_body::evaluate(twoBodyWire(1.0, orbit_engine::time::TimeWire{0, 1, 570'796'327}));
+  CHECK(circular.result_code == static_cast<std::uint16_t>(TwoBodyResultCode::success));
+  CHECK(std::abs(circular.result_position_x) < 1e-8);
+  CHECK(std::abs(circular.result_position_y - 1.0) < 1e-8);
+  CHECK(std::abs(circular.result_velocity_x + 1.0) < 1e-8);
+  CHECK(std::abs(circular.result_velocity_y) < 1e-8);
+  const auto backward = orbit_engine::two_body::evaluate(twoBodyWire(1.0, orbit_engine::time::TimeWire{-1, 4'294'967'295U, 0}));
+  CHECK(backward.result_code == static_cast<std::uint16_t>(TwoBodyResultCode::success));
+  const auto parabolic = orbit_engine::two_body::evaluate(twoBodyWire(std::sqrt(2.0), orbit_engine::time::TimeWire{0, 1, 0}));
+  CHECK(parabolic.result_code == static_cast<std::uint16_t>(TwoBodyResultCode::success));
+  const auto hyperbolic = orbit_engine::two_body::evaluate(twoBodyWire(2.0, orbit_engine::time::TimeWire{0, 1, 0}));
+  CHECK(hyperbolic.result_code == static_cast<std::uint16_t>(TwoBodyResultCode::success));
+  auto invalidMu = twoBodyWire(1.0, orbit_engine::time::TimeWire{0, 1, 0});
+  invalidMu.mu = 0.0;
+  CHECK(orbit_engine::two_body::evaluate(invalidMu).result_code == static_cast<std::uint16_t>(TwoBodyResultCode::invalid_mu));
 
   return 0;
 }

@@ -2,6 +2,10 @@ import type { Backend, BackendHealth, BackendKind } from "./internal/backends/co
 import { initializeBackend, type BackendPreference } from "./internal/backends/selection.js";
 import { ObjectRegistry } from "./registry.js";
 import { FrameRegistry } from "./frame-registry.js";
+import {
+  createTwoBodyAnalyticalModel,
+  type TwoBodyAnalyticalModelConfiguration,
+} from "./two-body.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -11,6 +15,8 @@ export * from "./frames.js";
 export * from "./propagation.js";
 export * from "./registry.js";
 export * from "./frame-registry.js";
+export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
+export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 
 export type OrbitEngineBackend = BackendKind;
 export type OrbitEngineBackendPreference = BackendPreference;
@@ -67,6 +73,12 @@ export class OrbitEngine {
   frames(): FrameRegistry {
     this.#frames ??= new FrameRegistry(this.#backend);
     return this.#frames;
+  }
+
+  twoBodyModel(configuration: TwoBodyAnalyticalModelConfiguration) {
+    return createTwoBodyAnalyticalModel(configuration, {
+      evaluate: (value) => this.#backend.roundTripTwoBody(value),
+    });
   }
 
 }
