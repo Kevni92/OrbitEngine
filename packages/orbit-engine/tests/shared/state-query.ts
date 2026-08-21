@@ -6,6 +6,8 @@ import {
   OrbitEngine,
   ObjectType,
   PropagationDirection,
+  PropagationError,
+  PropagationErrorCode,
   PropagationModelKind,
   ReferenceStatus,
   StateQueryError,
@@ -299,7 +301,7 @@ export async function assertStateQueryIntegration(backend: Backend): Promise<voi
   }));
   assert.throws(
     () => engine.stateAt(cycleA, simulationInstant(1), root),
-    (error: unknown) => error instanceof StateQueryError && error.code === StateQueryErrorCode.dependencyCycle,
+    (error: unknown) => error instanceof PropagationError && error.code === PropagationErrorCode.dependencyCycle,
   );
 
   registry.diverge(sunId, start, {
