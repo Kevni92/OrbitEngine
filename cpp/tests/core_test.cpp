@@ -1,6 +1,8 @@
+#include "orbit_engine/object.hpp"
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/time.hpp"
 
+#include <array>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -21,7 +23,7 @@ int main() {
     return 1;
   }
 
-  if (orbit_engine::kBindingProtocolVersion != 2) {
+  if (orbit_engine::kBindingProtocolVersion != 3) {
     std::cerr << "unexpected binding protocol version\n";
     return 1;
   }
@@ -124,6 +126,104 @@ int main() {
 
   constexpr double binary64Sentinel = 3.141592653589793;
   CHECK(orbit_engine::time::round_trip_double(binary64Sentinel) == binary64Sentinel);
+
+  using orbit_engine::object::ObjectId;
+  using orbit_engine::object::ObjectIdWire;
+  using orbit_engine::object::ObjectType;
+  using orbit_engine::object::ObjectWire;
+  using orbit_engine::object::OptionalPhysicalScalar;
+  using orbit_engine::object::PhysicalProperties;
+
+  const std::array<ObjectId, 5> objectIds{
+    1,
+    0xFFFF'FFFFULL,
+    0x1'0000'0000ULL,
+    9'007'199'254'740'993ULL,
+    std::numeric_limits<ObjectId>::max(),
+  };
+  for (const auto id : objectIds) {
+    const ObjectIdWire wire = orbit_engine::object::object_id_to_wire(id);
+    CHECK(orbit_engine::object::is_valid(id));
+    CHECK(orbit_engine::object::object_id_from_wire(wire) == id);
+  }
+  CHECK(!orbit_engine::object::is_valid(0));
+  CHECK(orbit_engine::object::object_id_from_wire(ObjectIdWire{0, 0}) == 0);
+
+  for (std::uint16_t code = 1; code <= 11; ++code) {
+    CHECK(orbit_engine::object::is_valid_object_type_code(code));
+    const auto type = orbit_engine::object::object_type_from_code(code);
+    CHECK(type.has_value());
+    CHECK(orbit_engine::object::is_valid(*type));
+    CHECK(orbit_engine::object::object_type_code(*type) == code);
+  }
+  CHECK(!orbit_engine::object::is_valid_object_type_code(0));
+  CHECK(!orbit_engine::object::is_valid_object_type_code(12));
+  CHECK(!orbit_engine::object::object_type_from_code(0).has_value());
+  CHECK(!orbit_engine::object::object_type_from_code(12).has_value());
+
+  const PhysicalProperties absent{
+    OptionalPhysicalScalar{false, 0.0},
+    OptionalPhysicalScalar{false, 0.0},
+    OptionalPhysicalScalar{false, 0.0},
+    OptionalPhysicalScalar{false, 0.0},
+  };
+  CHECK(orbit_engine::object::is_valid(absent));
+  const PhysicalProperties explicitZero{
+    OptionalPhysicalScalar{true, 0.0},
+    OptionalPhysicalScalar{true, 0.0},
+    OptionalPhysicalScalar{true, 0.0},
+    OptionalPhysicalScalar{true, 0.0},
+  };
+  CHECK(orbit_engine::object::is_valid(explicitZero));
+  CHECK(!orbit_engine::object::is_valid(PhysicalProperties{
+    OptionalPhysicalScalar{true, -1.0}, absent.mu, absent.physical_radius, absent.collision_bounding_radius,
+  }));
+  CHECK(!orbit_engine::object::is_valid(PhysicalProperties{
+    OptionalPhysicalScalar{true, std::numeric_limits<double>::infinity()},
+    absent.mu,
+    absent.physical_radius,
+    absent.collision_bounding_radius,
+  }));
+  CHECK(!orbit_engine::object::is_valid(PhysicalProperties{
+    OptionalPhysicalScalar{false, std::numeric_limits<double>::quiet_NaN()},
+    absent.mu,
+    absent.physical_radius,
+    absent.collision_bounding_radius,
+  }));
+
+  const PhysicalProperties properties{
+    OptionalPhysicalScalar{true, binary64Sentinel},
+    OptionalPhysicalScalar{false, 0.0},
+    OptionalPhysicalScalar{true, 6'371'000.0},
+    OptionalPhysicalScalar{true, 10.0},
+  };
+  const ObjectId maxId = std::numeric_limits<ObjectId>::max();
+  const ObjectIdWire maxIdWire = orbit_engine::object::object_id_to_wire(maxId);
+  const ObjectWire objectWire{
+    maxIdWire.high,
+    maxIdWire.low,
+    orbit_engine::object::object_type_code(ObjectType::debris),
+    properties,
+  };
+  CHECK(orbit_engine::object::is_valid(objectWire));
+  ObjectWire objectRoundTrip{};
+  CHECK(orbit_engine::object::round_trip(objectWire, objectRoundTrip));
+  CHECK(objectRoundTrip.object_id_high == objectWire.object_id_high);
+  CHECK(objectRoundTrip.object_id_low == objectWire.object_id_low);
+  CHECK(objectRoundTrip.object_type_code == objectWire.object_type_code);
+  CHECK(objectRoundTrip.properties.mass.present);
+  CHECK(objectRoundTrip.properties.mass.value == binary64Sentinel);
+  CHECK(!objectRoundTrip.properties.mu.present);
+  CHECK(objectRoundTrip.properties.physical_radius.value == 6'371'000.0);
+  CHECK(objectRoundTrip.properties.collision_bounding_radius.value == 10.0);
+  CHECK(!orbit_engine::object::round_trip(
+    ObjectWire{0, 0, objectWire.object_type_code, properties},
+    objectRoundTrip
+  ));
+  CHECK(!orbit_engine::object::round_trip(
+    ObjectWire{maxIdWire.high, maxIdWire.low, 0, properties},
+    objectRoundTrip
+  ));
 
   return 0;
 }

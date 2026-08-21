@@ -8,6 +8,7 @@ import {
 } from "./contract.js";
 import { BackendInitializationError } from "./errors.js";
 import { validateTimeWire, type TimeWire } from "../time-wire.js";
+import { validateObjectWire, type ObjectWire } from "../object-wire.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -28,7 +29,8 @@ export async function backendFromRawBinding(
   if (!isRecord(raw)
     || typeof raw.initialize !== "function"
     || typeof raw.roundTripTime !== "function"
-    || typeof raw.roundTripDouble !== "function") {
+    || typeof raw.roundTripDouble !== "function"
+    || typeof raw.roundTripObject !== "function") {
     throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
   }
 
@@ -85,6 +87,16 @@ export async function backendFromRawBinding(
         throw new BackendInitializationError(kind, `${kind} binding returned an invalid binary64 value`);
       }
       return result;
+    },
+    roundTripObject: (value: ObjectWire): ObjectWire => {
+      const input = validateObjectWire(value);
+      let result: unknown;
+      try {
+        result = binding.roundTripObject(input);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} object round-trip failed`, cause);
+      }
+      return validateObjectWire(result);
     },
   };
 }

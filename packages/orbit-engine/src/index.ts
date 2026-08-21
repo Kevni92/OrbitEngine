@@ -3,6 +3,8 @@ import { initializeBackend, type BackendPreference } from "./internal/backends/s
 
 export * from "./time.js";
 export * from "./units.js";
+export * from "./objects.js";
+export * from "./properties.js";
 
 export type OrbitEngineBackend = BackendKind;
 export type OrbitEngineBackendPreference = BackendPreference;

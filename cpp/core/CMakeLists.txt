@@ -1,5 +1,6 @@
 add_library(orbit_engine_core STATIC
   src/core.cpp
+  src/object.cpp
   src/time.cpp
 )
 

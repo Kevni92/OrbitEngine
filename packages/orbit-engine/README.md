@@ -20,3 +20,15 @@ const radius = meters(6_371_000);
 const start = simulationInstant(0);
 const later = addDurationToInstant(start, duration(86_400));
 ~~~
+
+Object identity is represented as a canonical decimal string, so full unsigned 64-bit IDs remain exact without
+requiring `number` or public `bigint`. Object types are a closed physical taxonomy, and optional physical properties
+keep absence distinct from explicit zero values.
+
+~~~ts
+import { ObjectType, objectId, physicalProperties } from "orbit-engine";
+
+const id = objectId("18446744073709551615");
+const properties = physicalProperties({ mass: 0, collisionBoundingRadius: 12 });
+const type = ObjectType.spacecraft;
+~~~
