@@ -11,6 +11,7 @@ import { validateTimeWire, type TimeWire } from "../time-wire.js";
 import { validateObjectWire, type ObjectWire } from "../object-wire.js";
 import { validateFrameWire, type FrameWire } from "../frame-wire.js";
 import { validatePropagationWire, type PropagationWire } from "../propagation-wire.js";
+import { validateRegistryWire, type RegistryWire } from "../registry-wire.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -35,6 +36,9 @@ export async function backendFromRawBinding(
     || typeof raw.roundTripObject !== "function"
     || typeof raw.roundTripFrame !== "function"
     || typeof raw.roundTripPropagation !== "function") {
+    throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
+  }
+  if (typeof raw.roundTripRegistry !== "function") {
     throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
   }
 
@@ -121,6 +125,16 @@ export async function backendFromRawBinding(
         throw new BackendInitializationError(kind, `${kind} propagation round-trip failed`, cause);
       }
       return validatePropagationWire(result);
+    },
+    roundTripRegistry: (value: RegistryWire): RegistryWire => {
+      const input = validateRegistryWire(value);
+      let result: unknown;
+      try {
+        result = binding.roundTripRegistry(input);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} registry operation failed`, cause);
+      }
+      return validateRegistryWire(result);
     },
   };
 }
