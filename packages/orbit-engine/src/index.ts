@@ -1,6 +1,9 @@
 import type { BackendHealth, BackendKind } from "./internal/backends/contract.js";
 import { initializeBackend, type BackendPreference } from "./internal/backends/selection.js";
 
+export * from "./time.js";
+export * from "./units.js";
+
 export type OrbitEngineBackend = BackendKind;
 export type OrbitEngineBackendPreference = BackendPreference;
 

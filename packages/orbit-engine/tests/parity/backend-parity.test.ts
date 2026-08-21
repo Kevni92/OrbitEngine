@@ -9,7 +9,7 @@ for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngine
     const health = engine.health();
 
     assert.equal(health.backend, backend);
-    assert.equal(health.protocolVersion, 1);
+    assert.equal(health.protocolVersion, 2);
     assert.equal(health.coreVersion, 1);
     assert.equal(health.healthCode, 42);
   });

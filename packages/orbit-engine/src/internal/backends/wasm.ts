@@ -1,11 +1,16 @@
 import type { Backend } from "./contract.js";
 import { backendFromRawBinding } from "./binding.js";
 import { BackendInitializationError } from "./errors.js";
+import type { TimeWire } from "../time-wire.js";
 
 interface WasmModule {
   readonly _orbit_engine_binding_protocol_version: () => number;
   readonly _orbit_engine_core_version: () => number;
   readonly _orbit_engine_health: () => number;
+  readonly _orbit_engine_round_trip_time_seconds_high: (secondsHigh: number, secondsLow: number, nanoseconds: number) => number;
+  readonly _orbit_engine_round_trip_time_seconds_low: (secondsHigh: number, secondsLow: number, nanoseconds: number) => number;
+  readonly _orbit_engine_round_trip_time_nanoseconds: (secondsHigh: number, secondsLow: number, nanoseconds: number) => number;
+  readonly _orbit_engine_round_trip_double: (value: number) => number;
 }
 
 interface WasmModuleFactory {
@@ -43,6 +48,24 @@ export async function loadWasmBackend(): Promise<Backend> {
       coreVersion: module._orbit_engine_core_version(),
       healthCode: module._orbit_engine_health(),
     }),
+    roundTripTime: (value: TimeWire) => ({
+      secondsHigh: module._orbit_engine_round_trip_time_seconds_high(
+        value.secondsHigh,
+        value.secondsLow,
+        value.nanoseconds,
+      ),
+      secondsLow: module._orbit_engine_round_trip_time_seconds_low(
+        value.secondsHigh,
+        value.secondsLow,
+        value.nanoseconds,
+      ) >>> 0,
+      nanoseconds: module._orbit_engine_round_trip_time_nanoseconds(
+        value.secondsHigh,
+        value.secondsLow,
+        value.nanoseconds,
+      ) >>> 0,
+    }),
+    roundTripDouble: (value: number) => module._orbit_engine_round_trip_double(value),
   };
 
   return backendFromRawBinding("wasm", raw);

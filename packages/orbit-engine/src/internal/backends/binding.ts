@@ -7,6 +7,7 @@ import {
   type RawInitializationResult,
 } from "./contract.js";
 import { BackendInitializationError } from "./errors.js";
+import { validateTimeWire, type TimeWire } from "../time-wire.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -24,7 +25,10 @@ export async function backendFromRawBinding(
   kind: BackendKind,
   raw: unknown,
 ): Promise<Backend> {
-  if (!isRecord(raw) || typeof raw.initialize !== "function") {
+  if (!isRecord(raw)
+    || typeof raw.initialize !== "function"
+    || typeof raw.roundTripTime !== "function"
+    || typeof raw.roundTripDouble !== "function") {
     throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
   }
 
@@ -54,8 +58,33 @@ export async function backendFromRawBinding(
     healthCode: asInteger(result.healthCode, "health code", kind),
   };
 
+  const binding = raw as unknown as RawBackendBinding;
   return {
     kind,
     health: () => health,
+    roundTripTime: (value: TimeWire): TimeWire => {
+      let result: unknown;
+      try {
+        result = binding.roundTripTime(value);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} time round-trip failed`, cause);
+      }
+      return validateTimeWire(result);
+    },
+    roundTripDouble: (value: number): number => {
+      if (!Number.isFinite(value)) {
+        throw new TypeError("round-trip value must be finite");
+      }
+      let result: unknown;
+      try {
+        result = binding.roundTripDouble(value);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} binary64 round-trip failed`, cause);
+      }
+      if (typeof result !== "number" || !Number.isFinite(result)) {
+        throw new BackendInitializationError(kind, `${kind} binding returned an invalid binary64 value`);
+      }
+      return result;
+    },
   };
 }
