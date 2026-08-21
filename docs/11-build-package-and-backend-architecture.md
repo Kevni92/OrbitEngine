@@ -6,15 +6,18 @@ This document records the build, package, and backend architecture decided by Ar
 
 The architectural objective is one normal TypeScript/npm package whose public semantics do not depend on whether work is executed by a native Node.js addon or by WebAssembly. Both compiled backends wrap the same portable C++20 core.
 
+Architecture issue #30 later extends the workspace with a private browser reference application and makes packaged browser/WASM consumption an explicit consumer shape. That extension is canonical in [16 — Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md) and does not change the one-public-package rule.
+
 ## Decisions at a glance
 
 - Repository orchestration uses a `pnpm` workspace.
-- The only public npm package initially lives at `packages/orbit-engine`.
-- The initial package is ESM-only and is built with TypeScript without a mandatory JavaScript bundler.
+- The only public npm package lives at `packages/orbit-engine`.
+- Private applications/tooling may live elsewhere in the workspace without becoming public packages; the browser demo lives at `apps/solar-system-demo`.
+- The initial public package is ESM-only and is built with TypeScript without a mandatory JavaScript bundler.
 - Public initialization is asynchronous and factory-based: `OrbitEngine.create(options?)`.
 - `options.backend` accepts `auto`, `native`, or `wasm`; the default is `auto`.
 - `auto` prefers a supported native addon in Node.js and falls back to WASM only when native is unavailable before successful backend initialization.
-- The portable C++ core is C++20, built by CMake, and contains no Node-API, Emscripten, JavaScript, or TypeScript dependencies.
+- The portable C++ core is C++20, built by CMake, and contains no Node-API, Emscripten, JavaScript, TypeScript, Three.js, Vite, DOM, or WebGL dependencies.
 - The native adapter uses Node-API through `node-addon-api` and explicitly targets Node-API version 8 unless a future architecture change requires newer APIs.
 - The WASM adapter is built with Emscripten from the same core target/source definitions.
 - Consumers do not compile C++ during package installation. Release packages contain prebuilt native artifacts plus the WASM fallback.
@@ -22,11 +25,12 @@ The architectural objective is one normal TypeScript/npm package whose public se
 - Initial native release targets are Windows x64 and glibc-based Linux x64. macOS, ARM64, and musl-native prebuilds are deferred, but the layout permits adding them without changing the public API.
 - CMake owns all C++ compilation. `pnpm` owns repository-level orchestration and invokes CMake/native/WASM build tooling.
 - C++ unit tests, TypeScript unit/API tests, native integration tests, WASM integration tests, and shared backend parity tests are separate layers.
-- CI must validate supported Node lines, both native operating systems, the WASM backend, backend parity, and the installable package artifact.
+- Browser reference-app work additionally validates a packaged WASM consumer build in a real browser.
+- CI must validate supported Node lines, both native operating systems, the WASM backend, backend parity, the installable package artifact, and the browser consumer smoke path where relevant.
 
 ## Repository structure
 
-The bootstrap implementation must converge on this structure:
+The bootstrap implementation established the core structure below. The browser-demo architecture extends it with a private `apps/` workspace area:
 
 ```text
 OrbitEngine/
@@ -38,7 +42,7 @@ OrbitEngine/
 ├── CMakePresets.json                # reproducible native/core presets where useful
 ├── packages/
 │   └── orbit-engine/
-│       ├── package.json             # the public npm package
+│       ├── package.json             # the only public npm package
 │       ├── tsconfig.json
 │       ├── src/
 │       │   ├── index.ts             # public exports
@@ -53,6 +57,8 @@ OrbitEngine/
 │       │   ├── linux-x64/
 │       │   └── win32-x64/
 │       └── wasm/                    # generated Emscripten artifacts; ignored
+├── apps/
+│   └── solar-system-demo/           # private Vite/Three.js browser consumer
 ├── cpp/
 │   ├── CMakeLists.txt
 │   ├── core/
@@ -69,10 +75,12 @@ OrbitEngine/
 ├── cmake/                            # shared CMake modules/helpers only
 ├── docs/
 └── .github/
-    └── workflows/                   # added by the bootstrap Implementation issue
+    └── workflows/
 ```
 
 `cpp/` is not a separate pnpm package. The C++ tree is owned by CMake and invoked from workspace scripts.
+
+Private applications under `apps/` consume `orbit-engine` through the same public TypeScript API as an external consumer. They must not become public backend packages or gain privileged access to internal bindings.
 
 Additional internal tooling packages may be added under `packages/` later, but they must not become public backend packages merely to mirror the native/WASM split.
 
@@ -80,7 +88,15 @@ Additional internal tooling packages may be added under `packages/` later, but t
 
 The root `package.json` is private and exists to pin the package manager/tool versions and provide repository-wide scripts. It is not published.
 
-`pnpm-workspace.yaml` includes `packages/*`. The lockfile is committed. The root `packageManager` field pins the exact pnpm version chosen by the bootstrap task so local development and CI use the same package-manager release; routine version updates do not require an architecture change.
+`pnpm-workspace.yaml` includes:
+
+```yaml
+packages:
+  - packages/*
+  - apps/*
+```
+
+The lockfile is committed. The root `packageManager` field pins the exact pnpm version chosen by the bootstrap task so local development and CI use the same package-manager release; routine version updates do not require an architecture change.
 
 The public package owns:
 
@@ -91,7 +107,9 @@ The public package owns:
 - packaged native/WASM artifacts;
 - TypeScript/API, integration, and parity tests.
 
-The workspace root owns orchestration commands. The initial script contract should provide equivalents of:
+A private application package owns only its application dependencies, UI/rendering code, scenarios, and app-specific tests. Three.js/Vite dependencies belong to `apps/solar-system-demo`, never to `packages/orbit-engine` merely because that app uses them.
+
+The workspace root owns orchestration commands. The engine script contract provides equivalents of:
 
 - `build` — build the current-host native backend, WASM backend, and TypeScript package;
 - `build:ts` — compile TypeScript/declarations only;
@@ -105,15 +123,15 @@ The workspace root owns orchestration commands. The initial script contract shou
 - `test:parity` — the same high-level scenarios against both backends;
 - `test` or `check` — the appropriate aggregate validation for a fully provisioned developer/CI environment.
 
-Exact shell syntax and helper-script placement are implementation details, but the responsibilities above are not.
+The demo extension adds convenient app equivalents such as `demo`, `demo:build`, `demo:test`, and `demo:smoke` as defined in document 16. App build commands must not redefine engine build ownership.
 
 ## TypeScript package contract
 
 ### Module format
 
-The initial package is ESM-only (`type: module`) with explicit `exports` and generated `.d.ts` declarations. Node 22/24 are modern enough that dual CommonJS output is not justified initially. Adding a CommonJS compatibility entry later is allowed if demand appears, provided it does not fork API semantics.
+The public package is ESM-only (`type: module`) with explicit `exports` and generated `.d.ts` declarations. Node 22/24 are modern enough that dual CommonJS output is not justified initially. Adding a CommonJS compatibility entry later is allowed if demand appears, provided it does not fork API semantics.
 
-The bootstrap implementation should prefer `tsc` for initial package compilation. A bundler is not part of the architecture and should not be added without a concrete need.
+The engine package should prefer `tsc` for its TypeScript compilation. Vite is an application bundler for the private browser demo and does not become the build system for the public engine package.
 
 ### Public initialization
 
@@ -141,8 +159,9 @@ The contract has these invariants:
 3. A backend may use different internal memory/layout strategies, but it must not change public semantics to optimize one backend.
 4. Batch-oriented backend calls are preferred when crossing JS/native or JS/WASM boundaries for large datasets.
 5. The TypeScript facade must not duplicate physics/simulation algorithms merely to support one backend.
+6. Browser consumers use the same public facade; there is no browser-only physics API.
 
-Tests may import internal backend factories through test-only/internal paths inside the source tree, but those paths are not npm public exports.
+Tests may import internal backend factories through test-only/internal paths inside the source tree, but those paths are not npm public exports. Private reference applications must not rely on those test-only imports.
 
 ## Backend selection and failure semantics
 
@@ -164,7 +183,11 @@ If any required native artifact is unsupported, absent, unloadable, version-inco
 
 `wasm` never probes or loads native code. It initializes the packaged Emscripten module and rejects clearly if the WASM artifact cannot be loaded or initialized.
 
-The WASM loading path must not statically depend on Node-only APIs. Browser support is not an initial product requirement, but the WASM adapter must remain structurally portable to non-Node runtimes.
+The WASM loading path must not statically depend on Node-only APIs.
+
+Browser consumption is now an explicit reference-app requirement. The package must therefore resolve its own Emscripten JS and `.wasm` artifacts in both direct Node package execution and modern ESM browser bundlers without requiring the consumer to import package internals or copy files manually.
+
+The exact browser-bundle-safe loading rule is defined in document 16: use literal package-relative ESM/`new URL(..., import.meta.url)` references so the module and binary are statically discoverable while preserving lazy initialization.
 
 ### `auto`
 
@@ -187,6 +210,8 @@ This distinction keeps `auto` convenient without masking broken releases.
 
 No fallback attempt should emit console output by default. Diagnostic causes belong in returned/thrown error information, not unsolicited logging.
 
+The browser reference demo intentionally uses explicit `wasm`, not `auto`, so its CI proves that path directly.
+
 ## Binding compatibility handshake
 
 The TypeScript wrapper and both compiled adapters must share a small internal binding protocol version. On load, each adapter reports the protocol version it implements and the TypeScript wrapper requires an exact compatible value.
@@ -205,6 +230,7 @@ The core target must:
 - compile without Emscripten-specific headers or preprocessor requirements;
 - expose portable C++ interfaces to binding targets;
 - contain no JavaScript/TypeScript types or game-domain types;
+- contain no Three.js/Vite/DOM/WebGL application types;
 - be directly linkable by native C++ tests;
 - be compiled from the same source definitions for native and Emscripten builds.
 
@@ -253,11 +279,11 @@ packages/orbit-engine/wasm/
 
 The expected package shape is an ES-module loader plus its `.wasm` binary. Asset resolution must be relative to the installed module/package location rather than the consumer's current working directory.
 
+The package loader must additionally make those artifacts statically discoverable to modern browser ESM bundlers as defined by document 16. A browser consumer must not need Vite aliases, manual file copies, or public Emscripten handles.
+
 The Emscripten SDK version used by CI/release is pinned by the bootstrap implementation and updated deliberately. The exact patch version is a toolchain maintenance choice, not public architecture.
 
-The bootstrap workflow pins Emscripten to `3.1.74` through `mymindstorm/setup-emsdk` and uses Ubuntu 22.04
-(`glibc 2.35`) as the deliberate Linux native-release baseline. These are reproducibility choices for the initial
-toolchain and may be updated deliberately without changing the public backend contract.
+The bootstrap workflow pins Emscripten to `3.1.74` through `mymindstorm/setup-emsdk` and uses Ubuntu 22.04 (`glibc 2.35`) as the deliberate Linux native-release baseline. These are reproducibility choices for the initial toolchain and may be updated deliberately without changing the public backend contract.
 
 ## Artifact and package distribution
 
@@ -278,7 +304,7 @@ There is no required `postinstall` compilation step.
 
 ### Single public package
 
-The initial release ships these artifacts in the one `orbit-engine` package rather than platform-specific public/optional-dependency packages. This keeps package/version resolution simple while the number of prebuilds is small.
+The release ships these artifacts in the one `orbit-engine` package rather than platform-specific public/optional-dependency packages. Private workspace applications do not change package publication topology.
 
 If package size later becomes material, native binaries may be split into platform-specific optional dependency packages as a packaging optimization. Such a change must preserve the main package's public API and backend-selection semantics.
 
@@ -288,6 +314,8 @@ If package size later becomes material, native binaries may be split into platfo
 
 Release CI builds artifacts from a tagged/selected source commit, transfers them between jobs as CI artifacts, assembles the package layout, and creates the npm tarball only after all required platform artifacts are present.
 
+The demo's Vite `dist` output is likewise generated and ignored; it is not shipped inside the npm package.
+
 ## Development build flow
 
 A normal developer flow is:
@@ -296,8 +324,9 @@ A normal developer flow is:
 2. `pnpm install` with the committed lockfile;
 3. build/test TypeScript without requiring compiled backends when working only on facade code;
 4. build the native backend for the current supported host when native integration is needed;
-5. install/configure the pinned Emscripten SDK and build WASM when WASM/parity work is needed;
-6. run the aggregate validation before a backend-affecting PR is considered complete.
+5. install/configure the pinned Emscripten SDK and build WASM when WASM/parity or browser-demo work is needed;
+6. for browser-demo work, build the public package/WASM artifacts before launching the private Vite consumer as required by its scripts;
+7. run the aggregate validation before a backend-affecting PR is considered complete.
 
 Local native development only needs the current host's prebuild. Developers are not expected to create all release platform binaries locally.
 
@@ -318,9 +347,11 @@ Release automation is responsible for reproducibility and cross-platform assembl
 
 A release must never rebuild different binaries after package smoke testing and then publish those untested binaries.
 
+A browser-demo deployment, if added later, consumes its own already-tested static Vite artifact and is separate from npm package publishing.
+
 ## Node.js and platform support policy
 
-At the time of this decision, the supported runtime lines are:
+At the time of this decision, the supported Node runtime lines are:
 
 - Node 22 LTS;
 - Node 24 LTS.
@@ -336,9 +367,11 @@ Native support initially means:
 | macOS + supported Node | no native guarantee | structurally possible | WASM if it initializes |
 | ARM64 + supported Node | no native guarantee | structurally possible | WASM if it initializes |
 | musl Linux + supported Node | no native guarantee | structurally possible | WASM if it initializes |
-| non-Node runtime | unavailable | structurally possible | WASM only |
+| non-Node runtime | unavailable | supported only where separately validated | WASM only |
 
 Only Windows x64 and glibc Linux x64 are required native CI/release targets initially. Other rows describe fallback architecture, not an initial support guarantee.
+
+The browser reference demo separately targets current evergreen desktop browsers with ES modules, WebAssembly, and WebGL 2; details are in document 16. That demo support statement does not turn every non-Node runtime into a generally supported public platform automatically.
 
 For Linux release binaries, CI should build on a deliberately selected glibc baseline runner rather than whichever newest distribution happens to be available. The bootstrap implementation must document that baseline in CI so binary compatibility does not drift accidentally.
 
@@ -372,11 +405,17 @@ Parity means equivalent public semantics, not bit-identical floating-point outpu
 
 In addition to the five required layers, release/CI must test the packed npm tarball from a clean temporary consumer project. This catches missing `files` entries, broken `exports`, wrong asset paths, and release-assembly mistakes that source-tree tests cannot detect.
 
+### Browser packaged-consumer smoke
+
+The browser-demo architecture adds a real-browser consumer test. It builds/serves a private Vite consumer, imports only the public `orbit-engine` package entry, calls `OrbitEngine.create({ backend: "wasm" })`, and executes at least one real supported operation.
+
+The smoke must fail if the browser bundle cannot resolve the package-owned Emscripten module or `.wasm` binary. It must not succeed by importing `src/internal` or copying the WASM files manually.
+
+Headless Chromium/Playwright is the initial automation baseline. WebGL rendering capability is checked separately from the physics/WASM initialization result as defined by document 16.
+
 ## CI responsibilities
 
-There is no CI workflow in the repository at the time of this architecture decision. The follow-up bootstrap Implementation issue must add it.
-
-The CI architecture is:
+The core CI architecture is:
 
 ### TypeScript quality job
 
@@ -429,6 +468,16 @@ For release workflows, and preferably for relevant PRs once cost is acceptable:
 - install the tarball in clean Windows/Linux consumers;
 - run initialization smoke tests.
 
+### Browser demo jobs
+
+On Linux for changes affecting the public/WASM consumer path or the demo:
+
+- demo TypeScript/unit tests;
+- Vite production build;
+- real headless-browser WASM consumer smoke.
+
+These application jobs do not need to multiply across the Windows native matrix. They complement rather than replace the existing WASM/parity/package checks.
+
 Required branch-protection checks should eventually correspond to these responsibilities. CI optimization may reuse artifacts or avoid rebuilding identical WASM output, but it must not remove coverage implied by the supported platform/runtime matrix.
 
 ## Rejected alternatives and trade-offs
@@ -436,6 +485,14 @@ Required branch-protection checks should eventually correspond to these responsi
 ### Separate public `native` and `wasm` npm packages
 
 Rejected initially because it exposes deployment detail to consumers, complicates version coordination, and weakens the single TypeScript facade. Internal code may be physically separated; public installation remains one package.
+
+### Put the browser demo or Three.js inside `packages/orbit-engine`
+
+Rejected because it reverses the consumer dependency boundary, bloats the public package, and risks turning rendering concerns into engine concepts. The demo is a private `apps/` consumer.
+
+### Let the demo import/copy raw WASM artifacts
+
+Rejected because the reference app must prove the package's real public browser-consumer contract. Package-owned asset resolution is part of the WASM backend responsibility.
 
 ### Compile native code during consumer install
 
@@ -459,18 +516,20 @@ Rejected as unnecessary complexity for Node 22/24 and the Emscripten ESM loading
 
 ## Invariants for follow-up implementation
 
-The bootstrap implementation is complete only if it preserves all of these invariants:
+The build/package architecture remains valid only if it preserves all of these invariants:
 
 1. Consumers import one TypeScript/npm package.
 2. The normal public entry point never exposes raw binding modules or artifact paths.
 3. `OrbitEngine.create()` is asynchronous and defaults to `auto`.
 4. `native` never falls back; `wasm` never probes native; `auto` follows the failure rules above.
 5. Both adapters wrap one portable C++20 core source implementation.
-6. The core builds and tests without Node/Emscripten dependencies.
+6. The core builds and tests without Node/Emscripten/application dependencies.
 7. CMake owns C++ targets; pnpm orchestrates them.
 8. Release npm installation performs no C++ compilation.
 9. Windows x64 and glibc Linux x64 native artifacts plus WASM are assembled into one release package.
 10. Node 22 and Node 24 are tested supported lines.
 11. Backend parity tests reuse the same high-level scenarios.
 12. Generated binaries/build directories are not committed.
-13. No physics/domain architecture outside issue #5 is introduced by the bootstrap work.
+13. Private apps do not become public engine packages or import engine internals.
+14. Browser consumers can initialize packaged WASM through the public API without manual asset copying.
+15. Three.js/Vite/rendering concepts never enter portable core or authoritative physics state.

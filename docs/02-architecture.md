@@ -2,26 +2,27 @@
 
 ## High-level structure
 
-OrbitEngine should be designed as a reusable library with strict boundaries between simulation, data ingestion, and consuming game systems.
+OrbitEngine should be designed as a reusable library with strict boundaries between simulation, data ingestion, consuming applications, and game systems.
 
 ```text
-Game / domain layers
-(population, economy, stations, ships, combat, resources)
-                    |
-             stable object IDs
-                    |
-          TypeScript public API
-                    |
-            OrbitEngine facade
-                    |
-       backend-neutral contracts
-          /                 \
-Native Node-API         WebAssembly
-          \                 /
-           portable C++ core
-                    |
-   propagation / frames / events /
-   encounters / trajectories / math
+Game / domain layers                  Reference/demo applications
+(population, economy, stations,       (browser Solar-System demo etc.)
+ ships, combat, resources)                       |
+                    \                           /
+                     \   stable public API     /
+                      \          |             /
+                         TypeScript public API
+                                  |
+                         OrbitEngine facade
+                                  |
+                     backend-neutral contracts
+                        /                 \
+                 Native Node-API       WebAssembly
+                        \                 /
+                         portable C++ core
+                                  |
+                 propagation / frames / events /
+                 encounters / trajectories / math
 
 External solar-system data
 (JPL/NASA etc.)
@@ -74,6 +75,16 @@ Continuous forces feed numerical propagation in deterministic order. Instantaneo
 ### Trajectory Planner
 Plans physically valid transfers toward moving targets using object state, mass, propulsion constraints, time, and destination motion. Planning and authoritative trajectory propagation are separate responsibilities.
 
+## Reference/demo applications
+
+Reference applications are consumers of OrbitEngine, not engine subsystems.
+
+The canonical first reference application is the browser Solar-System demo defined by [16 — Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md). It lives in `apps/`, consumes the same public `orbit-engine` TypeScript package as an external application, explicitly exercises the WASM backend in a browser, and renders state with Three.js.
+
+Reference applications may own UI, camera state, render scaling, labels, visual metadata, and application-specific scenarios. They must not own authoritative physical state or implement replacement orbital physics.
+
+A reference application is allowed to reveal a missing public consumer capability. The fix belongs in the appropriate public/backend OrbitEngine contract rather than through an application-only import of package internals.
+
 ## Separation rules
 
 1. The C++ core must not import game concepts.
@@ -84,4 +95,6 @@ Plans physically valid transfers toward moving targets using object state, mass,
 6. Propagation model, fidelity, `ObjectType`, and reference-divergence status are separate concepts.
 7. Numerical force providers may depend on normalized deterministic engine data; arbitrary game logic is not executed as portable-core hot-loop physics implicitly.
 8. A game layer may attach arbitrary metadata to an OrbitEngine ID outside the engine.
-9. Architectural changes require documentation updates in the same PR.
+9. Reference/demo applications may attach presentation metadata to an OrbitEngine ID outside the engine, but Three.js/Vite/DOM/WebGL/render-space concepts must not leak into the engine package or portable core.
+10. Browser animation/render cadence must not become an authoritative physics tick; browser consumers request engine state at explicit simulation instants.
+11. Architectural changes require documentation updates in the same PR.

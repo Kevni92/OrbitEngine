@@ -7,11 +7,11 @@ OrbitEngine is consumed as one npm package through a TypeScript API while allowi
 Two compiled backends wrap the same portable C++ core:
 
 1. a native Node.js addon for the primary Node runtime path;
-2. a WebAssembly build for fallback/portability.
+2. a WebAssembly build for fallback/portability and browser reference-consumer execution.
 
-The concrete repository, packaging, initialization, artifact, test, and CI decisions are defined in [11 — Build, Package, and Backend Architecture](11-build-package-and-backend-architecture.md).
+The concrete repository, packaging, initialization, artifact, test, and CI decisions are defined in [11 — Build, Package, and Backend Architecture](11-build-package-and-backend-architecture.md). The browser reference-application extension is defined in [16 — Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md).
 
-Canonical contracts are defined by:
+Canonical physics/contracts are defined by:
 
 - [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md);
 - [13 — Physical Object and State Model](13-physical-object-and-state-model.md);
@@ -30,6 +30,8 @@ binding       binding
    \          /
     portable C++ core
 ```
+
+Browser/demo consumers sit above the same public TypeScript API; they do not import the WASM adapter directly.
 
 ## Portable C++ core rules
 
@@ -66,7 +68,28 @@ The initial binding targets Node-API version 8 to preserve ABI portability acros
 
 The WASM backend compiles the same portable core with Emscripten. WASM-specific exports, initialization, memory handling, and marshalling belong only in the WASM adapter/binding layer.
 
-The WASM loading path must not statically depend on Node-only APIs. Browser support is not currently a product requirement, but the WASM backend must not be needlessly prevented from running in a non-Node environment.
+The WASM loading path must not statically depend on Node-only APIs.
+
+The browser Solar-System reference application makes browser use of the packaged WASM backend an explicit supported project consumer shape. This does not create a second browser physics implementation: the browser still executes the same portable C++ core through the normal public TypeScript facade.
+
+### Browser bundle-safe asset contract
+
+A browser consumer must be able to use:
+
+```text
+await OrbitEngine.create({ backend: "wasm" })
+```
+
+without importing package internals or manually copying Emscripten artifacts.
+
+The package owns resolution of its generated Emscripten module and `.wasm` binary. To remain compatible with modern ESM bundlers such as Vite/Rollup, the WASM loader uses statically discoverable package-relative references as defined by document 16:
+
+- a literal dynamic ESM import specifier for the generated `orbit_engine_wasm.js` factory;
+- a literal `new URL(..., import.meta.url)` reference for `orbit_engine_wasm.wasm`;
+- explicit `locateFile` handling for the known generated binary filename;
+- no runtime-concatenated arbitrary package path and no consumer-facing Vite-specific `?url` contract.
+
+This preserves lazy backend initialization while allowing a consuming browser build to discover/rewrite the package-owned artifacts.
 
 ## TypeScript API and backend selection
 
@@ -85,6 +108,8 @@ Semantics:
 - `wasm` — initialize WASM directly and never probe/load native code.
 
 Once a valid native module is loaded, protocol mismatch or backend initialization failures are surfaced rather than silently hidden by a WASM fallback.
+
+The reference browser demo deliberately selects `wasm` rather than `auto` so it continuously validates the browser/WASM consumer path.
 
 Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense indexes, propagator/provider vtables, integrator work arrays, cache handles, and pointers are not exported from the normal public package entry point.
 
@@ -121,6 +146,14 @@ TypeScript performs public input validation and error normalization, but the aut
 
 The adapters must not maintain their own model-switch or divergence state machines.
 
+## Browser rendering boundary
+
+Browser rendering/UI frameworks remain consumers of the public API.
+
+Three.js, DOM APIs, Vite, camera coordinates, visual scale, labels, textures, and render loops are not OrbitEngine concepts. A browser render loop may choose which `SimulationInstant` to request, but it must never integrate object positions locally and then treat those values as authoritative engine state.
+
+For precision-sensitive views, browser consumers should use the same public local/relative frame queries as other consumers rather than materializing giant root coordinates and subtracting them in rendering code.
+
 ## Force callback boundary
 
 The base numerical force hot loop executes in portable C++ or consumes normalized deterministic provider data owned by the core.
@@ -132,6 +165,8 @@ Arbitrary per-step JavaScript callbacks are not part of the base native/WASM con
 Crossing JavaScript ↔ native/WASM boundaries has overhead. Prefer batch-oriented registration/state/frame/propagation-query interfaces for large data sets rather than thousands of tiny calls.
 
 For many object queries at one epoch, the backend should reuse propagation dependencies and frame-edge transforms in the portable core rather than marshalling intermediate model/frame state through TypeScript repeatedly.
+
+The browser reference demo follows this rule: once #20's batch same-epoch state API is available, one visual update should request the visible object set in a bounded batch rather than issue a backend call per body.
 
 Keep orchestration, public validation, canonical ID parsing/formatting, unit conversion, and convenience coordinate conversions in TypeScript unless measurement or architecture justifies moving work into C++.
 
@@ -148,3 +183,5 @@ Quaternion parity is orientation-equivalent rather than sign-sensitive because `
 Propagation parity additionally checks deterministic provider ordering, exact invalidation boundaries, and that failed model switches leave the same authoritative state/revision untouched on both backends.
 
 Backend-specific tests additionally cover loading, initialization, marshalling, artifact resolution, and error translation. Portable core behavior is tested directly in C++ through CTest.
+
+Browser support adds a packaged-consumer smoke test in a real headless browser. It must initialize `OrbitEngine.create({ backend: "wasm" })` through the public package and fail if the generated Emscripten JS/WASM assets cannot be resolved by the browser bundle.
