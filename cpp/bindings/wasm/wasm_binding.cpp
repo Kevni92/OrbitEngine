@@ -2,11 +2,14 @@
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
+#include "orbit_engine/registry.hpp"
 #include "orbit_engine/time.hpp"
 
 #include <emscripten/emscripten.h>
 
 extern "C" {
+
+orbit_engine::registry::Registry g_registry;
 
 EMSCRIPTEN_KEEPALIVE int orbit_engine_binding_protocol_version() {
   return orbit_engine::kBindingProtocolVersion;
@@ -567,5 +570,135 @@ PROP_GETTER(orbit_engine_propagation_velocity_relative, velocity_relative, doubl
 #undef PROP_GETTER
 #undef PROP_ARGUMENTS
 #undef PROP_PARAMETERS
+
+#define REG_PARAMETERS \
+  std::uint16_t operation_code, std::uint16_t result_code, \
+  std::uint32_t object_id_high, std::uint32_t object_id_low, std::uint16_t object_type_code, \
+  int mass_present, double mass, int mu_present, double mu, \
+  int physical_radius_present, double physical_radius, int collision_bounding_radius_present, double collision_bounding_radius, \
+  int state_present, std::int32_t state_epoch_seconds_high, std::uint32_t state_epoch_seconds_low, std::uint32_t state_epoch_nanoseconds, \
+  std::uint32_t state_frame_high, std::uint32_t state_frame_low, \
+  double position_x, double position_y, double position_z, double velocity_x, double velocity_y, double velocity_z, \
+  std::uint16_t model_kind_code, std::uint16_t direction_code, \
+  std::int32_t segment_start_seconds_high, std::uint32_t segment_start_seconds_low, std::uint32_t segment_start_nanoseconds, \
+  int segment_end_present, std::int32_t segment_end_seconds_high, std::uint32_t segment_end_seconds_low, std::uint32_t segment_end_nanoseconds, \
+  std::uint32_t configuration_revision_high, std::uint32_t configuration_revision_low, \
+  std::uint32_t motion_revision_high, std::uint32_t motion_revision_low, std::uint16_t reference_status_code, \
+  std::uint32_t property_revision_high, std::uint32_t property_revision_low, \
+  std::int32_t effective_epoch_seconds_high, std::uint32_t effective_epoch_seconds_low, std::uint32_t effective_epoch_nanoseconds, \
+  int structural_parent_present, std::uint32_t structural_parent_high, std::uint32_t structural_parent_low
+
+#define REG_ARGUMENTS \
+  operation_code, result_code, object_id_high, object_id_low, object_type_code, \
+  mass_present, mass, mu_present, mu, physical_radius_present, physical_radius, \
+  collision_bounding_radius_present, collision_bounding_radius, state_present, \
+  state_epoch_seconds_high, state_epoch_seconds_low, state_epoch_nanoseconds, state_frame_high, state_frame_low, \
+  position_x, position_y, position_z, velocity_x, velocity_y, velocity_z, model_kind_code, direction_code, \
+  segment_start_seconds_high, segment_start_seconds_low, segment_start_nanoseconds, segment_end_present, \
+  segment_end_seconds_high, segment_end_seconds_low, segment_end_nanoseconds, configuration_revision_high, \
+  configuration_revision_low, motion_revision_high, motion_revision_low, reference_status_code, \
+  property_revision_high, property_revision_low, effective_epoch_seconds_high, effective_epoch_seconds_low, \
+  effective_epoch_nanoseconds, structural_parent_present, structural_parent_high, structural_parent_low
+
+orbit_engine::registry::RegistryWire g_registry_output{};
+
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_registry(REG_PARAMETERS) {
+  const orbit_engine::registry::RegistryWire input{
+    operation_code,
+    result_code,
+    object_id_high,
+    object_id_low,
+    object_type_code,
+    orbit_engine::object::PhysicalProperties{
+      {mass_present != 0, mass},
+      {mu_present != 0, mu},
+      {physical_radius_present != 0, physical_radius},
+      {collision_bounding_radius_present != 0, collision_bounding_radius},
+    },
+    state_present != 0,
+    orbit_engine::time::TimeWire{state_epoch_seconds_high, state_epoch_seconds_low, state_epoch_nanoseconds},
+    state_frame_high,
+    state_frame_low,
+    position_x,
+    position_y,
+    position_z,
+    velocity_x,
+    velocity_y,
+    velocity_z,
+    model_kind_code,
+    direction_code,
+    orbit_engine::time::TimeWire{segment_start_seconds_high, segment_start_seconds_low, segment_start_nanoseconds},
+    segment_end_present != 0,
+    orbit_engine::time::TimeWire{segment_end_seconds_high, segment_end_seconds_low, segment_end_nanoseconds},
+    configuration_revision_high,
+    configuration_revision_low,
+    motion_revision_high,
+    motion_revision_low,
+    reference_status_code,
+    property_revision_high,
+    property_revision_low,
+    orbit_engine::time::TimeWire{effective_epoch_seconds_high, effective_epoch_seconds_low, effective_epoch_nanoseconds},
+    structural_parent_present != 0,
+    structural_parent_high,
+    structural_parent_low,
+  };
+  g_registry_output = g_registry.command(input);
+  return 1;
+}
+
+#define REG_GETTER(name, field, type) \
+  EMSCRIPTEN_KEEPALIVE type name() { return g_registry_output.field; }
+
+REG_GETTER(orbit_engine_registry_operation_code, operation_code, std::uint16_t)
+REG_GETTER(orbit_engine_registry_result_code, result_code, std::uint16_t)
+REG_GETTER(orbit_engine_registry_object_id_high, object_id_high, std::uint32_t)
+REG_GETTER(orbit_engine_registry_object_id_low, object_id_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_object_type_code, object_type_code, std::uint16_t)
+REG_GETTER(orbit_engine_registry_mass_present, properties.mass.present, int)
+REG_GETTER(orbit_engine_registry_mass, properties.mass.value, double)
+REG_GETTER(orbit_engine_registry_mu_present, properties.mu.present, int)
+REG_GETTER(orbit_engine_registry_mu, properties.mu.value, double)
+REG_GETTER(orbit_engine_registry_physical_radius_present, properties.physical_radius.present, int)
+REG_GETTER(orbit_engine_registry_physical_radius, properties.physical_radius.value, double)
+REG_GETTER(orbit_engine_registry_collision_bounding_radius_present, properties.collision_bounding_radius.present, int)
+REG_GETTER(orbit_engine_registry_collision_bounding_radius, properties.collision_bounding_radius.value, double)
+REG_GETTER(orbit_engine_registry_state_present, state_present, int)
+REG_GETTER(orbit_engine_registry_state_epoch_seconds_high, state_epoch.seconds_high, std::int32_t)
+REG_GETTER(orbit_engine_registry_state_epoch_seconds_low, state_epoch.seconds_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_state_epoch_nanoseconds, state_epoch.nanoseconds, std::uint32_t)
+REG_GETTER(orbit_engine_registry_state_frame_high, state_frame_high, std::uint32_t)
+REG_GETTER(orbit_engine_registry_state_frame_low, state_frame_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_position_x, position_x, double)
+REG_GETTER(orbit_engine_registry_position_y, position_y, double)
+REG_GETTER(orbit_engine_registry_position_z, position_z, double)
+REG_GETTER(orbit_engine_registry_velocity_x, velocity_x, double)
+REG_GETTER(orbit_engine_registry_velocity_y, velocity_y, double)
+REG_GETTER(orbit_engine_registry_velocity_z, velocity_z, double)
+REG_GETTER(orbit_engine_registry_model_kind_code, model_kind_code, std::uint16_t)
+REG_GETTER(orbit_engine_registry_direction_code, direction_code, std::uint16_t)
+REG_GETTER(orbit_engine_registry_segment_start_seconds_high, segment_start.seconds_high, std::int32_t)
+REG_GETTER(orbit_engine_registry_segment_start_seconds_low, segment_start.seconds_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_segment_start_nanoseconds, segment_start.nanoseconds, std::uint32_t)
+REG_GETTER(orbit_engine_registry_segment_end_present, segment_end_present, int)
+REG_GETTER(orbit_engine_registry_segment_end_seconds_high, segment_end.seconds_high, std::int32_t)
+REG_GETTER(orbit_engine_registry_segment_end_seconds_low, segment_end.seconds_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_segment_end_nanoseconds, segment_end.nanoseconds, std::uint32_t)
+REG_GETTER(orbit_engine_registry_configuration_revision_high, configuration_revision_high, std::uint32_t)
+REG_GETTER(orbit_engine_registry_configuration_revision_low, configuration_revision_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_motion_revision_high, motion_revision_high, std::uint32_t)
+REG_GETTER(orbit_engine_registry_motion_revision_low, motion_revision_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_reference_status_code, reference_status_code, std::uint16_t)
+REG_GETTER(orbit_engine_registry_property_revision_high, property_revision_high, std::uint32_t)
+REG_GETTER(orbit_engine_registry_property_revision_low, property_revision_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_effective_epoch_seconds_high, effective_epoch.seconds_high, std::int32_t)
+REG_GETTER(orbit_engine_registry_effective_epoch_seconds_low, effective_epoch.seconds_low, std::uint32_t)
+REG_GETTER(orbit_engine_registry_effective_epoch_nanoseconds, effective_epoch.nanoseconds, std::uint32_t)
+REG_GETTER(orbit_engine_registry_structural_parent_present, structural_parent_present, int)
+REG_GETTER(orbit_engine_registry_structural_parent_high, structural_parent_high, std::uint32_t)
+REG_GETTER(orbit_engine_registry_structural_parent_low, structural_parent_low, std::uint32_t)
+
+#undef REG_GETTER
+#undef REG_ARGUMENTS
+#undef REG_PARAMETERS
 
 }

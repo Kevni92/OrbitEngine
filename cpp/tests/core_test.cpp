@@ -1,6 +1,7 @@
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
+#include "orbit_engine/registry.hpp"
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/time.hpp"
 
@@ -25,7 +26,7 @@ int main() {
     return 1;
   }
 
-  if (orbit_engine::kBindingProtocolVersion != 5) {
+  if (orbit_engine::kBindingProtocolVersion != 6) {
     std::cerr << "unexpected binding protocol version\n";
     return 1;
   }
@@ -390,6 +391,113 @@ int main() {
     },
     propagationRoundTrip
   ));
+
+  using orbit_engine::registry::Operation;
+  using orbit_engine::registry::Registry;
+  using orbit_engine::registry::RegistryWire;
+  using orbit_engine::registry::ResultCode;
+  auto registryWire = [](std::uint64_t id, std::uint16_t operation) {
+    const auto objectId = orbit_engine::object::object_id_to_wire(id);
+    const auto frameId = orbit_engine::frame::reference_frame_id_to_wire(1);
+    const auto zero = orbit_engine::time::TimeWire{0, 0, 0};
+    return RegistryWire{
+      operation,
+      0,
+      objectId.high,
+      objectId.low,
+      orbit_engine::object::object_type_code(ObjectType::planet),
+      PhysicalProperties{
+        OptionalPhysicalScalar{false, 0.0},
+        OptionalPhysicalScalar{false, 0.0},
+        OptionalPhysicalScalar{false, 0.0},
+        OptionalPhysicalScalar{false, 0.0},
+      },
+      true,
+      zero,
+      frameId.high,
+      frameId.low,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      2,
+      2,
+      zero,
+      false,
+      zero,
+      0,
+      1,
+      0,
+      2,
+      0,
+      0,
+      0,
+      zero,
+      false,
+      0,
+      0,
+    };
+  };
+
+  Registry registry;
+  auto resetRegistry = registryWire(1, static_cast<std::uint16_t>(Operation::reset));
+  CHECK(registry.command(resetRegistry).result_code == static_cast<std::uint16_t>(ResultCode::success));
+  auto reference = registryWire(1, static_cast<std::uint16_t>(Operation::register_object));
+  reference.model_kind_code = 1;
+  reference.reference_status_code = 0;
+  auto registered = registry.command(reference);
+  CHECK(registered.result_code == static_cast<std::uint16_t>(ResultCode::success));
+  CHECK(registered.reference_status_code == 1);
+  CHECK(registered.state_epoch.nanoseconds == 0);
+  CHECK(!registered.properties.mass.present);
+  CHECK(registry.command(reference).result_code == static_cast<std::uint16_t>(ResultCode::duplicate_live_id));
+
+  auto lookup = registryWire(1, static_cast<std::uint16_t>(Operation::lookup));
+  const auto lookedUp = registry.command(lookup);
+  CHECK(lookedUp.result_code == static_cast<std::uint16_t>(ResultCode::success));
+  CHECK(lookedUp.position_x == 1.0 && lookedUp.velocity_z == 6.0);
+
+  auto registryExplicitZero = registryWire(1, static_cast<std::uint16_t>(Operation::update_properties));
+  registryExplicitZero.properties.mass = OptionalPhysicalScalar{true, 0.0};
+  const auto updated = registry.command(registryExplicitZero);
+  CHECK(updated.result_code == static_cast<std::uint16_t>(ResultCode::success));
+  CHECK(updated.properties.mass.present && updated.properties.mass.value == 0.0);
+  CHECK(updated.property_revision_low == 2);
+
+  auto divergence = registryWire(1, static_cast<std::uint16_t>(Operation::diverge));
+  divergence.model_kind_code = 2;
+  divergence.motion_revision_low = 7;
+  divergence.position_x = 9.0;
+  const auto diverged = registry.command(divergence);
+  CHECK(diverged.result_code == static_cast<std::uint16_t>(ResultCode::success));
+  CHECK(diverged.reference_status_code == 2 && diverged.position_x == 9.0);
+  const auto failedDivergence = registry.command(divergence);
+  CHECK(failedDivergence.result_code == static_cast<std::uint16_t>(ResultCode::invalid_transition));
+  CHECK(registry.command(lookup).reference_status_code == 2);
+
+  auto parent = registryWire(10, static_cast<std::uint16_t>(Operation::register_object));
+  parent.model_kind_code = 2;
+  CHECK(registry.command(parent).result_code == static_cast<std::uint16_t>(ResultCode::success));
+  auto child = registryWire(11, static_cast<std::uint16_t>(Operation::register_object));
+  child.model_kind_code = 4;
+  child.structural_parent_present = true;
+  child.structural_parent_high = 0;
+  child.structural_parent_low = 10;
+  CHECK(registry.command(child).result_code == static_cast<std::uint16_t>(ResultCode::success));
+  auto removeParent = registryWire(10, static_cast<std::uint16_t>(Operation::remove_object));
+  CHECK(registry.command(removeParent).result_code == static_cast<std::uint16_t>(ResultCode::blocked_removal));
+  auto removeChild = registryWire(11, static_cast<std::uint16_t>(Operation::remove_object));
+  CHECK(registry.command(removeChild).result_code == static_cast<std::uint16_t>(ResultCode::success));
+  CHECK(registry.command(removeParent).result_code == static_cast<std::uint16_t>(ResultCode::success));
+  CHECK(registry.command(removeParent).result_code == static_cast<std::uint16_t>(ResultCode::retired_id));
+
+  auto advance = registryWire(1, static_cast<std::uint16_t>(Operation::advance_clock));
+  advance.effective_epoch = orbit_engine::time::to_wire(SimulationInstant{5, 0});
+  CHECK(registry.command(advance).result_code == static_cast<std::uint16_t>(ResultCode::success));
+  registryExplicitZero.effective_epoch = orbit_engine::time::to_wire(SimulationInstant{4, 0});
+  CHECK(registry.command(registryExplicitZero).result_code == static_cast<std::uint16_t>(ResultCode::retroactive_change));
 
   return 0;
 }
