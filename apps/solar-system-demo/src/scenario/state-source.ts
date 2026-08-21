@@ -1,4 +1,4 @@
-import type { ObjectId, OrbitEngine, PropagationState } from "orbit-engine";
+import type { ObjectId, OrbitEngine, PropagationState, ReferenceFrameId, SimulationInstant } from "orbit-engine";
 import type { SolarSystemScenario } from "./load-solar-system.js";
 import { SUN_ID } from "./scenario-data.js";
 
@@ -16,7 +16,12 @@ export class SolarSystemStateSource {
     this.#scenario = scenario;
   }
 
-  query(focusId: ObjectId, target: Parameters<OrbitEngine["stateAt"]>[1]): ScenarioStateFrame {
+  stateAt(objectId: ObjectId, focusId: ObjectId, target: SimulationInstant, outputFrame: ReferenceFrameId): PropagationState {
+    if (focusId === SUN_ID) return this.#engine.stateAt(objectId, target, outputFrame);
+    return this.#engine.relativeStateAt(objectId, focusId, target, outputFrame);
+  }
+
+  query(focusId: ObjectId, target: SimulationInstant): ScenarioStateFrame {
     if (focusId === SUN_ID) {
       return Object.freeze({
         focusId,

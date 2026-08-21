@@ -11,12 +11,25 @@ import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/lo
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
 import { EARTH_ID, SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
 import { SolarSystemScene } from "./rendering/solar-system-scene.js";
-import { objectId, type ObjectId, type OrbitEngine, type PropagationState } from "orbit-engine";
+import { PathCache } from "./simulation/path-sampling.js";
+import {
+  compareSimulationInstants,
+  objectId,
+  simulationInstant,
+  type ObjectId,
+  type OrbitEngine,
+  type PropagationState,
+  type SimulationInstant,
+} from "orbit-engine";
 
 const engineStatus = document.querySelector<HTMLElement>("#engine-status");
 const renderingStatus = document.querySelector<HTMLElement>("#rendering-status");
-const simulationInstant = document.querySelector<HTMLElement>("#simulation-instant");
+const simulationInstantElement = document.querySelector<HTMLElement>("#simulation-instant");
 const playPause = document.querySelector<HTMLButtonElement>("#play-pause");
+const warpSelect = document.querySelector<HTMLSelectElement>("#warp-select");
+const jumpSeconds = document.querySelector<HTMLInputElement>("#jump-seconds");
+const jumpNanoseconds = document.querySelector<HTMLInputElement>("#jump-nanoseconds");
+const jumpTime = document.querySelector<HTMLButtonElement>("#jump-time");
 const scenarioNote = document.querySelector<HTMLElement>("#scenario-note");
 const focusContext = document.querySelector<HTMLElement>("#focus-context");
 const focusSelect = document.querySelector<HTMLSelectElement>("#focus-select");
@@ -24,6 +37,9 @@ const selectedSelect = document.querySelector<HTMLSelectElement>("#selected-sele
 const radiusMode = document.querySelector<HTMLSelectElement>("#radius-mode");
 const focusSelected = document.querySelector<HTMLButtonElement>("#focus-selected");
 const selectedPanel = document.querySelector<HTMLElement>("#selected-panel");
+const samplePath = document.querySelector<HTMLButtonElement>("#sample-path");
+const clearPath = document.querySelector<HTMLButtonElement>("#clear-path");
+const pathStatus = document.querySelector<HTMLElement>("#path-status");
 const canvas = document.querySelector<HTMLCanvasElement>("#scene");
 const clock = new SimulationClock();
 
@@ -33,7 +49,7 @@ function formatInstant(): string {
 }
 
 function updateClockUi(): void {
-  if (simulationInstant !== null) simulationInstant.textContent = formatInstant();
+  if (simulationInstantElement !== null) simulationInstantElement.textContent = formatInstant();
   if (playPause !== null) playPause.textContent = clock.isPlaying() ? "Pause" : "Play";
 }
 
@@ -93,6 +109,12 @@ async function bootstrap(): Promise<void> {
     if (focusSelect !== null) focusSelect.value = SUN_ID;
     if (selectedSelect !== null) selectedSelect.value = SUN_ID;
     if (focusSelected !== null) focusSelected.disabled = false;
+    if (warpSelect !== null) warpSelect.disabled = false;
+    if (jumpSeconds !== null) jumpSeconds.disabled = false;
+    if (jumpNanoseconds !== null) jumpNanoseconds.disabled = false;
+    if (jumpTime !== null) jumpTime.disabled = false;
+    if (samplePath !== null) samplePath.disabled = false;
+    if (clearPath !== null) clearPath.disabled = false;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     setStatus(scenarioNote, "error", `Scenario loading failed: ${message}`);
@@ -102,6 +124,8 @@ async function bootstrap(): Promise<void> {
   let renderShell: RenderShell | undefined;
   let solarSystemScene: SolarSystemScene | undefined;
   let focusId: ObjectId = SUN_ID;
+  let pathVisible = false;
+  const pathCache = new PathCache(4);
   const stateSource = new SolarSystemStateSource(engine, scenario);
   const coordinator = new StateQueryCoordinator<ScenarioStateFrame>({
     source: {
@@ -127,9 +151,77 @@ async function bootstrap(): Promise<void> {
     if (focusContext !== null) focusContext.textContent = `${focusId} / ${scenario.rootFrame}`;
   }
 
+  function selectedBodyId(): ObjectId {
+    return objectId(selectedSelect?.value || SUN_ID);
+  }
+
+  function setPathStatus(state: string, message: string): void {
+    setStatus(pathStatus, state, message);
+  }
+
+  function sampleCurrentPath(): void {
+    const selectedId = selectedBodyId();
+    const entry = scenario.bodyById.get(selectedId);
+    const end = scenario.validity.end;
+    if (entry === undefined || end === undefined) {
+      setPathStatus("error", "Selected body or path interval is unavailable.");
+      return;
+    }
+    setPathStatus("pending", "Sampling public engine states…");
+    solarSystemScene?.clearPaths();
+    try {
+      const path = pathCache.getOrCreate({
+        objectId: selectedId,
+        focusId,
+        outputFrame: scenario.rootFrame,
+        interval: { start: scenario.validity.start, end },
+        sampleCount: 96,
+        motionRevision: entry.record.motion.motionRevision,
+        configurationRevision: entry.record.motion.configurationRevision,
+        stateAt: (objectIdValue, target, outputFrame) =>
+          stateSource.stateAt(objectIdValue, focusId, target, outputFrame),
+      });
+      solarSystemScene?.setPath(path);
+      pathVisible = true;
+      setPathStatus("ready", `Sampled ${path.sampleCount} public states · ${path.interval.start.seconds}s–${path.interval.end.seconds}s · focus ${focusId}`);
+    } catch (error) {
+      pathVisible = false;
+      const message = error instanceof Error ? error.message : String(error);
+      setPathStatus("error", `Path sampling failed: ${message}`);
+    }
+  }
+
+  function clearCurrentPaths(): void {
+    pathVisible = false;
+    solarSystemScene?.clearPaths();
+    setPathStatus("pending", "No path sampled.");
+  }
+
+  function jumpToInputInstant(): void {
+    try {
+      const seconds = Number(jumpSeconds?.value ?? "");
+      const nanoseconds = Number(jumpNanoseconds?.value ?? "0");
+      if (!Number.isSafeInteger(seconds) || !Number.isSafeInteger(nanoseconds)) {
+        throw new RangeError("Jump values must be safe integers");
+      }
+      const target = simulationInstant(seconds, nanoseconds);
+      const end = scenario.validity.end;
+      if (compareSimulationInstants(target, scenario.validity.start) < 0
+          || (end !== undefined && compareSimulationInstants(target, end) >= 0)) {
+        throw new RangeError("Jump instant is outside the supported scenario interval");
+      }
+      clock.jump(target, performance.now());
+      updateClockUi();
+      requestCurrentState();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPathStatus("error", `Exact jump failed: ${message}`);
+    }
+  }
+
   function updateSelectedPanel(currentScenario: SolarSystemScenario, frame: ScenarioStateFrame): void {
     if (selectedPanel === null) return;
-    const selectedId = selectedSelect === null ? SUN_ID : objectId(selectedSelect.value || SUN_ID);
+    const selectedId = selectedBodyId();
     const index = currentScenario.objectIds.indexOf(selectedId);
     const entry = currentScenario.bodyById.get(selectedId);
     const state = index < 0 ? undefined : frame.states[index];
@@ -140,7 +232,7 @@ async function bootstrap(): Promise<void> {
     const properties = entry.record.properties;
     selectedPanel.textContent = `${entry.definition.name} · ObjectId ${entry.definition.id} · ${entry.definition.type}\n` +
       `mass ${properties.mass ?? "n/a"} kg · μ ${properties.mu ?? "n/a"} m³/s² · radius ${properties.physicalRadius ?? "n/a"} m\n` +
-      `model ${entry.record.motion.modelKind} · motion rev ${entry.record.motion.motionRevision}\n${formatState(state)}`;
+      `model ${entry.record.motion.modelKind} · motion rev ${entry.record.motion.motionRevision} · reference ${entry.record.referenceStatus}\n${formatState(state)}`;
   }
 
   try {
@@ -151,6 +243,7 @@ async function bootstrap(): Promise<void> {
         if (selectedSelect !== null) selectedSelect.value = objectId;
         const snapshot = coordinator.latestSnapshot();
         if (snapshot !== undefined) updateSelectedPanel(scenario, snapshot.value);
+        if (pathVisible) sampleCurrentPath();
       },
     });
     solarSystemScene.setSelected(SUN_ID);
@@ -167,6 +260,7 @@ async function bootstrap(): Promise<void> {
     if (focusSelect.value.length === 0) return;
     focusId = objectId(focusSelect.value);
     requestCurrentState();
+    if (pathVisible) sampleCurrentPath();
   });
   selectedSelect?.addEventListener("change", () => {
     if (solarSystemScene !== undefined && selectedSelect.value.length > 0) {
@@ -174,16 +268,32 @@ async function bootstrap(): Promise<void> {
     }
     const snapshot = coordinator.latestSnapshot();
     if (snapshot !== undefined) updateSelectedPanel(scenario, snapshot.value);
+    if (pathVisible) sampleCurrentPath();
   });
   focusSelected?.addEventListener("click", () => {
     if (selectedSelect === null || selectedSelect.value.length === 0) return;
     focusId = objectId(selectedSelect.value);
     if (focusSelect !== null) focusSelect.value = focusId;
     requestCurrentState();
+    if (pathVisible) sampleCurrentPath();
   });
   radiusMode?.addEventListener("change", () => {
     solarSystemScene?.setRadiusMode(radiusMode.value === "physical" ? "physical" : "visible");
   });
+  warpSelect?.addEventListener("change", () => {
+    try {
+      const value = Number(warpSelect.value);
+      clock.setWarpFactor(value, performance.now());
+      updateClockUi();
+      requestCurrentState();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPathStatus("error", `Warp change failed: ${message}`);
+    }
+  });
+  jumpTime?.addEventListener("click", jumpToInputInstant);
+  samplePath?.addEventListener("click", sampleCurrentPath);
+  clearPath?.addEventListener("click", clearCurrentPaths);
   canvas.addEventListener("click", (event) => {
     if (solarSystemScene === undefined || renderShell === undefined) return;
     const bounds = canvas.getBoundingClientRect();
@@ -197,6 +307,7 @@ async function bootstrap(): Promise<void> {
     playPause.addEventListener("click", () => {
       clock.toggle(performance.now());
       updateClockUi();
+      requestCurrentState();
     });
   }
 

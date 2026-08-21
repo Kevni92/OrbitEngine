@@ -22,7 +22,12 @@ function scenario(): SolarSystemScenario {
 test("state source uses a batch query for the Sun view and relative queries for focused views", () => {
   const batchCalls: unknown[][] = [];
   const relativeCalls: unknown[][] = [];
+  const stateCalls: unknown[][] = [];
   const engine = {
+    stateAt(objectId: unknown, target: unknown, frame: unknown) {
+      stateCalls.push([objectId, target, frame]);
+      return { position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, epoch: target, referenceFrame: frame };
+    },
     statesAt(ids: readonly unknown[], target: unknown, frame: unknown) {
       batchCalls.push([ids, target, frame]);
       return ids.map(() => ({ position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, epoch: target, referenceFrame: frame }));
@@ -44,4 +49,9 @@ test("state source uses a batch query for the Sun view and relative queries for 
   assert.equal(batchCalls.length, 1);
   assert.equal(relativeCalls.length, SCENARIO_OBJECT_IDS.length);
   assert.ok(relativeCalls.every((call) => call[1] === focus));
+
+  source.stateAt(focus, SUN_ID, target, SCENARIO_ROOT_FRAME);
+  assert.equal(stateCalls.length, 1);
+  source.stateAt(focus, focus, target, SCENARIO_ROOT_FRAME);
+  assert.equal(relativeCalls.length, SCENARIO_OBJECT_IDS.length + 1);
 });
