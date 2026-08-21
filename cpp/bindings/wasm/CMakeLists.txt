@@ -179,7 +179,12 @@ set(ORBIT_ENGINE_WASM_EXPORTS
   _orbit_engine_two_body_result_velocity_y
   _orbit_engine_two_body_result_velocity_z
 )
-list(JOIN ORBIT_ENGINE_WASM_EXPORTS "','" ORBIT_ENGINE_WASM_EXPORTS_JOINED)
+string(REPLACE ";" "\n" ORBIT_ENGINE_WASM_EXPORTS_FILE_CONTENT "${ORBIT_ENGINE_WASM_EXPORTS}")
+set(ORBIT_ENGINE_WASM_EXPORTS_FILE "${CMAKE_CURRENT_BINARY_DIR}/orbit_engine_wasm_exports.txt")
+file(GENERATE
+  OUTPUT "${ORBIT_ENGINE_WASM_EXPORTS_FILE}"
+  CONTENT "${ORBIT_ENGINE_WASM_EXPORTS_FILE_CONTENT}\n"
+)
 
 add_executable(orbit_engine_wasm
   wasm_binding.cpp
@@ -192,7 +197,7 @@ target_link_options(orbit_engine_wasm PRIVATE
   "-sEXPORT_ES6=1"
   "-sENVIRONMENT=web,node"
   "-sALLOW_MEMORY_GROWTH=1"
-  "-sEXPORTED_FUNCTIONS=['${ORBIT_ENGINE_WASM_EXPORTS_JOINED}']"
+  "-sEXPORTED_FUNCTIONS=@${ORBIT_ENGINE_WASM_EXPORTS_FILE}"
   "--no-entry"
 )
 

@@ -34,7 +34,7 @@ bool round_trip_time(
 ) {
   return orbit_engine::time::round_trip_wire(
     orbit_engine::time::TimeWire{seconds_high, seconds_low, nanoseconds},
-    output,
+    output
   );
 }
 
