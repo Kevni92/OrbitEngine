@@ -17,6 +17,10 @@
     "package:smoke": "node scripts/package-smoke.mjs",
     "browser:build": "pnpm --filter orbit-engine build && pnpm --filter orbit-engine-browser-smoke typecheck && pnpm --filter orbit-engine-browser-smoke build",
     "browser:smoke": "pnpm --filter orbit-engine-browser-smoke smoke",
+    "demo": "pnpm --filter orbit-engine-solar-system-demo dev",
+    "demo:build": "pnpm --filter orbit-engine build && pnpm --filter orbit-engine-solar-system-demo typecheck && pnpm --filter orbit-engine-solar-system-demo build",
+    "demo:test": "pnpm --filter orbit-engine-solar-system-demo test:unit",
+    "demo:smoke": "pnpm --filter orbit-engine-solar-system-demo smoke",
     "test": "pnpm run test:cpp && pnpm run test:ts",
     "check": "pnpm run build:ts && pnpm run test:cpp && pnpm run test:ts"
   },

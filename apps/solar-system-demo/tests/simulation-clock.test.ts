@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { simulationInstant } from "orbit-engine";
+import { SimulationClock } from "../src/simulation/simulation-clock.js";
+
+test("SimulationClock advances from an exact instant using warp", () => {
+  const clock = new SimulationClock(simulationInstant(10, 500_000_000), 2);
+  clock.play(1000);
+  clock.advanceTo(1500);
+  assert.deepEqual(clock.currentInstant(), simulationInstant(11, 500_000_000));
+});
+
+test("SimulationClock is frame-rate independent and pause freezes time", () => {
+  const oneFrame = new SimulationClock();
+  oneFrame.play(0);
+  oneFrame.advanceTo(1000);
+
+  const manyFrames = new SimulationClock();
+  manyFrames.play(0);
+  manyFrames.advanceTo(333);
+  manyFrames.advanceTo(666);
+  manyFrames.advanceTo(1000);
+
+  assert.deepEqual(oneFrame.currentInstant(), simulationInstant(1));
+  assert.deepEqual(manyFrames.currentInstant(), oneFrame.currentInstant());
+  manyFrames.pause(1000);
+  manyFrames.advanceTo(5000);
+  assert.deepEqual(manyFrames.currentInstant(), oneFrame.currentInstant());
+});
+
+test("warp changes and exact jumps reset the wall-time anchor", () => {
+  const clock = new SimulationClock();
+  clock.play(0);
+  clock.setWarpFactor(10, 1000);
+  clock.advanceTo(1100);
+  assert.deepEqual(clock.currentInstant(), simulationInstant(2));
+  clock.jump(simulationInstant(42, 7), 1100);
+  clock.advanceTo(1200);
+  assert.deepEqual(clock.currentInstant(), simulationInstant(43, 7));
+});
+
+test("clock authority keeps nanoseconds exact instead of accumulating float seconds", () => {
+  const clock = new SimulationClock();
+  clock.play(0);
+  clock.advanceTo(0.001);
+  assert.deepEqual(clock.currentInstant(), simulationInstant(0, 1_000));
+});

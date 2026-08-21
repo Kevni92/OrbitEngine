@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OrbitEngine Solar-System Reference Demo</title>
+  </head>
+  <body>
+    <main class="demo-shell">
+      <section class="demo-panel" aria-labelledby="demo-title">
+        <p class="eyebrow">OrbitEngine reference consumer</p>
+        <h1 id="demo-title">Solar-System demo shell</h1>
+        <p id="scenario-note">The deterministic Solar-System scenario arrives in the next stage.</p>
+        <dl class="status-list">
+          <div>
+            <dt>Engine</dt>
+            <dd id="engine-status" data-state="initializing">Initializing WASM…</dd>
+          </div>
+          <div>
+            <dt>Rendering</dt>
+            <dd id="rendering-status" data-state="pending">Checking WebGL 2…</dd>
+          </div>
+          <div>
+            <dt>Simulation instant</dt>
+            <dd id="simulation-instant">0s + 0ns</dd>
+          </div>
+        </dl>
+        <button id="play-pause" type="button" disabled>Play</button>
+      </section>
+      <canvas id="scene" aria-label="OrbitEngine demo scene"></canvas>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

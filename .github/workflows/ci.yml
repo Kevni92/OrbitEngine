@@ -129,6 +129,9 @@ jobs:
       - run: pnpm browser:build
       - run: pnpm --filter orbit-engine-browser-smoke exec playwright install --with-deps chromium
       - run: pnpm browser:smoke
+      - run: pnpm demo:build
+      - run: pnpm demo:test
+      - run: pnpm demo:smoke
 
   parity:
     name: Backend parity (Node ${{ matrix.node }})
