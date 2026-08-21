@@ -8,6 +8,7 @@ import type { PropagationWire } from "../propagation-wire.js";
 import type { RegistryWire } from "../registry-wire.js";
 import type { FrameRegistryWire } from "../frame-registry-wire.js";
 import type { TwoBodyWire } from "../two-body-wire.js";
+import type { EmscriptenWasmFactoryModule } from "../wasm-factory.js";
 
 type ObjectRoundTripArgs = [
   number,
@@ -241,12 +242,13 @@ interface WasmModuleFactory {
 }
 
 export async function loadWasmBackend(): Promise<Backend> {
-  const wasmDirectory = new URL("../../../../wasm/", import.meta.url);
-  const moduleUrl = new URL("orbit_engine_wasm.js", wasmDirectory);
+  const wasmBinaryUrl = new URL("../../../../wasm/orbit_engine_wasm.wasm", import.meta.url);
 
-  let imported: { default?: unknown };
+  let imported: EmscriptenWasmFactoryModule;
   try {
-    imported = (await import(moduleUrl.href)) as { default?: unknown };
+    // The generated Emscripten module is supplied by the WASM build/package step.
+    // @ts-expect-error The generated module is intentionally absent from source-only builds.
+    imported = (await import("../../../../wasm/orbit_engine_wasm.js")) as EmscriptenWasmFactoryModule;
   } catch (cause) {
     throw new BackendInitializationError("wasm", "WASM backend module could not be loaded", cause);
   }
@@ -259,7 +261,12 @@ export async function loadWasmBackend(): Promise<Backend> {
   let module: WasmModule;
   try {
     module = await (factory as WasmModuleFactory)({
-      locateFile: (fileName) => new URL(fileName, wasmDirectory).href,
+      locateFile: (fileName) => {
+        if (fileName !== "orbit_engine_wasm.wasm") {
+          throw new Error(`Unexpected Emscripten sidecar requested: ${fileName}`);
+        }
+        return wasmBinaryUrl.href;
+      },
     });
   } catch (cause) {
     throw new BackendInitializationError("wasm", "WASM backend module initialization failed", cause);

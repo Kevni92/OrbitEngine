@@ -15,6 +15,8 @@
     "test:wasm": "pnpm --filter orbit-engine test:wasm",
     "test:parity": "pnpm --filter orbit-engine test:parity",
     "package:smoke": "node scripts/package-smoke.mjs",
+    "browser:build": "pnpm --filter orbit-engine build && pnpm --filter orbit-engine-browser-smoke typecheck && pnpm --filter orbit-engine-browser-smoke build",
+    "browser:smoke": "pnpm --filter orbit-engine-browser-smoke smoke",
     "test": "pnpm run test:cpp && pnpm run test:ts",
     "check": "pnpm run build:ts && pnpm run test:cpp && pnpm run test:ts"
   },
