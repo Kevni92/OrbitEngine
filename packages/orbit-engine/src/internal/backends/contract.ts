@@ -1,7 +1,8 @@
 import type { TimeWire } from "../time-wire.js";
 import type { ObjectWire } from "../object-wire.js";
+import type { FrameWire } from "../frame-wire.js";
 
-export const BINDING_PROTOCOL_VERSION = 3;
+export const BINDING_PROTOCOL_VERSION = 4;
 
 export type BackendKind = "native" | "wasm";
 
@@ -17,6 +18,7 @@ export interface Backend {
   roundTripTime(value: TimeWire): TimeWire;
   roundTripDouble(value: number): number;
   roundTripObject(value: ObjectWire): ObjectWire;
+  roundTripFrame(value: FrameWire): FrameWire;
 }
 
 export interface RawBackendBinding {
@@ -25,6 +27,7 @@ export interface RawBackendBinding {
   roundTripTime(value: unknown): unknown;
   roundTripDouble(value: unknown): unknown;
   roundTripObject(value: unknown): unknown;
+  roundTripFrame(value: unknown): unknown;
 }
 
 export interface RawInitializationResult {

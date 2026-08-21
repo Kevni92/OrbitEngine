@@ -1,4 +1,5 @@
 #include "orbit_engine/core.hpp"
+#include "orbit_engine/frame.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/time.hpp"
 
@@ -105,6 +106,57 @@ double collision_radius_or_zero(const std::optional<orbit_engine::object::Object
   return value.has_value() ? value->properties.collision_bounding_radius.value : 0.0;
 }
 
+#define FRAME_PARAMETERS \
+  std::uint32_t reference_frame_id_high, \
+  std::uint32_t reference_frame_id_low, \
+  std::int32_t epoch_seconds_high, \
+  std::uint32_t epoch_seconds_low, \
+  std::uint32_t epoch_nanoseconds, \
+  double translation_x, \
+  double translation_y, \
+  double translation_z, \
+  double origin_velocity_x, \
+  double origin_velocity_y, \
+  double origin_velocity_z, \
+  double rotation_w, \
+  double rotation_x, \
+  double rotation_y, \
+  double rotation_z, \
+  double angular_velocity_x, \
+  double angular_velocity_y, \
+  double angular_velocity_z
+
+#define FRAME_ARGUMENTS \
+  reference_frame_id_high, reference_frame_id_low, \
+  epoch_seconds_high, epoch_seconds_low, epoch_nanoseconds, \
+  translation_x, translation_y, translation_z, \
+  origin_velocity_x, origin_velocity_y, origin_velocity_z, \
+  rotation_w, rotation_x, rotation_y, rotation_z, \
+  angular_velocity_x, angular_velocity_y, angular_velocity_z
+
+orbit_engine::frame::FrameWire round_trip_frame_or_zero(FRAME_PARAMETERS) {
+  const orbit_engine::frame::FrameWire input{
+    reference_frame_id_high,
+    reference_frame_id_low,
+    orbit_engine::time::TimeWire{epoch_seconds_high, epoch_seconds_low, epoch_nanoseconds},
+    translation_x,
+    translation_y,
+    translation_z,
+    origin_velocity_x,
+    origin_velocity_y,
+    origin_velocity_z,
+    rotation_w,
+    rotation_x,
+    rotation_y,
+    rotation_z,
+    angular_velocity_x,
+    angular_velocity_y,
+    angular_velocity_z,
+  };
+  orbit_engine::frame::FrameWire output{};
+  return orbit_engine::frame::round_trip(input, output) ? output : orbit_engine::frame::FrameWire{};
+}
+
 EMSCRIPTEN_KEEPALIVE std::int32_t orbit_engine_round_trip_time_seconds_high(
   std::int32_t seconds_high,
   std::uint32_t seconds_low,
@@ -134,6 +186,78 @@ EMSCRIPTEN_KEEPALIVE std::uint32_t orbit_engine_round_trip_time_nanoseconds(
 
 EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_double(double value) {
   return orbit_engine::time::round_trip_double(value);
+}
+
+EMSCRIPTEN_KEEPALIVE std::uint32_t orbit_engine_round_trip_frame_reference_frame_id_high(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).reference_frame_id_high;
+}
+
+EMSCRIPTEN_KEEPALIVE std::uint32_t orbit_engine_round_trip_frame_reference_frame_id_low(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).reference_frame_id_low;
+}
+
+EMSCRIPTEN_KEEPALIVE std::int32_t orbit_engine_round_trip_frame_epoch_seconds_high(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).epoch.seconds_high;
+}
+
+EMSCRIPTEN_KEEPALIVE std::uint32_t orbit_engine_round_trip_frame_epoch_seconds_low(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).epoch.seconds_low;
+}
+
+EMSCRIPTEN_KEEPALIVE std::uint32_t orbit_engine_round_trip_frame_epoch_nanoseconds(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).epoch.nanoseconds;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_translation_x(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).translation_x;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_translation_y(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).translation_y;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_translation_z(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).translation_z;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_origin_velocity_x(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).origin_velocity_x;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_origin_velocity_y(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).origin_velocity_y;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_origin_velocity_z(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).origin_velocity_z;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_rotation_w(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).rotation_w;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_rotation_x(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).rotation_x;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_rotation_y(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).rotation_y;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_rotation_z(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).rotation_z;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_angular_velocity_x(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).angular_velocity_x;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_angular_velocity_y(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).angular_velocity_y;
+}
+
+EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_frame_angular_velocity_z(FRAME_PARAMETERS) {
+  return round_trip_frame_or_zero(FRAME_ARGUMENTS).angular_velocity_z;
 }
 
 EMSCRIPTEN_KEEPALIVE std::uint32_t orbit_engine_round_trip_object_id_high(
@@ -333,5 +457,8 @@ EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_object_collision_radius(
     object_id_high, object_id_low, object_type_code, mass_present, mass, mu_present, mu,
     physical_radius_present, physical_radius, collision_bounding_radius_present, collision_bounding_radius));
 }
+
+#undef FRAME_ARGUMENTS
+#undef FRAME_PARAMETERS
 
 }

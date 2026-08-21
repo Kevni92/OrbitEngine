@@ -1,3 +1,4 @@
+#include "orbit_engine/frame.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/time.hpp"
@@ -23,7 +24,7 @@ int main() {
     return 1;
   }
 
-  if (orbit_engine::kBindingProtocolVersion != 3) {
+  if (orbit_engine::kBindingProtocolVersion != 4) {
     std::cerr << "unexpected binding protocol version\n";
     return 1;
   }
@@ -223,6 +224,100 @@ int main() {
   CHECK(!orbit_engine::object::round_trip(
     ObjectWire{maxIdWire.high, maxIdWire.low, 0, properties},
     objectRoundTrip
+  ));
+
+  using orbit_engine::frame::CartesianState;
+  using orbit_engine::frame::FrameWire;
+  using orbit_engine::frame::Quaternion;
+  using orbit_engine::frame::ReferenceFrameId;
+  using orbit_engine::frame::RigidStateTransform;
+  using orbit_engine::frame::Vec3;
+
+  const std::array<ReferenceFrameId, 5> frameIds{
+    1,
+    0xFFFF'FFFFULL,
+    0x1'0000'0000ULL,
+    9'007'199'254'740'993ULL,
+    std::numeric_limits<ReferenceFrameId>::max(),
+  };
+  for (const auto id : frameIds) {
+    const auto wire = orbit_engine::frame::reference_frame_id_to_wire(id);
+    CHECK(orbit_engine::frame::is_valid(id));
+    CHECK(orbit_engine::frame::reference_frame_id_from_wire(wire) == id);
+  }
+  CHECK(!orbit_engine::frame::is_valid(0));
+  CHECK(orbit_engine::frame::reference_frame_id_from_wire({0, 0}) == 0);
+
+  const SimulationInstant frameEpoch{12, 345};
+  const RigidStateTransform rotating{
+    Vec3{10.0, 20.0, 30.0},
+    Vec3{2.0, 3.0, 4.0},
+    Quaternion{1.0, 0.0, 0.0, 0.0},
+    Vec3{0.0, 0.0, 1.0},
+    frameEpoch,
+  };
+  const CartesianState state{
+    Vec3{1.0, 0.0, 0.0},
+    Vec3{0.0, 5.0, 0.0},
+    frameEpoch,
+  };
+  CHECK(orbit_engine::frame::is_valid(rotating));
+  const auto transformed = orbit_engine::frame::transform(rotating, state);
+  CHECK(transformed.has_value());
+  CHECK(transformed->position.x == 11.0);
+  CHECK(transformed->position.y == 20.0);
+  CHECK(transformed->position.z == 30.0);
+  CHECK(transformed->velocity.x == 2.0);
+  CHECK(transformed->velocity.y == 9.0);
+  CHECK(transformed->velocity.z == 4.0);
+  CHECK(transformed->epoch.seconds == frameEpoch.seconds);
+  CHECK(transformed->epoch.nanoseconds == frameEpoch.nanoseconds);
+  CHECK(!orbit_engine::frame::transform(rotating, CartesianState{state.position, state.velocity, {13, 0}}).has_value());
+
+  const auto inverse = orbit_engine::frame::inverse(rotating);
+  CHECK(inverse.has_value());
+  const auto identity = orbit_engine::frame::compose(rotating, *inverse);
+  CHECK(identity.has_value());
+  CHECK(std::abs(identity->translation.x) < 1e-12);
+  CHECK(std::abs(identity->translation.y) < 1e-12);
+  CHECK(std::abs(identity->translation.z) < 1e-12);
+  CHECK(std::abs(identity->origin_velocity.x) < 1e-12);
+  CHECK(std::abs(identity->origin_velocity.y) < 1e-12);
+  CHECK(std::abs(identity->origin_velocity.z) < 1e-12);
+  CHECK(std::abs(identity->rotation.w - 1.0) < 1e-12);
+  CHECK(std::abs(identity->angular_velocity.x) < 1e-12);
+  CHECK(std::abs(identity->angular_velocity.y) < 1e-12);
+  CHECK(std::abs(identity->angular_velocity.z) < 1e-12);
+
+  const auto frameIdWire = orbit_engine::frame::reference_frame_id_to_wire(
+    std::numeric_limits<ReferenceFrameId>::max());
+  const FrameWire frameWire{
+    frameIdWire.high,
+    frameIdWire.low,
+    orbit_engine::time::to_wire(frameEpoch),
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+  };
+  CHECK(orbit_engine::frame::is_valid(frameWire));
+  FrameWire frameRoundTrip{};
+  CHECK(orbit_engine::frame::round_trip(frameWire, frameRoundTrip));
+  CHECK(frameRoundTrip.reference_frame_id_high == frameWire.reference_frame_id_high);
+  CHECK(frameRoundTrip.reference_frame_id_low == frameWire.reference_frame_id_low);
+  CHECK(frameRoundTrip.rotation_w == 1.0);
+  CHECK(!orbit_engine::frame::round_trip(
+    FrameWire{0, 0, frameWire.epoch, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    frameRoundTrip
   ));
 
   return 0;
