@@ -65,6 +65,10 @@ Only pair types enabled by interaction policy need to participate.
 
 Large time jumps should not require executing millions of fixed simulation ticks. Stable trajectories can be queried directly at future times while the engine maintains a queue/index of relevant scheduled events.
 
+The canonical clock/advance rules are defined in [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md). Mutable advancement is monotonic; advancing from `t0` to `t1` processes scheduled work in `(t0, t1]`, may jump directly to the next relevant event, drains deterministic same-time work before moving past that instant, and then continues toward the target. Internal refinement/integration sample times are not global simulation ticks.
+
+Time warp changes how far the requested target advances; it does not scale physical equations or redefine the duration of a second. UI/game call frequency must not itself determine the physical model.
+
 Conceptually:
 
 ```text
