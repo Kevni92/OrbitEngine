@@ -11,6 +11,7 @@ import {
   formatSpeed,
   formatVector,
 } from "./formatters.js";
+import { formatLocalDateTimeInput } from "./civil-time.js";
 
 export interface DemoPanelOptions {
   readonly onPlayPause?: () => void;
@@ -23,6 +24,7 @@ export interface DemoPanelOptions {
   readonly onOrbitsChange?: (visible: boolean) => void;
   readonly onAxesChange?: (visible: boolean) => void;
   readonly onExactJump?: (seconds: number, nanoseconds: number) => void;
+  readonly onLocalDateTimeJump?: (value: string) => void;
 }
 
 function element<T extends HTMLElement>(id: string): T {
@@ -53,6 +55,9 @@ export class DemoPanel {
   readonly #jumpNanoseconds = element<HTMLInputElement>("jump-nanoseconds");
   readonly #jumpTime = element<HTMLButtonElement>("jump-time");
   readonly #jumpError = element<HTMLElement>("jump-error");
+  readonly #localDateTime = element<HTMLInputElement>("jump-local-datetime");
+  readonly #localDateTimeJump = element<HTMLButtonElement>("jump-local-time");
+  readonly #localDateTimeError = element<HTMLElement>("local-jump-error");
   readonly #selectedName = element<HTMLElement>("selected-name");
   readonly #selectedType = element<HTMLElement>("selected-type");
   readonly #summaryDistance = element<HTMLElement>("summary-distance");
@@ -105,6 +110,10 @@ export class DemoPanel {
       this.clearExactJumpError();
       this.#options.onExactJump?.(Number(this.#jumpSeconds.value), Number(this.#jumpNanoseconds.value));
     });
+    this.#localDateTimeJump.addEventListener("click", () => {
+      this.clearLocalDateTimeJumpError();
+      this.#options.onLocalDateTimeJump?.(this.#localDateTime.value);
+    });
     this.#panelToggle.addEventListener("click", () => {
       const collapsed = this.#panel.classList.toggle("is-collapsed");
       this.#panelToggle.setAttribute("aria-expanded", String(!collapsed));
@@ -151,10 +160,13 @@ export class DemoPanel {
     this.#jumpSeconds.disabled = !ready;
     this.#jumpNanoseconds.disabled = !ready;
     this.#jumpTime.disabled = !ready;
+    this.#localDateTime.disabled = !ready;
+    this.#localDateTimeJump.disabled = !ready;
   }
 
   setSimulationTime(instant: SimulationInstant, playing: boolean): void {
     this.#simulationTime.textContent = formatSimulationTime(instant);
+    if (document.activeElement !== this.#localDateTime) this.#localDateTime.value = formatLocalDateTimeInput(instant);
     this.#playPause.textContent = playing ? "Pause" : "Play";
     this.#playPause.setAttribute("aria-label", playing ? "Pause simulation" : "Play simulation");
   }
@@ -241,6 +253,14 @@ export class DemoPanel {
 
   clearExactJumpError(): void {
     setStatus(this.#jumpError, "pending", "");
+  }
+
+  setLocalDateTimeJumpError(message: string): void {
+    setStatus(this.#localDateTimeError, "error", message);
+  }
+
+  clearLocalDateTimeJumpError(): void {
+    setStatus(this.#localDateTimeError, "pending", "");
   }
 
   #isPressed(button: HTMLButtonElement): boolean {

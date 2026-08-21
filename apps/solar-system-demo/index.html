@@ -46,8 +46,16 @@
               </label>
             </div>
             <p class="simulation-time-label">Simulation time</p>
-            <p class="simulation-time" id="simulation-instant" aria-live="polite">J2000 + 0 d 00:00:00</p>
+            <p class="simulation-time" id="simulation-instant" aria-live="polite">Local time loading…</p>
             <p class="inline-error" id="simulation-error" data-state="pending" aria-live="polite"></p>
+            <div class="local-time-editor">
+              <label class="field" for="jump-local-datetime">Change date and time in your browser timezone
+                <input id="jump-local-datetime" type="datetime-local" step="0.001" disabled />
+              </label>
+              <button class="secondary-button" id="jump-local-time" type="button" disabled>Jump to local time</button>
+              <p class="field-help">OrbitEngine keeps the exact TDB/J2000 time internally.</p>
+              <p class="inline-error" id="local-jump-error" data-state="pending" aria-live="polite"></p>
+            </div>
           </section>
 
           <section class="panel-section" id="selected-body-section" aria-labelledby="selected-heading">

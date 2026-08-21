@@ -24,16 +24,23 @@ export interface OrbitVisualizationRequest {
   readonly body: RegisteredScenarioBody;
   readonly cache: PathCache;
   readonly stateAt: OrbitStateAt;
+  /** Start the visual reference path at the current simulation instant. */
+  readonly anchorInstant?: SimulationInstant;
 }
 
 export function orbitInterval(
   scenario: SolarSystemScenario,
   definition: OrbitVisualizationDefinition,
+  anchorInstant: SimulationInstant = scenario.validity.start,
 ): { readonly start: SimulationInstant; readonly end: SimulationInstant } {
   if (!Number.isSafeInteger(definition.sampleSpanSeconds) || definition.sampleSpanSeconds <= 0) {
     throw new RangeError("Orbit visualization span must be a positive safe integer");
   }
-  const start = scenario.validity.start;
+  if (compareSimulationInstants(anchorInstant, scenario.validity.start) < 0
+      || compareSimulationInstants(anchorInstant, scenario.validity.end!) >= 0) {
+    throw new RangeError("Orbit visualization anchor is outside the supported scenario interval");
+  }
+  const start = anchorInstant;
   const candidateEnd = simulationInstant(start.seconds + definition.sampleSpanSeconds, start.nanoseconds);
   const end = compareSimulationInstants(candidateEnd, scenario.validity.end!) < 0
     ? candidateEnd
@@ -46,7 +53,7 @@ export function createOrbitPath(request: OrbitVisualizationRequest): OrbitPath |
   const centralBodyId = request.body.definition.centralBody;
   const visualization = request.body.definition.propagation.orbitVisualization;
   if (centralBodyId === undefined || visualization === undefined) return undefined;
-  const interval = orbitInterval(request.scenario, visualization);
+  const interval = orbitInterval(request.scenario, visualization, request.anchorInstant);
   return request.cache.getOrCreate({
     objectId: request.body.definition.id,
     focusId: centralBodyId,

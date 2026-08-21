@@ -72,6 +72,7 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 select, input { min-width: 0; width: 100%; }
 .simulation-time-label { color: var(--text-muted); font-size: .7rem; margin-top: .22rem; }
 .simulation-time { color: var(--text-primary); font-variant-numeric: tabular-nums; font-size: 1.3rem; font-weight: 650; letter-spacing: .01em; }
+.local-time-editor { border-top: 1px solid var(--section-separator); display: grid; gap: .55rem; margin-top: .8rem; padding-top: .8rem; }
 .field-help, .panel-footnote, .scenario-note, .orbit-status { color: var(--text-subtle); font-size: .69rem; line-height: 1.45; }
 .toggle-grid { display: grid; gap: .45rem; grid-template-columns: repeat(3, 1fr); }
 .toggle-button { align-items: center; display: flex; flex-direction: column; gap: .22rem; justify-content: center; min-height: 3rem; padding: .45rem .25rem; }

@@ -16,6 +16,7 @@ import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visuali
 import { SimulationClock } from "./simulation/simulation-clock.js";
 import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
 import { DemoPanel } from "./ui/demo-panel.js";
+import { simulationInstantFromLocalDateTimeInput } from "./ui/civil-time.js";
 import {
   compareSimulationInstants,
   objectId,
@@ -90,6 +91,7 @@ async function bootstrap(): Promise<void> {
           cache: pathCache,
           stateAt: (objectIdValue, centralBodyId, target, outputFrame) =>
             stateSource!.relativeStateAt(objectIdValue, centralBodyId, target, outputFrame),
+          anchorInstant: clock.currentInstant(),
         });
         if (path === undefined) continue;
         scene.setPath(path);
@@ -147,10 +149,28 @@ async function bootstrap(): Promise<void> {
         }
         clock.jump(target, performance.now());
         panel.clearExactJumpError();
+        sampleReferenceOrbits();
         updateClockUi();
         requestCurrentState();
       } catch (error) {
         panel.setExactJumpError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    onLocalDateTimeJump: (value) => {
+      try {
+        const target = simulationInstantFromLocalDateTimeInput(value);
+        const end = scenario?.validity.end;
+        if (scenario === undefined || compareSimulationInstants(target, scenario.validity.start) < 0
+            || (end !== undefined && compareSimulationInstants(target, end) >= 0)) {
+          throw new RangeError("Local date/time is outside the supported scenario interval");
+        }
+        clock.jump(target, performance.now());
+        panel.clearLocalDateTimeJumpError();
+        sampleReferenceOrbits();
+        updateClockUi();
+        requestCurrentState();
+      } catch (error) {
+        panel.setLocalDateTimeJumpError(error instanceof Error ? error.message : String(error));
       }
     },
   });

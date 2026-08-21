@@ -4,16 +4,27 @@ import { propagationState, meters, metersPerSecond, referenceFrameId, simulation
 import {
   formatDistance,
   formatExactInstant,
+  formatCanonicalSimulationTime,
   formatRadius,
   formatSimulationTime,
   formatSpeed,
 } from "../src/ui/formatters.js";
+import { formatLocalDateTimeInput, formatLocalSimulationTime, simulationInstantFromLocalDateTimeInput } from "../src/ui/civil-time.js";
 
-test("simulation formatter preserves J2000 offset semantics and exact details", () => {
+test("simulation formatter presents local civil time and keeps canonical details available", () => {
   const instant = simulationInstant(12 * 86_400 + 4 * 3_600 + 31 * 60 + 15, 123_000_000);
-  assert.equal(formatSimulationTime(instant), "J2000 + 12 d 04:31:15.123");
+  assert.equal(formatLocalSimulationTime(instant, "UTC"), "Do, 13.01.2000 16:30:10.939 Uhr");
+  assert.equal(formatCanonicalSimulationTime(instant), "J2000 + 12 d 04:31:15.123");
   assert.equal(formatExactInstant(instant), "seconds: 1053075\nnanoseconds: 123000000");
   assert.deepEqual(instant, simulationInstant(instant.seconds, instant.nanoseconds));
+});
+
+test("local datetime input round-trips at millisecond precision", () => {
+  const instant = simulationInstant(839_828_825, 199_000_000);
+  const input = formatLocalDateTimeInput(instant);
+  const roundTripped = simulationInstantFromLocalDateTimeInput(input);
+  assert.deepEqual(roundTripped, instant);
+  assert.match(formatSimulationTime(roundTripped), /Uhr$/);
 });
 
 test("physical scalar formatters produce readable presentation values", () => {

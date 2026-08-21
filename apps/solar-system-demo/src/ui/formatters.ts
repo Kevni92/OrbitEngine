@@ -1,4 +1,5 @@
 import type { PropagationState, SimulationInstant } from "orbit-engine";
+import { formatLocalSimulationTime } from "./civil-time.js";
 
 const SECONDS_PER_DAY = 86_400;
 const METERS_PER_KILOMETER = 1_000;
@@ -8,7 +9,7 @@ function pad(value: number, width: number): string {
   return String(value).padStart(width, "0");
 }
 
-export function formatSimulationTime(instant: SimulationInstant): string {
+export function formatCanonicalSimulationTime(instant: SimulationInstant): string {
   const sign = instant.seconds < 0 ? "−" : "+";
   const absoluteSeconds = Math.abs(instant.seconds);
   const days = Math.floor(absoluteSeconds / SECONDS_PER_DAY);
@@ -20,6 +21,10 @@ export function formatSimulationTime(instant: SimulationInstant): string {
   const milliseconds = Math.floor(instant.nanoseconds / 1_000_000);
   const suffix = milliseconds === 0 ? "" : `.${pad(milliseconds, 3)}`;
   return `J2000 ${sign} ${days} d ${pad(hours, 2)}:${pad(minutes, 2)}:${pad(wholeSeconds, 2)}${suffix}`;
+}
+
+export function formatSimulationTime(instant: SimulationInstant): string {
+  return formatLocalSimulationTime(instant);
 }
 
 export function formatExactInstant(instant: SimulationInstant): string {

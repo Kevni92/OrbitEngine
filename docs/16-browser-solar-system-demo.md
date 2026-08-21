@@ -335,7 +335,7 @@ The demo may interpolate **purely visual camera motion or UI transitions**, but 
 
 The controller stores an exact OrbitEngine `SimulationInstant` as its current requested/displayed physics instant.
 
-JavaScript `Date` is never the simulation clock. It may be used only by a future formatter after an explicit time-scale/civil conversion exists.
+JavaScript `Date` is never the simulation clock. The demo may use it only at the UI boundary for the explicit TDB/J2000-to-local-civil formatter and local date-time input. The exact `SimulationInstant` seconds/nanoseconds pair remains authoritative; the civil formatter applies the documented J2000 UTC offset and known UTC leap-second table, while the exact seconds/nanoseconds controls remain available for diagnostic jumps.
 
 Browser elapsed time comes from `performance.now()` or the animation callback timestamp. This elapsed number has only presentation-clock meaning.
 

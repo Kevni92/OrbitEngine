@@ -300,9 +300,13 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "4",
     { mass: 5.97219e24, mu: 3.986004418e14, physicalRadius: 6_371_000 },
-    anchor(-62_254_680_645.99345, 136_028_958_886.11104, 0, -27_083.143641357805, -12_394.805283292137, 0, SUN_CENTERED_FRAME),
+    horizonsAnchor(-26_499.0336774305, 132_757.4173383451, 57_556.71847054072, -29.79426007043741, -5.018052308799903, -2.175393802830554, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(31_557_600),
+    {
+      sourceIdentifier: "399 Earth",
+      limitations: "One authoritative JPL Horizons J2000 TDB state vector is propagated by the demo's educational two-body model; this is not a precision long-term ephemeris.",
+    },
   ),
   body(
     MARS_ID,
