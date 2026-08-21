@@ -1,5 +1,6 @@
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/frame.hpp"
+#include "orbit_engine/frame_registry.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
@@ -13,6 +14,7 @@
 namespace {
 
 orbit_engine::registry::Registry g_registry;
+orbit_engine::frame_registry::Registry g_frame_registry;
 
 Napi::Value Initialize(const Napi::CallbackInfo& info) {
   const auto health = orbit_engine::health();
@@ -274,6 +276,60 @@ bool readRegistryWire(const Napi::Value& value, orbit_engine::registry::Registry
     && readInteger("structuralParentLow", 0.0, 4'294'967'295.0, output.structural_parent_low);
 }
 
+bool readFrameRegistryWire(const Napi::Value& value, orbit_engine::frame_registry::FrameRegistryWire& output) {
+  if (!value.IsObject()) return false;
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) return false;
+    const auto number = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number);
+    return true;
+  };
+  const auto readDouble = [&object](const char* name, double& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) return false;
+    target = value.As<Napi::Number>().DoubleValue();
+    return std::isfinite(target);
+  };
+  const auto readBoolean = [&object](const char* name, bool& target) {
+    const auto value = object.Get(name);
+    if (!value.IsBoolean()) return false;
+    target = value.As<Napi::Boolean>().Value();
+    return true;
+  };
+  return readInteger("operationCode", 0.0, 65'535.0, output.operation_code)
+    && readInteger("resultCode", 0.0, 65'535.0, output.result_code)
+    && readInteger("frameIdHigh", 0.0, 4'294'967'295.0, output.frame_id_high)
+    && readInteger("frameIdLow", 0.0, 4'294'967'295.0, output.frame_id_low)
+    && readBoolean("parentPresent", output.parent_present)
+    && readInteger("parentHigh", 0.0, 4'294'967'295.0, output.parent_high)
+    && readInteger("parentLow", 0.0, 4'294'967'295.0, output.parent_low)
+    && readInteger("providerCode", 0.0, 65'535.0, output.provider_code)
+    && readBoolean("dependencyPresent", output.dependency_present)
+    && readInteger("dependencyHigh", 0.0, 4'294'967'295.0, output.dependency_high)
+    && readInteger("dependencyLow", 0.0, 4'294'967'295.0, output.dependency_low)
+    && readInteger("transformReferenceFrameIdHigh", 0.0, 4'294'967'295.0, output.transform.reference_frame_id_high)
+    && readInteger("transformReferenceFrameIdLow", 0.0, 4'294'967'295.0, output.transform.reference_frame_id_low)
+    && readInteger("transformEpochSecondsHigh", -2'147'483'648.0, 2'147'483'647.0, output.transform.epoch.seconds_high)
+    && readInteger("transformEpochSecondsLow", 0.0, 4'294'967'295.0, output.transform.epoch.seconds_low)
+    && readInteger("transformEpochNanoseconds", 0.0, 999'999'999.0, output.transform.epoch.nanoseconds)
+    && readDouble("transformTranslationX", output.transform.translation_x)
+    && readDouble("transformTranslationY", output.transform.translation_y)
+    && readDouble("transformTranslationZ", output.transform.translation_z)
+    && readDouble("transformOriginVelocityX", output.transform.origin_velocity_x)
+    && readDouble("transformOriginVelocityY", output.transform.origin_velocity_y)
+    && readDouble("transformOriginVelocityZ", output.transform.origin_velocity_z)
+    && readDouble("transformRotationW", output.transform.rotation_w)
+    && readDouble("transformRotationX", output.transform.rotation_x)
+    && readDouble("transformRotationY", output.transform.rotation_y)
+    && readDouble("transformRotationZ", output.transform.rotation_z)
+    && readDouble("transformAngularVelocityX", output.transform.angular_velocity_x)
+    && readDouble("transformAngularVelocityY", output.transform.angular_velocity_y)
+    && readDouble("transformAngularVelocityZ", output.transform.angular_velocity_z);
+}
+
 Napi::Object writeWire(Napi::Env env, orbit_engine::time::TimeWire value) {
   auto result = Napi::Object::New(env);
   result.Set("secondsHigh", Napi::Number::New(env, value.seconds_high));
@@ -415,6 +471,40 @@ Napi::Object writeRegistryWire(Napi::Env env, orbit_engine::registry::RegistryWi
   return result;
 }
 
+Napi::Object writeFrameRegistryWire(Napi::Env env, orbit_engine::frame_registry::FrameRegistryWire value) {
+  auto result = Napi::Object::New(env);
+  result.Set("operationCode", Napi::Number::New(env, value.operation_code));
+  result.Set("resultCode", Napi::Number::New(env, value.result_code));
+  result.Set("frameIdHigh", Napi::Number::New(env, value.frame_id_high));
+  result.Set("frameIdLow", Napi::Number::New(env, value.frame_id_low));
+  result.Set("parentPresent", Napi::Boolean::New(env, value.parent_present));
+  result.Set("parentHigh", Napi::Number::New(env, value.parent_high));
+  result.Set("parentLow", Napi::Number::New(env, value.parent_low));
+  result.Set("providerCode", Napi::Number::New(env, value.provider_code));
+  result.Set("dependencyPresent", Napi::Boolean::New(env, value.dependency_present));
+  result.Set("dependencyHigh", Napi::Number::New(env, value.dependency_high));
+  result.Set("dependencyLow", Napi::Number::New(env, value.dependency_low));
+  result.Set("transformReferenceFrameIdHigh", Napi::Number::New(env, value.transform.reference_frame_id_high));
+  result.Set("transformReferenceFrameIdLow", Napi::Number::New(env, value.transform.reference_frame_id_low));
+  result.Set("transformEpochSecondsHigh", Napi::Number::New(env, value.transform.epoch.seconds_high));
+  result.Set("transformEpochSecondsLow", Napi::Number::New(env, value.transform.epoch.seconds_low));
+  result.Set("transformEpochNanoseconds", Napi::Number::New(env, value.transform.epoch.nanoseconds));
+  result.Set("transformTranslationX", Napi::Number::New(env, value.transform.translation_x));
+  result.Set("transformTranslationY", Napi::Number::New(env, value.transform.translation_y));
+  result.Set("transformTranslationZ", Napi::Number::New(env, value.transform.translation_z));
+  result.Set("transformOriginVelocityX", Napi::Number::New(env, value.transform.origin_velocity_x));
+  result.Set("transformOriginVelocityY", Napi::Number::New(env, value.transform.origin_velocity_y));
+  result.Set("transformOriginVelocityZ", Napi::Number::New(env, value.transform.origin_velocity_z));
+  result.Set("transformRotationW", Napi::Number::New(env, value.transform.rotation_w));
+  result.Set("transformRotationX", Napi::Number::New(env, value.transform.rotation_x));
+  result.Set("transformRotationY", Napi::Number::New(env, value.transform.rotation_y));
+  result.Set("transformRotationZ", Napi::Number::New(env, value.transform.rotation_z));
+  result.Set("transformAngularVelocityX", Napi::Number::New(env, value.transform.angular_velocity_x));
+  result.Set("transformAngularVelocityY", Napi::Number::New(env, value.transform.angular_velocity_y));
+  result.Set("transformAngularVelocityZ", Napi::Number::New(env, value.transform.angular_velocity_z));
+  return result;
+}
+
 Napi::Value RoundTripTime(const Napi::CallbackInfo& info) {
   const auto env = info.Env();
   if (info.Length() != 1) {
@@ -526,6 +616,20 @@ Napi::Value RoundTripRegistry(const Napi::CallbackInfo& info) {
   return writeRegistryWire(env, g_registry.command(input));
 }
 
+Napi::Value RoundTripFrameRegistry(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1) {
+    Napi::TypeError::New(env, "roundTripFrameRegistry expects one frame registry wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  orbit_engine::frame_registry::FrameRegistryWire input{};
+  if (!readFrameRegistryWire(info[0], input)) {
+    Napi::TypeError::New(env, "roundTripFrameRegistry received an invalid wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  return writeFrameRegistryWire(env, g_frame_registry.command(input));
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("protocolVersion", Napi::Number::New(env, orbit_engine::kBindingProtocolVersion));
   exports.Set("initialize", Napi::Function::New(env, Initialize));
@@ -535,6 +639,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("roundTripFrame", Napi::Function::New(env, RoundTripFrame));
   exports.Set("roundTripPropagation", Napi::Function::New(env, RoundTripPropagation));
   exports.Set("roundTripRegistry", Napi::Function::New(env, RoundTripRegistry));
+  exports.Set("roundTripFrameRegistry", Napi::Function::New(env, RoundTripFrameRegistry));
   return exports;
 }
 

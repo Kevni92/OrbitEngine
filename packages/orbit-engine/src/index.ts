@@ -1,6 +1,7 @@
 import type { Backend, BackendHealth, BackendKind } from "./internal/backends/contract.js";
 import { initializeBackend, type BackendPreference } from "./internal/backends/selection.js";
 import { ObjectRegistry } from "./registry.js";
+import { FrameRegistry } from "./frame-registry.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -9,6 +10,7 @@ export * from "./properties.js";
 export * from "./frames.js";
 export * from "./propagation.js";
 export * from "./registry.js";
+export * from "./frame-registry.js";
 
 export type OrbitEngineBackend = BackendKind;
 export type OrbitEngineBackendPreference = BackendPreference;
@@ -39,6 +41,7 @@ export class OrbitEngine {
   readonly #health: BackendHealth;
   readonly #backend: Backend;
   #registry?: ObjectRegistry;
+  #frames?: FrameRegistry;
 
   private constructor(backend: Backend, health: BackendHealth) {
     this.backend = backend.kind;
@@ -60,4 +63,10 @@ export class OrbitEngine {
     this.#registry ??= new ObjectRegistry(this.#backend);
     return this.#registry;
   }
+
+  frames(): FrameRegistry {
+    this.#frames ??= new FrameRegistry(this.#backend);
+    return this.#frames;
+  }
+
 }

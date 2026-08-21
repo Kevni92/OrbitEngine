@@ -7,6 +7,7 @@ import { assertObjectRoundTrip } from "../shared/object-roundtrip.js";
 import { assertFrameRoundTrip } from "../shared/frame-roundtrip.js";
 import { assertPropagationRoundTrip } from "../shared/propagation-roundtrip.js";
 import { assertRegistryLifecycle } from "../shared/registry-lifecycle.js";
+import { assertFrameGraph } from "../shared/frame-graph.js";
 import { assertTimeRoundTrip } from "../shared/time-roundtrip.js";
 
 test("real native backend initializes and reports the shared core health", async () => {
@@ -16,7 +17,7 @@ test("real native backend initializes and reports the shared core health", async
   assert.equal(engine.backend, "native");
   assert.deepEqual(health, {
     backend: "native",
-    protocolVersion: 6,
+    protocolVersion: 7,
     coreVersion: 1,
     healthCode: 42,
   });
@@ -27,4 +28,5 @@ test("real native backend initializes and reports the shared core health", async
   assertFrameRoundTrip(backend);
   assertPropagationRoundTrip(backend);
   assertRegistryLifecycle(backend);
+  await assertFrameGraph(backend);
 });
