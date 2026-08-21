@@ -14,6 +14,7 @@ export interface RenderShell {
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
   readonly controls: OrbitControls;
+  centerOn(target: THREE.Vector3): void;
   resize(width: number, height: number): void;
   dispose(): void;
 }
@@ -52,6 +53,12 @@ export function updateCameraClipPlanes(
   return true;
 }
 
+/** Translate the view while preserving the camera's orbit offset and orientation. */
+export function translateViewTo(camera: THREE.Camera, currentTarget: THREE.Vector3, nextTarget: THREE.Vector3): void {
+  camera.position.add(nextTarget.clone().sub(currentTarget));
+  currentTarget.copy(nextTarget);
+}
+
 export function isWebGL2Available(canvas: HTMLCanvasElement): boolean {
   return canvas.getContext("webgl2") !== null;
 }
@@ -85,7 +92,13 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
     scene.clear();
   }
 
-  return { scene, camera, renderer, controls, resize, dispose };
+  function centerOn(target: THREE.Vector3): void {
+    translateViewTo(camera, controls.target, target);
+    controls.update();
+    updateCameraClipPlanes(camera, controls.target);
+  }
+
+  return { scene, camera, renderer, controls, centerOn, resize, dispose };
 }
 
 export interface AnimationLoop {

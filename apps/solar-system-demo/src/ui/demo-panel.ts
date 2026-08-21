@@ -58,6 +58,7 @@ export class DemoPanel {
   readonly #localDateTime = element<HTMLInputElement>("jump-local-datetime");
   readonly #localDateTimeJump = element<HTMLButtonElement>("jump-local-time");
   readonly #localDateTimeError = element<HTMLElement>("local-jump-error");
+  #localDateTimeDraft = false;
   readonly #selectedName = element<HTMLElement>("selected-name");
   readonly #selectedType = element<HTMLElement>("selected-type");
   readonly #summaryDistance = element<HTMLElement>("summary-distance");
@@ -114,6 +115,9 @@ export class DemoPanel {
       this.clearLocalDateTimeJumpError();
       this.#options.onLocalDateTimeJump?.(this.#localDateTime.value);
     });
+    this.#localDateTime.addEventListener("input", () => {
+      this.#localDateTimeDraft = true;
+    });
     this.#panelToggle.addEventListener("click", () => {
       const collapsed = this.#panel.classList.toggle("is-collapsed");
       this.#panelToggle.setAttribute("aria-expanded", String(!collapsed));
@@ -166,9 +170,14 @@ export class DemoPanel {
 
   setSimulationTime(instant: SimulationInstant, playing: boolean): void {
     this.#simulationTime.textContent = formatSimulationTime(instant);
-    if (document.activeElement !== this.#localDateTime) this.#localDateTime.value = formatLocalDateTimeInput(instant);
+    if (!this.#localDateTimeDraft) this.#localDateTime.value = formatLocalDateTimeInput(instant);
     this.#playPause.textContent = playing ? "Pause" : "Play";
     this.#playPause.setAttribute("aria-label", playing ? "Pause simulation" : "Play simulation");
+  }
+
+  syncLocalDateTime(instant: SimulationInstant): void {
+    this.#localDateTimeDraft = false;
+    this.#localDateTime.value = formatLocalDateTimeInput(instant);
   }
 
   setSimulationError(message: string): void {
