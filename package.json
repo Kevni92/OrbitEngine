@@ -1,0 +1,25 @@
+{
+  "name": "orbit-engine-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.4.0",
+  "scripts": {
+    "build": "pnpm run build:ts && pnpm run build:core && pnpm run build:native && pnpm run build:wasm",
+    "build:ts": "pnpm --filter orbit-engine build",
+    "build:core": "node scripts/build-core.mjs",
+    "build:native": "node scripts/build-native.mjs",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "test:cpp": "node scripts/test-core.mjs",
+    "test:ts": "pnpm --filter orbit-engine test:unit",
+    "test:native": "pnpm --filter orbit-engine test:native",
+    "test:wasm": "pnpm --filter orbit-engine test:wasm",
+    "test:parity": "pnpm --filter orbit-engine test:parity",
+    "package:smoke": "node scripts/package-smoke.mjs",
+    "test": "pnpm run test:cpp && pnpm run test:ts",
+    "check": "pnpm run build:ts && pnpm run test:cpp && pnpm run test:ts"
+  },
+  "devDependencies": {
+    "node-addon-api": "8.9.2",
+    "node-api-headers": "1.9.0"
+  }
+}

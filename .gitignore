@@ -1,0 +1,15 @@
+node_modules/
+.pnpm-store/
+
+dist/
+**/dist/
+build/
+cmake-build-*/
+
+packages/orbit-engine/prebuilds/*
+packages/orbit-engine/wasm/*
+*.node
+*.wasm
+*.tgz
+
+.DS_Store
