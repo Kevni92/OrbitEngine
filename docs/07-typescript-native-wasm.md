@@ -11,7 +11,7 @@ Two compiled backends wrap the same portable C++ core:
 
 The concrete repository, packaging, initialization, artifact, test, and CI decisions are defined in [11 — Build, Package, and Backend Architecture](11-build-package-and-backend-architecture.md).
 
-Fundamental unit, time, precision, and marshalling semantics are defined in [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md).
+Fundamental unit, time, precision, and marshalling semantics are defined in [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md). Object identity/state semantics are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md).
 
 ## Layering
 
@@ -30,7 +30,7 @@ binding       binding
 
 The core must:
 
-- contain physics/math/performance-critical algorithms where justified;
+- contain authoritative runtime object-registry state and physics/math/performance-critical algorithms where justified;
 - use portable C++20 without direct Node-API or Emscripten dependencies;
 - expose a narrow C++ interface suitable for multiple bindings;
 - avoid game/domain concepts;
@@ -38,6 +38,7 @@ The core must:
 
 Likely C++ candidates include:
 
+- object registry/lifecycle and dense internal indexing;
 - orbit/state propagation over large object sets;
 - numerical integrators;
 - encounter/broad-phase algorithms;
@@ -79,26 +80,34 @@ Semantics:
 
 Once a valid native module is loaded, protocol mismatch or backend initialization failures are surfaced rather than silently hidden by a WASM fallback.
 
-Raw binding objects, Emscripten modules, artifact paths, and backend implementation classes are internal and are not exported from the normal public package entry point.
+Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense object indexes, and pointer/handle internals are not exported from the normal public package entry point.
 
-## Numeric and time transfer contract
+## Numeric, time, and object transfer contract
 
-Canonical physical continuous values cross the TypeScript/backend boundary as IEEE-754 binary64 (`number` ↔ C++ `double` ↔ WASM `f64`). They must never be silently down-cast to f32.
+Canonical continuous physical values cross as IEEE-754 binary64 (`number` ↔ C++ `double` ↔ WASM `f64`) and are never silently down-cast to f32.
 
-`SimulationInstant` and `Duration` do not cross as a floating-point count of total seconds. Public TypeScript uses safe-integer `seconds` plus integer `nanoseconds`; the portable core uses signed 64-bit seconds plus unsigned nanoseconds. Low-level adapters preserve the 64-bit seconds exactly through signed-high/unsigned-low 32-bit words or an equivalent lossless i64 mechanism. The public API does not require JavaScript `BigInt` for the supported simulation horizon.
+`SimulationInstant`/`Duration` cross through the exact integer codec from document 12, never floating total seconds.
 
-Batch interfaces use binary64 arrays for continuous quantities and exact integer fields/typed arrays for time values. Backend-specific packing is internal and must not leak into public value shapes.
+`ObjectId` is a canonical nominal decimal string in the public TypeScript API and a `uint64_t` in the portable core. Native/WASM adapters preserve the full value exactly through unsigned high/low 32-bit words or an equivalent lossless i64 mechanism; IDs are never marshalled through binary64.
+
+`ObjectType` uses the stable compact integer codes defined in document 13 at the backend boundary while TypeScript exposes the documented named values.
+
+Optional physical properties use explicit presence state, never `NaN` sentinels. Batch interfaces use binary64 arrays for continuous data and integer typed arrays/exact fields for IDs, types, and time values.
+
+Backend-specific packing is internal and must not leak into public value shapes.
 
 ## Performance boundary
 
-Crossing JavaScript ↔ native/WASM boundaries has overhead. Prefer batch-oriented interfaces for large data sets rather than thousands of tiny calls. Data ownership and transfer formats should be designed deliberately once feature-level requirements and profiling data exist.
+Crossing JavaScript ↔ native/WASM boundaries has overhead. Prefer batch-oriented registration/state-query interfaces for large data sets rather than thousands of tiny calls.
 
-Keep orchestration, public validation, unit conversion, and API ergonomics in TypeScript unless measurement or architecture justifies moving work into C++.
+Keep orchestration, public validation, canonical object-ID parsing/formatting, unit conversion, and API ergonomics in TypeScript unless measurement or architecture justifies moving work into C++.
+
+The authoritative live/retired object registry belongs to the portable core so native and WASM cannot diverge in lifecycle semantics.
 
 ## Testing expectation
 
 Where both backends implement the same feature, shared parity tests execute the same high-level scenario against native and WASM.
 
-Exact integer/time normalization, ordering, and marshalling behavior must match exactly. Floating-point feature results use their documented numerical tolerances; parity does not require unconditional bit-identical floating-point results across native and WASM.
+Exact integer/time/object-ID/type/lifecycle behavior must match exactly. Floating-point feature results use documented numerical tolerances; parity does not require unconditional bit-identical floating-point results across native and WASM.
 
 Backend-specific tests additionally cover loading, initialization, marshalling, artifact resolution, and error translation. Portable core behavior is tested directly in C++ through CTest.
