@@ -14,6 +14,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 8. [Development Workflow](08-development-workflow.md) — mandatory issue/branch/PR/CI/merge workflow.
 9. [Glossary](09-glossary.md) — shared terminology.
 10. [Task Types and Agent Routing](10-task-types-and-agent-routing.md) — Architecture, Implementation, Spike, Codex refusal/confirmation rules, and escalation.
+11. [Build, Package, and Backend Architecture](11-build-package-and-backend-architecture.md) — concrete pnpm/CMake layout, backend selection, artifact distribution, platform support, tests, and CI contract.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -27,6 +28,7 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - Expensive simulation is activated only where interaction, perturbation, maneuvering, or collision risk requires it.
 - Public behavior is exposed through TypeScript even when calculations execute in C++.
 - The portable C++ core must not depend on Node.js or Emscripten APIs.
+- Native and WASM backends must preserve equivalent public semantics.
 - Every issue must declare exactly one authoritative task type before execution.
 
 When an architectural decision changes, update the relevant document in the same pull request.
