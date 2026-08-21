@@ -107,6 +107,29 @@ jobs:
       - run: pnpm build:wasm
       - run: pnpm test:wasm
 
+  browser-wasm-smoke:
+    name: Browser WASM consumer smoke
+    runs-on: ubuntu-22.04
+    needs: [wasm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSCRIPTEN_VERSION }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:ts
+      - run: pnpm build:wasm
+      - run: pnpm browser:build
+      - run: pnpm --filter orbit-engine-browser-smoke exec playwright install --with-deps chromium
+      - run: pnpm browser:smoke
+
   parity:
     name: Backend parity (Node ${{ matrix.node }})
     runs-on: ubuntu-22.04
