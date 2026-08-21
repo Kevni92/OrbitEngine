@@ -10,6 +10,7 @@ import { assertPropagationRoundTrip } from "../shared/propagation-roundtrip.js";
 import { assertRegistryLifecycle } from "../shared/registry-lifecycle.js";
 import { assertFrameGraph } from "../shared/frame-graph.js";
 import { assertTwoBodyModel } from "../shared/two-body.js";
+import { assertStateQueryIntegration } from "../shared/state-query.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -41,5 +42,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`two-body analytical propagation has parity on ${name}`, async () => {
     await assertTwoBodyModel(await load());
+  });
+  test(`integrated object state-at-time queries have parity on ${name}`, async () => {
+    await assertStateQueryIntegration(await load());
   });
 }

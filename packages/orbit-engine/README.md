@@ -32,3 +32,9 @@ const id = objectId("18446744073709551615");
 const properties = physicalProperties({ mass: 0, collisionBoundingRadius: 12 });
 const type = ObjectType.spacecraft;
 ~~~
+
+Registered motion can be bound to its production propagation model through the normal `OrbitEngine` facade. Consumers
+can then request exact state-at-time snapshots by `ObjectId`, query multiple objects at one exact epoch, request
+relative state through the frame graph, and obtain engine-created object state sources for dynamic frame providers.
+The engine resolves declared object dependencies internally; applications do not provide a second authoritative
+motion-state machine or a `resolveDependencyState` callback for registered production objects.

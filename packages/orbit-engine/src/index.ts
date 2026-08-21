@@ -1,7 +1,12 @@
 import type { Backend, BackendHealth, BackendKind } from "./internal/backends/contract.js";
 import { initializeBackend, type BackendPreference } from "./internal/backends/selection.js";
 import { ObjectRegistry } from "./registry.js";
-import { FrameRegistry } from "./frame-registry.js";
+import { FrameRegistry, type ObjectFrameStateSource } from "./frame-registry.js";
+import { type ReferenceFrameId } from "./frames.js";
+import { type ObjectId } from "./objects.js";
+import { type PropagationModel, type PropagationState } from "./propagation.js";
+import { ObjectStateQueries } from "./state-query.js";
+import { type SimulationInstant } from "./time.js";
 import {
   createTwoBodyAnalyticalModel,
   type TwoBodyAnalyticalModelConfiguration,
@@ -15,6 +20,7 @@ export * from "./frames.js";
 export * from "./propagation.js";
 export * from "./registry.js";
 export * from "./frame-registry.js";
+export * from "./state-query.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 
@@ -48,6 +54,7 @@ export class OrbitEngine {
   readonly #backend: Backend;
   #registry?: ObjectRegistry;
   #frames?: FrameRegistry;
+  #stateQueries?: ObjectStateQueries;
 
   private constructor(backend: Backend, health: BackendHealth) {
     this.backend = backend.kind;
@@ -75,10 +82,43 @@ export class OrbitEngine {
     return this.#frames;
   }
 
+  stateQueries(): ObjectStateQueries {
+    this.#stateQueries ??= new ObjectStateQueries(this.registry(), this.frames());
+    return this.#stateQueries;
+  }
+
+  bindMotionModel(id: ObjectId, model: PropagationModel): void {
+    this.stateQueries().bindMotionModel(id, model);
+  }
+
+  stateAt(id: ObjectId, target: SimulationInstant, outputFrame?: ReferenceFrameId): PropagationState {
+    return this.stateQueries().stateAt(id, target, outputFrame);
+  }
+
+  statesAt(
+    ids: readonly ObjectId[],
+    target: SimulationInstant,
+    outputFrame?: ReferenceFrameId,
+  ): readonly PropagationState[] {
+    return this.stateQueries().statesAt(ids, target, outputFrame);
+  }
+
+  relativeStateAt(
+    targetObject: ObjectId,
+    observerObject: ObjectId,
+    target: SimulationInstant,
+    outputFrame?: ReferenceFrameId,
+  ): PropagationState {
+    return this.stateQueries().relativeStateAt(targetObject, observerObject, target, outputFrame);
+  }
+
+  objectStateSource(id: ObjectId, outputFrame: ReferenceFrameId): ObjectFrameStateSource {
+    return this.stateQueries().objectStateSource(id, outputFrame);
+  }
+
   twoBodyModel(configuration: TwoBodyAnalyticalModelConfiguration) {
     return createTwoBodyAnalyticalModel(configuration, {
       evaluate: (value) => this.#backend.roundTripTwoBody(value),
     });
   }
-
 }
