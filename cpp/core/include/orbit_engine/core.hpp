@@ -4,7 +4,7 @@
 
 namespace orbit_engine {
 
-inline constexpr std::int32_t kBindingProtocolVersion = 4;
+inline constexpr std::int32_t kBindingProtocolVersion = 5;
 inline constexpr std::int32_t kCoreVersion = 1;
 
 struct Health {

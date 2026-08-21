@@ -1,6 +1,7 @@
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/object.hpp"
+#include "orbit_engine/propagation.hpp"
 #include "orbit_engine/time.hpp"
 
 #include <emscripten/emscripten.h>
@@ -460,5 +461,111 @@ EMSCRIPTEN_KEEPALIVE double orbit_engine_round_trip_object_collision_radius(
 
 #undef FRAME_ARGUMENTS
 #undef FRAME_PARAMETERS
+
+#define PROP_PARAMETERS \
+  std::uint32_t object_id_high, std::uint32_t object_id_low, \
+  std::uint16_t model_kind_code, std::uint16_t direction_code, std::uint16_t bounded_direction_code, \
+  std::uint32_t propagation_frame_high, std::uint32_t propagation_frame_low, \
+  std::uint32_t configuration_revision_high, std::uint32_t configuration_revision_low, \
+  std::uint32_t motion_revision_high, std::uint32_t motion_revision_low, \
+  std::int32_t segment_start_seconds_high, std::uint32_t segment_start_seconds_low, std::uint32_t segment_start_nanoseconds, \
+  int segment_end_present, std::int32_t segment_end_seconds_high, std::uint32_t segment_end_seconds_low, std::uint32_t segment_end_nanoseconds, \
+  std::int32_t target_seconds_high, std::uint32_t target_seconds_low, std::uint32_t target_nanoseconds, \
+  std::uint16_t outcome_code, std::uint32_t result_frame_high, std::uint32_t result_frame_low, \
+  double position_x, double position_y, double position_z, double velocity_x, double velocity_y, double velocity_z, \
+  double position_absolute_meters, double position_relative, double velocity_absolute_meters_per_second, double velocity_relative
+
+#define PROP_ARGUMENTS \
+  object_id_high, object_id_low, model_kind_code, direction_code, bounded_direction_code, \
+  propagation_frame_high, propagation_frame_low, configuration_revision_high, configuration_revision_low, \
+  motion_revision_high, motion_revision_low, segment_start_seconds_high, segment_start_seconds_low, segment_start_nanoseconds, \
+  segment_end_present, segment_end_seconds_high, segment_end_seconds_low, segment_end_nanoseconds, \
+  target_seconds_high, target_seconds_low, target_nanoseconds, outcome_code, result_frame_high, result_frame_low, \
+  position_x, position_y, position_z, velocity_x, velocity_y, velocity_z, \
+  position_absolute_meters, position_relative, velocity_absolute_meters_per_second, velocity_relative
+
+orbit_engine::propagation::PropagationWire g_propagation_output{};
+
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_propagation(PROP_PARAMETERS) {
+  const orbit_engine::propagation::PropagationWire input{
+    object_id_high,
+    object_id_low,
+    model_kind_code,
+    direction_code,
+    bounded_direction_code,
+    propagation_frame_high,
+    propagation_frame_low,
+    configuration_revision_high,
+    configuration_revision_low,
+    motion_revision_high,
+    motion_revision_low,
+    orbit_engine::time::TimeWire{segment_start_seconds_high, segment_start_seconds_low, segment_start_nanoseconds},
+    segment_end_present != 0,
+    orbit_engine::time::TimeWire{segment_end_seconds_high, segment_end_seconds_low, segment_end_nanoseconds},
+    orbit_engine::time::TimeWire{target_seconds_high, target_seconds_low, target_nanoseconds},
+    outcome_code,
+    result_frame_high,
+    result_frame_low,
+    position_x,
+    position_y,
+    position_z,
+    velocity_x,
+    velocity_y,
+    velocity_z,
+    position_absolute_meters,
+    position_relative,
+    velocity_absolute_meters_per_second,
+    velocity_relative,
+  };
+  orbit_engine::propagation::PropagationWire output{};
+  if (!orbit_engine::propagation::round_trip(input, output)) {
+    g_propagation_output = orbit_engine::propagation::PropagationWire{};
+    return 0;
+  }
+  g_propagation_output = output;
+  return 1;
+}
+
+#define PROP_GETTER(name, field, type) \
+  EMSCRIPTEN_KEEPALIVE type name() { return g_propagation_output.field; }
+
+PROP_GETTER(orbit_engine_propagation_object_id_high, object_id_high, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_object_id_low, object_id_low, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_model_kind_code, model_kind_code, std::uint16_t)
+PROP_GETTER(orbit_engine_propagation_direction_code, direction_code, std::uint16_t)
+PROP_GETTER(orbit_engine_propagation_bounded_direction_code, bounded_direction_code, std::uint16_t)
+PROP_GETTER(orbit_engine_propagation_frame_high, propagation_frame_high, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_frame_low, propagation_frame_low, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_configuration_revision_high, configuration_revision_high, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_configuration_revision_low, configuration_revision_low, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_motion_revision_high, motion_revision_high, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_motion_revision_low, motion_revision_low, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_segment_start_seconds_high, segment_start.seconds_high, std::int32_t)
+PROP_GETTER(orbit_engine_propagation_segment_start_seconds_low, segment_start.seconds_low, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_segment_start_nanoseconds, segment_start.nanoseconds, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_segment_end_present, segment_end_present, int)
+PROP_GETTER(orbit_engine_propagation_segment_end_seconds_high, segment_end.seconds_high, std::int32_t)
+PROP_GETTER(orbit_engine_propagation_segment_end_seconds_low, segment_end.seconds_low, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_segment_end_nanoseconds, segment_end.nanoseconds, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_target_seconds_high, target.seconds_high, std::int32_t)
+PROP_GETTER(orbit_engine_propagation_target_seconds_low, target.seconds_low, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_target_nanoseconds, target.nanoseconds, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_outcome_code, outcome_code, std::uint16_t)
+PROP_GETTER(orbit_engine_propagation_result_frame_high, result_frame_high, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_result_frame_low, result_frame_low, std::uint32_t)
+PROP_GETTER(orbit_engine_propagation_position_x, position_x, double)
+PROP_GETTER(orbit_engine_propagation_position_y, position_y, double)
+PROP_GETTER(orbit_engine_propagation_position_z, position_z, double)
+PROP_GETTER(orbit_engine_propagation_velocity_x, velocity_x, double)
+PROP_GETTER(orbit_engine_propagation_velocity_y, velocity_y, double)
+PROP_GETTER(orbit_engine_propagation_velocity_z, velocity_z, double)
+PROP_GETTER(orbit_engine_propagation_position_absolute_meters, position_absolute_meters, double)
+PROP_GETTER(orbit_engine_propagation_position_relative, position_relative, double)
+PROP_GETTER(orbit_engine_propagation_velocity_absolute_meters_per_second, velocity_absolute_meters_per_second, double)
+PROP_GETTER(orbit_engine_propagation_velocity_relative, velocity_relative, double)
+
+#undef PROP_GETTER
+#undef PROP_ARGUMENTS
+#undef PROP_PARAMETERS
 
 }
