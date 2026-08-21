@@ -7,11 +7,12 @@ export const VISIBLE_RADIUS_MULTIPLIER = 5;
 export const MIN_VISIBLE_RADIUS_SCENE_UNITS = 0.15;
 export const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
 
-export const IDENTITY_AXIS_MAPPING = Object.freeze({
-  x: "x",
-  y: "y",
-  z: "z",
-} as const);
+// Must remain identical to the J2000 ecliptic obliquity used by the committed
+// scenario normalization. The renderer applies the inverse rotation only for
+// presentation; canonical engine/scenario states remain ICRS/ICRF-aligned.
+export const J2000_ECLIPTIC_OBLIQUITY_RADIANS = 23.43928 * Math.PI / 180;
+const J2000_ECLIPTIC_COSINE = Math.cos(J2000_ECLIPTIC_OBLIQUITY_RADIANS);
+const J2000_ECLIPTIC_SINE = Math.sin(J2000_ECLIPTIC_OBLIQUITY_RADIANS);
 
 export type RadiusMode = "physical" | "visible";
 
@@ -33,6 +34,30 @@ function finite(value: number, name: string): number {
   return value;
 }
 
+/** Rotate an ICRS/ICRF-aligned vector into the demo's J2000-ecliptic presentation axes. */
+export function icrsToJ2000Ecliptic(vector: Vec3<number>): RenderVector {
+  const x = finite(vector.x, "ICRS vector.x");
+  const y = finite(vector.y, "ICRS vector.y");
+  const z = finite(vector.z, "ICRS vector.z");
+  return Object.freeze({
+    x,
+    y: J2000_ECLIPTIC_COSINE * y + J2000_ECLIPTIC_SINE * z,
+    z: -J2000_ECLIPTIC_SINE * y + J2000_ECLIPTIC_COSINE * z,
+  });
+}
+
+/** Inverse of icrsToJ2000Ecliptic; useful for deterministic convention tests. */
+export function j2000EclipticToIcrs(vector: Vec3<number>): RenderVector {
+  const x = finite(vector.x, "ecliptic vector.x");
+  const y = finite(vector.y, "ecliptic vector.y");
+  const z = finite(vector.z, "ecliptic vector.z");
+  return Object.freeze({
+    x,
+    y: J2000_ECLIPTIC_COSINE * y - J2000_ECLIPTIC_SINE * z,
+    z: J2000_ECLIPTIC_SINE * y + J2000_ECLIPTIC_COSINE * z,
+  });
+}
+
 export function focusRelativePosition(position: Vec3<number>, focus: Vec3<number>): RenderVector {
   return Object.freeze({
     x: finite(position.x - focus.x, "relative position.x"),
@@ -47,10 +72,11 @@ export function metersToSceneUnits(value: number): number {
 
 export function positionToSceneUnits(position: Vec3<number>, focus: Vec3<number> = { x: 0, y: 0, z: 0 }): RenderVector {
   const relative = focusRelativePosition(position, focus);
+  const presentation = icrsToJ2000Ecliptic(relative);
   return Object.freeze({
-    x: metersToSceneUnits(relative.x),
-    y: metersToSceneUnits(relative.y),
-    z: metersToSceneUnits(relative.z),
+    x: metersToSceneUnits(presentation.x),
+    y: metersToSceneUnits(presentation.y),
+    z: metersToSceneUnits(presentation.z),
   });
 }
 
