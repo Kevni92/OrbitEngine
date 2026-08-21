@@ -42,10 +42,12 @@ Owns the exact simulation instant/duration model and supports efficient jumps ov
 Owns authoritative live/retired object identity and lifecycle in the portable core. The canonical contract is defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md): caller-supplied never-reused `ObjectId`, immutable physical `ObjectType`, optional physical properties, frame-qualified Cartesian state snapshots, and explicit reference/divergence metadata. Registry identity/classification must remain separate from propagation, fidelity, and game-domain metadata.
 
 ### Reference Frame System
-Represents hierarchical frames and transforms positions/velocities between them. Examples include the solar-system barycentric frame, body-centered inertial frames, rotating body-fixed frames, and local frames.
+Owns the explicit frame graph, stable frame IDs, structural dependency validation, rigid-state transform math, local/relative queries, and transform caching. The canonical contract is [14 — Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md): SSB/ICRS root, immutable parent relationships, same-epoch geometric transforms, quaternion/rotation conventions, and local-precision-preserving composition.
+
+Frame transforms do not propagate time. They transform a state at its exact epoch; propagation supplies state-at-time first.
 
 ### Propagation System
-Computes state at time T using an appropriate propagation model. Models may include reference ephemerides, analytical/Keplerian propagation, perturbed analytical approaches, and numerical integration.
+Computes state at time T using an appropriate propagation model. Models may include reference ephemerides, analytical/Keplerian propagation, perturbed analytical approaches, numerical integration, and attached/fixed motion. Propagation consumes/returns the canonical frame-qualified state contract rather than owning a separate coordinate model.
 
 ### Fidelity Manager
 Chooses how much computational effort is justified for an object or local interaction. Fidelity is not the same thing as propagation model.
@@ -66,7 +68,8 @@ Plans physically valid transfers toward moving targets using object state, mass,
 
 1. The C++ core must not import game concepts.
 2. The C++ core must not depend directly on Node.js or Emscripten.
-3. Bindings translate between TypeScript-facing data and portable core types without changing canonical units, time semantics, object identity, or binary64 precision.
-4. Data importers may know JPL/NASA formats; OrbitEngine core should not require network access or vendor-specific schemas. Importers normalize source time scales/epochs to the canonical TDB instant contract before runtime use.
-5. A game layer may attach arbitrary metadata to an OrbitEngine ID outside the engine.
-6. Architectural changes require documentation updates in the same PR.
+3. Bindings translate between TypeScript-facing data and portable core types without changing canonical units, time semantics, object/frame identity, or binary64 precision.
+4. Data importers may know JPL/NASA formats; OrbitEngine core should not require network access or vendor-specific schemas. Importers normalize source time scales/epochs, spatial frame conventions, and physical units before runtime use.
+5. Frame transforms are geometric/same-epoch; observation corrections and time propagation remain separate subsystems.
+6. A game layer may attach arbitrary metadata to an OrbitEngine ID outside the engine.
+7. Architectural changes require documentation updates in the same PR.
