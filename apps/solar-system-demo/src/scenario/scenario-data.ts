@@ -36,6 +36,16 @@ export const SATURN_ID = objectId("1007");
 export const URANUS_ID = objectId("1008");
 export const NEPTUNE_ID = objectId("1009");
 
+export interface OrbitVisualizationDefinition {
+  readonly sampleSpanSeconds: number;
+  readonly sampleCount: number;
+  readonly closedReferenceOrbit: boolean;
+}
+
+function orbitVisualization(sampleSpanSeconds: number): OrbitVisualizationDefinition {
+  return Object.freeze({ sampleSpanSeconds, sampleCount: 128, closedReferenceOrbit: true });
+}
+
 export interface ScenarioBodyDefinition {
   readonly id: ObjectId;
   readonly name: string;
@@ -46,6 +56,7 @@ export interface ScenarioBodyDefinition {
   readonly configurationRevision: string;
   readonly properties: PhysicalPropertiesInput;
   readonly anchor: PropagationState;
+  readonly orbitVisualization?: OrbitVisualizationDefinition;
 }
 
 export const SCENARIO_PROVENANCE = Object.freeze({
@@ -88,6 +99,7 @@ function body(
   properties: PhysicalPropertiesInput,
   state: PropagationState,
   centralBody?: ObjectId,
+  orbitVisualizationDefinition?: OrbitVisualizationDefinition,
 ): ScenarioBodyDefinition {
   return Object.freeze({
     id,
@@ -99,6 +111,7 @@ function body(
     properties: Object.freeze({ ...properties }),
     anchor: state,
     ...(centralBody === undefined ? {} : { centralBody }),
+    ...(orbitVisualizationDefinition === undefined ? {} : { orbitVisualization: orbitVisualizationDefinition }),
   });
 }
 
@@ -123,6 +136,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 3.3011e23, mu: 2.2032e13, physicalRadius: 2_439_700 },
     anchor(56_754_897_931.32163, 11_504_787_374.949291, 0, -9_510.706115768091, 46_917.78624527545, 0, SUN_CENTERED_FRAME),
     SUN_ID,
+    orbitVisualization(7_600_000),
   ),
   body(
     VENUS_ID,
@@ -134,6 +148,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 4.8675e24, mu: 3.24859e14, physicalRadius: 6_051_800 },
     anchor(58_465_828_859.28082, 91_055_133_493.79546, 0, -29_468.79092110239, 18_921.69305095249, 0, SUN_CENTERED_FRAME),
     SUN_ID,
+    orbitVisualization(19_400_000),
   ),
   body(
     EARTH_ID,
@@ -145,6 +160,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 5.97219e24, mu: 3.986004418e14, physicalRadius: 6_371_000 },
     anchor(-62_254_680_645.99345, 136_028_958_886.11104, 0, -27_083.143641357805, -12_394.805283292137, 0, SUN_CENTERED_FRAME),
     SUN_ID,
+    orbitVisualization(31_557_600),
   ),
   body(
     MARS_ID,
@@ -156,6 +172,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 6.4171e23, mu: 4.282837e13, physicalRadius: 3_389_500 },
     anchor(-214_769_406_554.1414, 76_356_930_956.01689, 0, -8_083.059055501473, -22_735.248454290246, 0, SUN_CENTERED_FRAME),
     SUN_ID,
+    orbitVisualization(59_400_000),
   ),
   body(
     JUPITER_ID,
@@ -167,6 +184,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 1.89813e27, mu: 1.26686534e17, physicalRadius: 69_911_000 },
     anchor(-508_757_512_504.3964, -589_050_275_532.8215, 0, 9_882.196114454531, -8_535.165370600633, 0, SUN_CENTERED_FRAME),
     SUN_ID,
+    orbitVisualization(374_000_000),
   ),
   body(
     SATURN_ID,
@@ -178,6 +196,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 5.6834e26, mu: 3.7931187e16, physicalRadius: 58_232_000 },
     anchor(124_831_861_632.19225, -1_421_194_598_210.8584, 0, 9_607.838746010182, 843.912859249703, 0, SUN_CENTERED_FRAME),
     SUN_ID,
+    orbitVisualization(929_000_000),
   ),
   body(
     URANUS_ID,
@@ -189,6 +208,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 8.6810e25, mu: 5.793939e15, physicalRadius: 25_362_000 },
     anchor(1_591_419_226_261.024, -2_389_155_345_961.324, 0, 5_658.8473782743295, 3_769.364989801019, 0, SUN_CENTERED_FRAME),
     SUN_ID,
+    orbitVisualization(2_650_000_000),
   ),
   body(
     NEPTUNE_ID,
@@ -200,6 +220,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 1.02413e26, mu: 6.836529e15, physicalRadius: 24_622_000 },
     anchor(3_983_417_843_444.868, -2_089_964_790_355.6897, 0, 2_523.5283977712284, 4_809.778659673478, 0, SUN_CENTERED_FRAME),
     SUN_ID,
+    orbitVisualization(5_200_000_000),
   ),
   body(
     MOON_ID,
@@ -211,6 +232,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 7.342e22, mu: 4.9048695e12, physicalRadius: 1_737_400 },
     anchor(294_005_336.79215735, 247_637_278.97416842, 0, -656.0090681046934, 778.8414079083318, 0, EARTH_CENTERED_FRAME),
     EARTH_ID,
+    orbitVisualization(2_360_000),
   ),
 ]);
 

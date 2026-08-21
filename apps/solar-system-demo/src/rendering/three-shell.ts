@@ -37,9 +37,6 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   controls.target.set(0, 0, 0);
   controls.update();
 
-  const axes = new THREE.AxesHelper(10);
-  scene.add(axes);
-
   function resize(width: number, height: number): void {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
     camera.aspect = width / height;

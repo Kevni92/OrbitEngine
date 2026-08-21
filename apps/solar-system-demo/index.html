@@ -3,99 +3,148 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OrbitEngine Solar-System Reference Demo</title>
-    <style>
-      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-      * { box-sizing: border-box; }
-      html, body { height: 100%; margin: 0; overflow: hidden; background: #050914; }
-      .demo-shell { height: 100%; position: relative; }
-      #scene { display: block; height: 100%; width: 100%; }
-      .demo-panel { background: rgba(8, 15, 31, .88); border: 1px solid #293856; border-radius: 12px; left: 1rem; max-width: 30rem; padding: 1rem; position: absolute; top: 1rem; z-index: 2; }
-      h1 { font-size: 1.25rem; margin: .15rem 0 .5rem; }
-      p { margin: .35rem 0; }
-      .eyebrow { color: #8fa4c7; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; }
-      .status-list { display: grid; gap: .35rem; margin: 1rem 0; }
-      .status-list div { display: flex; gap: .5rem; justify-content: space-between; }
-      dt { color: #8fa4c7; } dd { margin: 0; text-align: right; }
-      dd[data-state="error"] { color: #ff8d8d; } dd[data-state="ready"] { color: #8de3b0; }
-      .controls { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; margin: .75rem 0; }
-      .time-controls, .path-controls { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; margin: .5rem 0; }
-      label { color: #b9c9e5; display: grid; font-size: .8rem; gap: .25rem; }
-      select, button { background: #111d35; border: 1px solid #3a4c6e; border-radius: 6px; color: #edf4ff; padding: .4rem .5rem; }
-      button { cursor: pointer; }
-      #selected-panel { border-top: 1px solid #293856; color: #b9c9e5; font-family: ui-monospace, monospace; font-size: .72rem; line-height: 1.45; margin-top: .75rem; padding-top: .65rem; white-space: pre-wrap; }
-      #path-status { color: #b9c9e5; font-size: .75rem; margin: .5rem 0; }
-      #path-status[data-state="error"] { color: #ff8d8d; }
-      #path-status[data-state="ready"] { color: #8de3b0; }
-      .hint { color: #8fa4c7; font-size: .75rem; }
-    </style>
+    <meta name="theme-color" content="#050914" />
+    <title>OrbitEngine · Solar System</title>
+    <link rel="stylesheet" href="/src/ui/styles.css" />
   </head>
   <body>
     <main class="demo-shell">
-      <section class="demo-panel" aria-labelledby="demo-title">
-        <p class="eyebrow">OrbitEngine reference consumer</p>
-        <h1 id="demo-title">Solar-System demo shell</h1>
-        <p id="scenario-note">Offline deterministic scenario loading…</p>
-        <dl class="status-list">
+      <section class="demo-panel" id="demo-panel" aria-labelledby="demo-title">
+        <header class="panel-header">
           <div>
-            <dt>Engine</dt>
-            <dd id="engine-status" data-state="initializing">Initializing WASM…</dd>
+            <p class="eyebrow">OrbitEngine reference consumer</p>
+            <h1 id="demo-title">Solar System</h1>
+            <p class="panel-subtitle">Explore an engine-driven planetary system</p>
           </div>
-          <div>
-            <dt>Rendering</dt>
-            <dd id="rendering-status" data-state="pending">Checking WebGL 2…</dd>
+          <div class="header-actions">
+            <div class="health-stack" aria-label="Application health">
+              <span class="health-line"><span class="status-dot" aria-hidden="true"></span><span id="engine-status" data-state="initializing">Initializing engine…</span></span>
+              <span class="health-line"><span class="status-dot status-dot--secondary" aria-hidden="true"></span><span id="rendering-status" data-state="pending">Checking WebGL…</span></span>
+            </div>
+            <button class="icon-button" id="panel-toggle" type="button" aria-expanded="true" aria-label="Hide control panel">Hide panel</button>
           </div>
-          <div>
-            <dt>Simulation instant</dt>
-            <dd id="simulation-instant">0s + 0ns</dd>
-          </div>
-          <div>
-            <dt>Focus / output</dt>
-            <dd id="focus-context">Loading</dd>
-          </div>
-        </dl>
-        <div class="controls">
-          <label>Focus
-            <select id="focus-select" disabled></select>
-          </label>
-          <label>Selected
-            <select id="selected-select" disabled></select>
-          </label>
-          <label>Radius presentation
-            <select id="radius-mode">
-              <option value="visible">Visible (exaggerated)</option>
-              <option value="physical">Physical scale</option>
-            </select>
-          </label>
-          <button id="focus-selected" type="button" disabled>Focus selected</button>
+        </header>
+
+        <div class="panel-content">
+          <section class="simulation-section panel-section" aria-labelledby="simulation-heading">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Simulation</p>
+                <h2 id="simulation-heading">Time travel</h2>
+              </div>
+              <span class="scenario-badge">TDB · J2000</span>
+            </div>
+            <div class="simulation-controls">
+              <button class="primary-button" id="play-pause" type="button" disabled>Play</button>
+              <label class="field field--speed" for="warp-select">Simulation speed
+                <select id="warp-select" disabled>
+                  <option value="1">1×</option>
+                  <option value="86400">1 day / sec</option>
+                  <option value="604800">1 week / sec</option>
+                  <option value="2592000">30 days / sec</option>
+                </select>
+              </label>
+            </div>
+            <p class="simulation-time-label">Simulation time</p>
+            <p class="simulation-time" id="simulation-instant" aria-live="polite">J2000 + 0 d 00:00:00</p>
+            <p class="inline-error" id="simulation-error" data-state="pending" aria-live="polite"></p>
+          </section>
+
+          <section class="panel-section" id="selected-body-section" aria-labelledby="selected-heading">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Selected body</p>
+                <h2 id="selected-heading"><span id="selected-name">Sun</span> <span class="type-badge" id="selected-type">Star</span></h2>
+              </div>
+              <span class="selection-mark" aria-hidden="true">✦</span>
+            </div>
+            <label class="field" for="selected-select">Choose a body
+              <select id="selected-select" disabled></select>
+            </label>
+            <label class="field" for="focus-select">View center
+              <select id="focus-select" disabled></select>
+            </label>
+            <button class="secondary-button" id="focus-selected" type="button" disabled>Center view on selected</button>
+            <p class="field-help">Centers the visualization without changing OrbitEngine physics.</p>
+          </section>
+
+          <section class="panel-section" aria-labelledby="view-heading">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">View</p>
+                <h2 id="view-heading">Scene guides</h2>
+              </div>
+            </div>
+            <div class="toggle-grid">
+              <button class="toggle-button" id="grid-toggle" type="button" aria-pressed="true" disabled>
+                <span>Reference grid</span><span class="toggle-state" id="grid-state" data-state="on">On</span>
+              </button>
+              <button class="toggle-button" id="orbits-toggle" type="button" aria-pressed="true" disabled>
+                <span>Orbits</span><span class="toggle-state" id="orbits-state" data-state="on">On</span>
+              </button>
+              <button class="toggle-button" id="axes-toggle" type="button" aria-pressed="false" disabled>
+                <span>Axes</span><span class="toggle-state" id="axes-state" data-state="off">Off</span>
+              </button>
+            </div>
+            <label class="field" for="radius-mode">Body size
+              <select id="radius-mode">
+                <option value="visible">Enhanced visibility</option>
+                <option value="physical">True physical scale</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="panel-section body-summary" aria-labelledby="body-heading">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Body</p>
+                <h2 id="body-heading">Current details</h2>
+              </div>
+            </div>
+            <dl class="summary-grid" aria-live="polite">
+              <div><dt>Distance from center</dt><dd id="summary-distance">—</dd></div>
+              <div><dt>Speed</dt><dd id="summary-speed">—</dd></div>
+              <div><dt>Radius</dt><dd id="summary-radius">—</dd></div>
+              <div><dt>Mass</dt><dd id="summary-mass">—</dd></div>
+              <div><dt>Propagation model</dt><dd id="summary-model">—</dd></div>
+            </dl>
+          </section>
+
+          <p class="orbit-status" id="orbit-status" data-state="pending">Preparing reference orbits…</p>
+          <p class="scenario-note" id="scenario-note" data-state="pending">Offline deterministic scenario loading…</p>
+
+          <details class="advanced-details" id="advanced-details">
+            <summary>Advanced / technical details</summary>
+            <div class="advanced-content">
+              <section class="advanced-section" aria-labelledby="exact-time-heading">
+                <p class="section-kicker" id="exact-time-heading">Exact time</p>
+                <div class="exact-time-grid">
+                  <label class="field" for="jump-seconds">Seconds
+                    <input id="jump-seconds" type="number" min="0" step="1" value="0" disabled />
+                  </label>
+                  <label class="field" for="jump-nanoseconds">Nanoseconds
+                    <input id="jump-nanoseconds" type="number" min="0" max="999999999" step="1" value="0" disabled />
+                  </label>
+                </div>
+                <button class="secondary-button" id="jump-time" type="button" disabled>Jump to exact time</button>
+                <p class="inline-error" id="jump-error" data-state="pending" aria-live="polite"></p>
+              </section>
+              <section class="advanced-section" aria-labelledby="diagnostics-heading">
+                <p class="section-kicker" id="diagnostics-heading">Diagnostics</p>
+                <dl class="diagnostic-grid">
+                  <div><dt>View origin</dt><dd id="focus-context">Sun · render origin</dd></div>
+                  <div><dt>Engine</dt><dd id="engine-details">Waiting for WASM…</dd></div>
+                  <div><dt>Renderer</dt><dd id="rendering-details">Waiting for WebGL…</dd></div>
+                </dl>
+                <pre class="technical-details" id="technical-details">No state snapshot yet.</pre>
+              </section>
+            </div>
+          </details>
+
+          <p class="panel-footnote">Click a body in the scene to select it. Positions and orbit curves come from public OrbitEngine state queries.</p>
         </div>
-        <button id="play-pause" type="button" disabled>Play</button>
-        <div class="time-controls">
-          <label>Warp
-            <select id="warp-select" disabled>
-              <option value="1">1×</option>
-              <option value="86400">1 day/s</option>
-              <option value="604800">1 week/s</option>
-              <option value="2592000">30 days/s</option>
-            </select>
-          </label>
-          <label>Jump seconds
-            <input id="jump-seconds" type="number" min="0" step="1" value="0" disabled />
-          </label>
-          <label>Jump nanoseconds
-            <input id="jump-nanoseconds" type="number" min="0" max="999999999" step="1" value="0" disabled />
-          </label>
-          <button id="jump-time" type="button" disabled>Jump exact time</button>
-        </div>
-        <div class="path-controls">
-          <button id="sample-path" type="button" disabled>Sample selected path</button>
-          <button id="clear-path" type="button" disabled>Clear paths</button>
-        </div>
-        <p id="path-status" data-state="pending">No path sampled.</p>
-        <p class="hint">Click a body to select it. Positions come from OrbitEngine state-at-time queries.</p>
-        <div id="selected-panel" aria-live="polite">No state snapshot yet.</div>
       </section>
-      <canvas id="scene" aria-label="OrbitEngine demo scene"></canvas>
+      <canvas id="scene" aria-label="Interactive OrbitEngine Solar System scene"></canvas>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
