@@ -44,7 +44,7 @@ export function orbitInterval(
 
 export function createOrbitPath(request: OrbitVisualizationRequest): OrbitPath | undefined {
   const centralBodyId = request.body.definition.centralBody;
-  const visualization = request.body.definition.orbitVisualization;
+  const visualization = request.body.definition.propagation.orbitVisualization;
   if (centralBodyId === undefined || visualization === undefined) return undefined;
   const interval = orbitInterval(request.scenario, visualization);
   return request.cache.getOrCreate({

@@ -27,6 +27,8 @@ function scenario(): SolarSystemScenario {
     epoch: simulationInstant(0),
     validity: SCENARIO_VALIDITY,
     provenance: {} as SolarSystemScenario["provenance"],
+    catalog: {} as SolarSystemScenario["catalog"],
+    centeredFrames: [],
     rootFrame: SCENARIO_ROOT_FRAME,
     sunCenteredFrame: referenceFrameId("100"),
     earthCenteredFrame: referenceFrameId("101"),

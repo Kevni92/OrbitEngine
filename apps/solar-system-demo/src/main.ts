@@ -10,7 +10,7 @@ import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-gui
 import { SolarSystemScene } from "./rendering/solar-system-scene.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
-import { EARTH_ID, SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
+import { SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
 import { PathCache } from "./simulation/path-sampling.js";
 import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visualization.js";
 import { SimulationClock } from "./simulation/simulation-clock.js";
@@ -82,7 +82,7 @@ async function bootstrap(): Promise<void> {
     let ready = 0;
     let failures = 0;
     for (const entry of scenario.bodies) {
-      if (entry.definition.centralBody === undefined || entry.definition.orbitVisualization === undefined) continue;
+      if (entry.definition.centralBody === undefined || entry.definition.propagation.orbitVisualization === undefined) continue;
       try {
         const path = createOrbitPath({
           scenario,
@@ -175,13 +175,12 @@ async function bootstrap(): Promise<void> {
 
   try {
     scenario = loadSolarSystemScenario(engine);
-    if (scenario.bodies.length !== 10) throw new Error(`Expected 10 bodies, received ${scenario.bodies.length}`);
     if (scenario.rootFrame !== SCENARIO_ROOT_FRAME) throw new Error("Scenario root frame is not the engine root frame");
-    if (scenario.bodyById.get(EARTH_ID) === undefined) throw new Error("Scenario Earth registration is missing");
+    if (scenario.catalog.roots.length !== 1) throw new Error("Scenario catalog must have exactly one root");
     panel.populateBodies(scenario);
     panel.setFocusId(focusId);
     panel.setSelectedId(selectedId);
-    panel.setScenarioNote("ready", "Offline deterministic scenario · 10 bodies");
+    panel.setScenarioNote("ready", `Offline deterministic catalog · ${scenario.bodies.length} bodies`);
   } catch (error) {
     panel.setScenarioNote("error", error instanceof Error ? error.message : String(error));
     return;
