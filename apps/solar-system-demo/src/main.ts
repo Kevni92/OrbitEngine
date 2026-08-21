@@ -2,6 +2,7 @@ import { createDemoEngine } from "./engine/create-engine.js";
 import {
   createAnimationLoop,
   createRenderShell,
+  updateCameraClipPlanes,
   WebGL2UnavailableError,
   type RenderShell,
 } from "./rendering/three-shell.js";
@@ -248,6 +249,7 @@ async function bootstrap(): Promise<void> {
     updateClockUi();
     requestCurrentState();
     guides?.updateForCamera(renderShell!.camera);
+    updateCameraClipPlanes(renderShell!.camera, renderShell!.controls.target);
     renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
   });
   loop.start();
