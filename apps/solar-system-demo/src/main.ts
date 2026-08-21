@@ -318,8 +318,11 @@ async function bootstrap(): Promise<void> {
   window.addEventListener("resize", resize);
   resize();
 
-  const loop = createAnimationLoop((timestampMilliseconds) => {
-    clock.advanceTo(timestampMilliseconds);
+  const loop = createAnimationLoop(() => {
+    // Use the same monotonic source as control handlers. The timestamp passed
+    // to requestAnimationFrame can describe an earlier frame than a
+    // performance.now() sample taken by a control event before this callback.
+    clock.advanceTo(performance.now());
     updateClockUi();
     requestCurrentState();
     renderShell.renderer.render(renderShell.scene, renderShell.camera);
