@@ -7,7 +7,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 1. [Vision and Scope](01-vision-and-scope.md) — goals, boundaries, realism target, and non-goals.
 2. [Architecture](02-architecture.md) — major subsystems and separation between engine, data ingestion, and game layers.
 3. [Object Model and Interactions](03-object-model-and-interactions.md) — object/interaction summary and links to the canonical object contract.
-4. [Propagation, Fidelity, and Events](04-propagation-fidelity-and-events.md) — propagation models, dynamic fidelity, encounters, collisions, and time warp.
+4. [Propagation, Fidelity, and Events](04-propagation-fidelity-and-events.md) — propagation/fidelity overview, encounters, events, and time warp.
 5. [Coordinates and Reference Frames](05-coordinates-and-reference-frames.md) — reference-frame overview and links to the canonical frame contract.
 6. [Solar-System Data](06-solar-system-data.md) — external astronomical data boundary and reproducible import strategy.
 7. [TypeScript, Native C++, and WebAssembly](07-typescript-native-wasm.md) — npm API and dual C++ backend strategy.
@@ -18,6 +18,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 12. [Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md) — SI unit contract, TDB/J2000 time model, exact durations, binary64 policy, time-warp semantics, and backend transfer rules.
 13. [Physical Object and State Model](13-physical-object-and-state-model.md) — exact object identity/type contract, canonical Cartesian state, optional physical properties, divergence semantics, lifecycle, and backend representation.
 14. [Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md) — SSB/ICRS root, frame identity/graph, rigid-state transforms, quaternion convention, local/relative precision, surface attachment, lifecycle, caching, and backend contract.
+15. [Propagation Contract and Model Switching](15-propagation-contract-and-model-switching.md) — motion authority/segments, common state-at-time contract, model taxonomy, permanent divergence, safe switching, fidelity boundary, forces/mass, caching, and backend ownership.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -27,7 +28,9 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - The engine simulates registered objects; it does not invent or generate them.
 - A stable, never-reused object ID is the boundary between OrbitEngine and consuming systems.
 - Object physical classification is separate from propagation model, fidelity, frame attachment, and game role.
-- Fidelity is independent from the chosen propagation model.
+- Propagation model is how state-at-time is computed; fidelity is the required error/interaction detail. They remain independent.
+- Every model returns the same canonical frame-qualified Cartesian state at an exact requested instant; model-specific elements/checkpoints never replace that physical handoff state.
+- Model switching is an explicit exact-time transaction and cannot create an unphysical state jump or silently restore an original reference trajectory after divergence.
 - Stable astronomical trajectories should be cheap to query across large time jumps.
 - Expensive simulation is activated only where interaction, perturbation, maneuvering, or collision risk requires it.
 - Canonical physical values use SI units; absolute simulation time uses the exact TDB/J2000 representation defined in document 12 rather than wall-clock/civil time.
