@@ -3,8 +3,9 @@ import type { ObjectWire } from "../object-wire.js";
 import type { FrameWire } from "../frame-wire.js";
 import type { PropagationWire } from "../propagation-wire.js";
 import type { RegistryWire } from "../registry-wire.js";
+import type { FrameRegistryWire } from "../frame-registry-wire.js";
 
-export const BINDING_PROTOCOL_VERSION = 6;
+export const BINDING_PROTOCOL_VERSION = 7;
 
 export type BackendKind = "native" | "wasm";
 
@@ -23,6 +24,7 @@ export interface Backend {
   roundTripFrame(value: FrameWire): FrameWire;
   roundTripPropagation(value: PropagationWire): PropagationWire;
   roundTripRegistry(value: RegistryWire): RegistryWire;
+  roundTripFrameRegistry(value: FrameRegistryWire): FrameRegistryWire;
 }
 
 export interface RawBackendBinding {
@@ -34,6 +36,7 @@ export interface RawBackendBinding {
   roundTripFrame(value: unknown): unknown;
   roundTripPropagation(value: unknown): unknown;
   roundTripRegistry(value: unknown): unknown;
+  roundTripFrameRegistry(value: unknown): unknown;
 }
 
 export interface RawInitializationResult {

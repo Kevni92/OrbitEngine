@@ -6,6 +6,7 @@ import type { ObjectWire } from "../object-wire.js";
 import type { FrameWire } from "../frame-wire.js";
 import type { PropagationWire } from "../propagation-wire.js";
 import type { RegistryWire } from "../registry-wire.js";
+import type { FrameRegistryWire } from "../frame-registry-wire.js";
 
 type ObjectRoundTripArgs = [
   number,
@@ -49,6 +50,7 @@ type PropagationRoundTripArgs = [
 ];
 
 type RegistryRoundTripArgs = number[];
+type FrameRegistryRoundTripArgs = number[];
 
 interface WasmModule {
   readonly _orbit_engine_binding_protocol_version: () => number;
@@ -170,6 +172,36 @@ interface WasmModule {
   readonly _orbit_engine_registry_structural_parent_present: () => number;
   readonly _orbit_engine_registry_structural_parent_high: () => number;
   readonly _orbit_engine_registry_structural_parent_low: () => number;
+  readonly _orbit_engine_round_trip_frame_registry: (...args: FrameRegistryRoundTripArgs) => number;
+  readonly _orbit_engine_frame_registry_operation_code: () => number;
+  readonly _orbit_engine_frame_registry_result_code: () => number;
+  readonly _orbit_engine_frame_registry_frame_id_high: () => number;
+  readonly _orbit_engine_frame_registry_frame_id_low: () => number;
+  readonly _orbit_engine_frame_registry_parent_present: () => number;
+  readonly _orbit_engine_frame_registry_parent_high: () => number;
+  readonly _orbit_engine_frame_registry_parent_low: () => number;
+  readonly _orbit_engine_frame_registry_provider_code: () => number;
+  readonly _orbit_engine_frame_registry_dependency_present: () => number;
+  readonly _orbit_engine_frame_registry_dependency_high: () => number;
+  readonly _orbit_engine_frame_registry_dependency_low: () => number;
+  readonly _orbit_engine_frame_registry_transform_reference_frame_id_high: () => number;
+  readonly _orbit_engine_frame_registry_transform_reference_frame_id_low: () => number;
+  readonly _orbit_engine_frame_registry_transform_epoch_seconds_high: () => number;
+  readonly _orbit_engine_frame_registry_transform_epoch_seconds_low: () => number;
+  readonly _orbit_engine_frame_registry_transform_epoch_nanoseconds: () => number;
+  readonly _orbit_engine_frame_registry_transform_translation_x: () => number;
+  readonly _orbit_engine_frame_registry_transform_translation_y: () => number;
+  readonly _orbit_engine_frame_registry_transform_translation_z: () => number;
+  readonly _orbit_engine_frame_registry_transform_origin_velocity_x: () => number;
+  readonly _orbit_engine_frame_registry_transform_origin_velocity_y: () => number;
+  readonly _orbit_engine_frame_registry_transform_origin_velocity_z: () => number;
+  readonly _orbit_engine_frame_registry_transform_rotation_w: () => number;
+  readonly _orbit_engine_frame_registry_transform_rotation_x: () => number;
+  readonly _orbit_engine_frame_registry_transform_rotation_y: () => number;
+  readonly _orbit_engine_frame_registry_transform_rotation_z: () => number;
+  readonly _orbit_engine_frame_registry_transform_angular_velocity_x: () => number;
+  readonly _orbit_engine_frame_registry_transform_angular_velocity_y: () => number;
+  readonly _orbit_engine_frame_registry_transform_angular_velocity_z: () => number;
 }
 
 interface WasmModuleFactory {
@@ -473,6 +505,73 @@ export async function loadWasmBackend(): Promise<Backend> {
         physicalRadius: module._orbit_engine_round_trip_object_physical_radius(...args),
         collisionBoundingRadiusPresent: module._orbit_engine_round_trip_object_collision_radius_present(...args) !== 0,
         collisionBoundingRadius: module._orbit_engine_round_trip_object_collision_radius(...args),
+      };
+    },
+    roundTripFrameRegistry: (value: FrameRegistryWire) => {
+      const args: FrameRegistryRoundTripArgs = [
+        value.operationCode,
+        value.resultCode,
+        value.frameIdHigh,
+        value.frameIdLow,
+        value.parentPresent ? 1 : 0,
+        value.parentHigh,
+        value.parentLow,
+        value.providerCode,
+        value.dependencyPresent ? 1 : 0,
+        value.dependencyHigh,
+        value.dependencyLow,
+        value.transformReferenceFrameIdHigh,
+        value.transformReferenceFrameIdLow,
+        value.transformEpochSecondsHigh,
+        value.transformEpochSecondsLow,
+        value.transformEpochNanoseconds,
+        value.transformTranslationX,
+        value.transformTranslationY,
+        value.transformTranslationZ,
+        value.transformOriginVelocityX,
+        value.transformOriginVelocityY,
+        value.transformOriginVelocityZ,
+        value.transformRotationW,
+        value.transformRotationX,
+        value.transformRotationY,
+        value.transformRotationZ,
+        value.transformAngularVelocityX,
+        value.transformAngularVelocityY,
+        value.transformAngularVelocityZ,
+      ];
+      if (module._orbit_engine_round_trip_frame_registry(...args) === 0) {
+        throw new RangeError("WASM frame registry operation was rejected");
+      }
+      return {
+        operationCode: module._orbit_engine_frame_registry_operation_code() >>> 0,
+        resultCode: module._orbit_engine_frame_registry_result_code() >>> 0,
+        frameIdHigh: module._orbit_engine_frame_registry_frame_id_high() >>> 0,
+        frameIdLow: module._orbit_engine_frame_registry_frame_id_low() >>> 0,
+        parentPresent: module._orbit_engine_frame_registry_parent_present() !== 0,
+        parentHigh: module._orbit_engine_frame_registry_parent_high() >>> 0,
+        parentLow: module._orbit_engine_frame_registry_parent_low() >>> 0,
+        providerCode: module._orbit_engine_frame_registry_provider_code() >>> 0,
+        dependencyPresent: module._orbit_engine_frame_registry_dependency_present() !== 0,
+        dependencyHigh: module._orbit_engine_frame_registry_dependency_high() >>> 0,
+        dependencyLow: module._orbit_engine_frame_registry_dependency_low() >>> 0,
+        transformReferenceFrameIdHigh: module._orbit_engine_frame_registry_transform_reference_frame_id_high() >>> 0,
+        transformReferenceFrameIdLow: module._orbit_engine_frame_registry_transform_reference_frame_id_low() >>> 0,
+        transformEpochSecondsHigh: module._orbit_engine_frame_registry_transform_epoch_seconds_high(),
+        transformEpochSecondsLow: module._orbit_engine_frame_registry_transform_epoch_seconds_low() >>> 0,
+        transformEpochNanoseconds: module._orbit_engine_frame_registry_transform_epoch_nanoseconds() >>> 0,
+        transformTranslationX: module._orbit_engine_frame_registry_transform_translation_x(),
+        transformTranslationY: module._orbit_engine_frame_registry_transform_translation_y(),
+        transformTranslationZ: module._orbit_engine_frame_registry_transform_translation_z(),
+        transformOriginVelocityX: module._orbit_engine_frame_registry_transform_origin_velocity_x(),
+        transformOriginVelocityY: module._orbit_engine_frame_registry_transform_origin_velocity_y(),
+        transformOriginVelocityZ: module._orbit_engine_frame_registry_transform_origin_velocity_z(),
+        transformRotationW: module._orbit_engine_frame_registry_transform_rotation_w(),
+        transformRotationX: module._orbit_engine_frame_registry_transform_rotation_x(),
+        transformRotationY: module._orbit_engine_frame_registry_transform_rotation_y(),
+        transformRotationZ: module._orbit_engine_frame_registry_transform_rotation_z(),
+        transformAngularVelocityX: module._orbit_engine_frame_registry_transform_angular_velocity_x(),
+        transformAngularVelocityY: module._orbit_engine_frame_registry_transform_angular_velocity_y(),
+        transformAngularVelocityZ: module._orbit_engine_frame_registry_transform_angular_velocity_z(),
       };
     },
   };

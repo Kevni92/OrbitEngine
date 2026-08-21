@@ -1,5 +1,6 @@
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/frame.hpp"
+#include "orbit_engine/frame_registry.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
@@ -10,6 +11,7 @@
 extern "C" {
 
 orbit_engine::registry::Registry g_registry;
+orbit_engine::frame_registry::Registry g_frame_registry;
 
 EMSCRIPTEN_KEEPALIVE int orbit_engine_binding_protocol_version() {
   return orbit_engine::kBindingProtocolVersion;
@@ -700,5 +702,97 @@ REG_GETTER(orbit_engine_registry_structural_parent_low, structural_parent_low, s
 #undef REG_GETTER
 #undef REG_ARGUMENTS
 #undef REG_PARAMETERS
+
+#define FRAME_REG_PARAMETERS \
+  std::uint16_t operation_code, std::uint16_t result_code, \
+  std::uint32_t frame_id_high, std::uint32_t frame_id_low, \
+  int parent_present, std::uint32_t parent_high, std::uint32_t parent_low, \
+  std::uint16_t provider_code, int dependency_present, \
+  std::uint32_t dependency_high, std::uint32_t dependency_low, \
+  std::uint32_t transform_reference_frame_id_high, std::uint32_t transform_reference_frame_id_low, \
+  std::int32_t transform_epoch_seconds_high, std::uint32_t transform_epoch_seconds_low, \
+  std::uint32_t transform_epoch_nanoseconds, \
+  double transform_translation_x, double transform_translation_y, double transform_translation_z, \
+  double transform_origin_velocity_x, double transform_origin_velocity_y, double transform_origin_velocity_z, \
+  double transform_rotation_w, double transform_rotation_x, double transform_rotation_y, double transform_rotation_z, \
+  double transform_angular_velocity_x, double transform_angular_velocity_y, double transform_angular_velocity_z
+
+orbit_engine::frame_registry::FrameRegistryWire g_frame_registry_output{};
+
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_frame_registry(FRAME_REG_PARAMETERS) {
+  const orbit_engine::frame_registry::FrameRegistryWire input{
+    operation_code,
+    result_code,
+    frame_id_high,
+    frame_id_low,
+    parent_present != 0,
+    parent_high,
+    parent_low,
+    provider_code,
+    dependency_present != 0,
+    dependency_high,
+    dependency_low,
+    orbit_engine::frame::FrameWire{
+      transform_reference_frame_id_high,
+      transform_reference_frame_id_low,
+      orbit_engine::time::TimeWire{
+        transform_epoch_seconds_high,
+        transform_epoch_seconds_low,
+        transform_epoch_nanoseconds,
+      },
+      transform_translation_x,
+      transform_translation_y,
+      transform_translation_z,
+      transform_origin_velocity_x,
+      transform_origin_velocity_y,
+      transform_origin_velocity_z,
+      transform_rotation_w,
+      transform_rotation_x,
+      transform_rotation_y,
+      transform_rotation_z,
+      transform_angular_velocity_x,
+      transform_angular_velocity_y,
+      transform_angular_velocity_z,
+    },
+  };
+  g_frame_registry_output = g_frame_registry.command(input);
+  return 1;
+}
+
+#define FRAME_REG_GETTER(name, field, type) \
+  EMSCRIPTEN_KEEPALIVE type name() { return g_frame_registry_output.field; }
+
+FRAME_REG_GETTER(orbit_engine_frame_registry_operation_code, operation_code, std::uint16_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_result_code, result_code, std::uint16_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_frame_id_high, frame_id_high, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_frame_id_low, frame_id_low, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_parent_present, parent_present, int)
+FRAME_REG_GETTER(orbit_engine_frame_registry_parent_high, parent_high, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_parent_low, parent_low, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_provider_code, provider_code, std::uint16_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_dependency_present, dependency_present, int)
+FRAME_REG_GETTER(orbit_engine_frame_registry_dependency_high, dependency_high, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_dependency_low, dependency_low, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_reference_frame_id_high, transform.reference_frame_id_high, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_reference_frame_id_low, transform.reference_frame_id_low, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_epoch_seconds_high, transform.epoch.seconds_high, std::int32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_epoch_seconds_low, transform.epoch.seconds_low, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_epoch_nanoseconds, transform.epoch.nanoseconds, std::uint32_t)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_translation_x, transform.translation_x, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_translation_y, transform.translation_y, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_translation_z, transform.translation_z, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_origin_velocity_x, transform.origin_velocity_x, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_origin_velocity_y, transform.origin_velocity_y, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_origin_velocity_z, transform.origin_velocity_z, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_rotation_w, transform.rotation_w, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_rotation_x, transform.rotation_x, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_rotation_y, transform.rotation_y, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_rotation_z, transform.rotation_z, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_angular_velocity_x, transform.angular_velocity_x, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_angular_velocity_y, transform.angular_velocity_y, double)
+FRAME_REG_GETTER(orbit_engine_frame_registry_transform_angular_velocity_z, transform.angular_velocity_z, double)
+
+#undef FRAME_REG_GETTER
+#undef FRAME_REG_PARAMETERS
 
 }

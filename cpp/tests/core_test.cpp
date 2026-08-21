@@ -1,4 +1,5 @@
 #include "orbit_engine/frame.hpp"
+#include "orbit_engine/frame_registry.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
@@ -26,7 +27,7 @@ int main() {
     return 1;
   }
 
-  if (orbit_engine::kBindingProtocolVersion != 6) {
+  if (orbit_engine::kBindingProtocolVersion != 7) {
     std::cerr << "unexpected binding protocol version\n";
     return 1;
   }
@@ -498,6 +499,73 @@ int main() {
   CHECK(registry.command(advance).result_code == static_cast<std::uint16_t>(ResultCode::success));
   registryExplicitZero.effective_epoch = orbit_engine::time::to_wire(SimulationInstant{4, 0});
   CHECK(registry.command(registryExplicitZero).result_code == static_cast<std::uint16_t>(ResultCode::retroactive_change));
+
+  using FrameRegistryOperation = orbit_engine::frame_registry::Operation;
+  using FrameProviderCode = orbit_engine::frame_registry::ProviderCode;
+  using FrameRegistry = orbit_engine::frame_registry::Registry;
+  using FrameRegistryResultCode = orbit_engine::frame_registry::ResultCode;
+  auto frameRegistryWire = [](std::uint64_t id, std::uint16_t operation) {
+    const auto frameId = orbit_engine::frame::reference_frame_id_to_wire(id);
+    const auto rootId = orbit_engine::frame::reference_frame_id_to_wire(1);
+    const auto zero = orbit_engine::time::TimeWire{0, 0, 0};
+    return orbit_engine::frame_registry::FrameRegistryWire{
+      operation,
+      0,
+      frameId.high,
+      frameId.low,
+      id != 1,
+      rootId.high,
+      rootId.low,
+      static_cast<std::uint16_t>(FrameProviderCode::static_rigid),
+      false,
+      0,
+      0,
+      orbit_engine::frame::FrameWire{
+        frameId.high,
+        frameId.low,
+        zero,
+        10.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+      },
+    };
+  };
+
+  FrameRegistry frameRegistry;
+  auto frameReset = frameRegistryWire(1, static_cast<std::uint16_t>(FrameRegistryOperation::reset));
+  CHECK(frameRegistry.command(frameReset).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::success));
+  auto frameRootLookup = frameRegistryWire(1, static_cast<std::uint16_t>(FrameRegistryOperation::lookup));
+  CHECK(frameRegistry.command(frameRootLookup).provider_code == static_cast<std::uint16_t>(FrameProviderCode::root));
+  auto frameRootRemove = frameRegistryWire(1, static_cast<std::uint16_t>(FrameRegistryOperation::remove_frame));
+  CHECK(frameRegistry.command(frameRootRemove).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::root_protected));
+  auto missingParent = frameRegistryWire(100, static_cast<std::uint16_t>(FrameRegistryOperation::register_frame));
+  missingParent.parent_high = 0;
+  missingParent.parent_low = 99;
+  CHECK(frameRegistry.command(missingParent).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::missing_parent));
+  auto frameParent = frameRegistryWire(9'007'199'254'740'993ULL, static_cast<std::uint16_t>(FrameRegistryOperation::register_frame));
+  CHECK(frameRegistry.command(frameParent).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::success));
+  CHECK(frameRegistry.command(frameParent).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::duplicate_live_id));
+  auto frameChild = frameRegistryWire(18446744073709551614ULL, static_cast<std::uint16_t>(FrameRegistryOperation::register_frame));
+  const auto frameParentId = orbit_engine::frame::reference_frame_id_to_wire(9'007'199'254'740'993ULL);
+  frameChild.parent_high = frameParentId.high;
+  frameChild.parent_low = frameParentId.low;
+  CHECK(frameRegistry.command(frameChild).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::success));
+  auto frameRemoveParent = frameRegistryWire(9'007'199'254'740'993ULL, static_cast<std::uint16_t>(FrameRegistryOperation::remove_frame));
+  CHECK(frameRegistry.command(frameRemoveParent).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::blocked_removal));
+  auto frameRemoveChild = frameRegistryWire(18446744073709551614ULL, static_cast<std::uint16_t>(FrameRegistryOperation::remove_frame));
+  CHECK(frameRegistry.command(frameRemoveChild).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::success));
+  CHECK(frameRegistry.command(frameRemoveParent).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::success));
+  CHECK(frameRegistry.command(frameRemoveParent).result_code == static_cast<std::uint16_t>(FrameRegistryResultCode::retired_id));
 
   return 0;
 }
