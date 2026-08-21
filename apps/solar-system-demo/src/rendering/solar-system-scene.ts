@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { meters, type Meters, type ObjectId, type PropagationState } from "orbit-engine";
 import type { SolarSystemScenario } from "../scenario/load-solar-system.js";
 import type { OrbitPath } from "../simulation/path-sampling.js";
+import { OrbitRenderer } from "./orbit-renderer.js";
 import { positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
 
 interface SceneBody {
@@ -22,7 +23,7 @@ export interface SolarSystemSceneOptions {
 export class SolarSystemScene {
   readonly #scene: THREE.Scene;
   readonly #bodies = new Map<ObjectId, SceneBody>();
-  readonly #paths = new Map<ObjectId, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
+  readonly #orbitRenderer: OrbitRenderer;
   readonly #states = new Map<ObjectId, PropagationState>();
   readonly #onSelect?: (objectId: ObjectId) => void;
   #radiusMode: RadiusMode = "visible";
@@ -31,6 +32,7 @@ export class SolarSystemScene {
   constructor(scene: THREE.Scene, scenario: SolarSystemScenario, options: SolarSystemSceneOptions = {}) {
     this.#scene = scene;
     this.#onSelect = options.onSelect;
+    this.#orbitRenderer = new OrbitRenderer(scene);
 
     for (const entry of scenario.bodies) {
       const radius = entry.definition.properties.physicalRadius;
@@ -64,6 +66,7 @@ export class SolarSystemScene {
     }
     this.#selected = objectId;
     for (const id of this.#bodies.keys()) this.#applyScale(id);
+    this.#orbitRenderer.setSelected(objectId);
   }
 
   update(states: readonly PropagationState[]): void {
@@ -79,6 +82,9 @@ export class SolarSystemScene {
       body.mesh.position.set(position.x, position.y, position.z);
       this.#states.set(objectId, state);
     });
+    this.#orbitRenderer.updateBodyPositions(new Map(
+      [...this.#bodies].map(([objectId, body]) => [objectId, body.mesh.position.clone()]),
+    ));
   }
 
   pick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera): ObjectId | undefined {
@@ -94,37 +100,35 @@ export class SolarSystemScene {
   }
 
   setPath(path: OrbitPath): void {
-    this.clearPath(path.objectId);
-    const points = path.samples.map((sample) => {
-      const position = positionToSceneUnits(sample.state.position);
-      return new THREE.Vector3(position.x, position.y, position.z);
-    });
-    const line = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(points),
-      new THREE.LineBasicMaterial({ color: this.#bodies.get(path.objectId)?.mesh.material.color ?? 0x8fb8ff }),
-    );
-    line.name = `Orbit path ${path.objectId}`;
-    line.userData.objectId = path.objectId;
-    line.userData.focusId = path.focusId;
-    this.#scene.add(line);
-    this.#paths.set(path.objectId, line);
+    const body = this.#bodies.get(path.objectId);
+    if (body === undefined) throw new RangeError(`Unknown scenario body: ${path.objectId}`);
+    const color = body.mesh.material.color.getHex();
+    this.#orbitRenderer.setPath(path, color);
   }
 
   clearPath(objectId: ObjectId): void {
-    const line = this.#paths.get(objectId);
-    if (line === undefined) return;
-    this.#scene.remove(line);
-    line.geometry.dispose();
-    line.material.dispose();
-    this.#paths.delete(objectId);
+    this.#orbitRenderer.clearPath(objectId);
   }
 
   clearPaths(): void {
-    for (const objectId of [...this.#paths.keys()]) this.clearPath(objectId);
+    this.#orbitRenderer.clearPaths();
   }
 
   pathCount(): number {
-    return this.#paths.size;
+    return this.#orbitRenderer.pathCount();
+  }
+
+  setOrbitsVisible(visible: boolean): void {
+    this.#orbitRenderer.setVisible(visible);
+  }
+
+  orbitsVisible(): boolean {
+    return this.#orbitRenderer.isVisible();
+  }
+
+  selectedOrbitActive(): boolean {
+    const selected = this.#selected;
+    return selected !== undefined && this.#orbitRenderer.hasPath(selected);
   }
 
   meshFor(objectId: ObjectId): THREE.Mesh | undefined {
@@ -136,7 +140,7 @@ export class SolarSystemScene {
   }
 
   dispose(): void {
-    this.clearPaths();
+    this.#orbitRenderer.dispose();
     for (const body of this.#bodies.values()) {
       this.#scene.remove(body.mesh);
       body.mesh.geometry.dispose();

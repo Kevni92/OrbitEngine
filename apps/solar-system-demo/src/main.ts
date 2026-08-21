@@ -5,334 +5,258 @@ import {
   WebGL2UnavailableError,
   type RenderShell,
 } from "./rendering/three-shell.js";
-import { SimulationClock } from "./simulation/simulation-clock.js";
-import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
+import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
+import { SolarSystemScene } from "./rendering/solar-system-scene.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
 import { EARTH_ID, SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
-import { SolarSystemScene } from "./rendering/solar-system-scene.js";
 import { PathCache } from "./simulation/path-sampling.js";
+import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visualization.js";
+import { SimulationClock } from "./simulation/simulation-clock.js";
+import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
+import { DemoPanel } from "./ui/demo-panel.js";
 import {
   compareSimulationInstants,
   objectId,
   simulationInstant,
   type ObjectId,
   type OrbitEngine,
-  type PropagationState,
-  type SimulationInstant,
 } from "orbit-engine";
 
-const engineStatus = document.querySelector<HTMLElement>("#engine-status");
-const renderingStatus = document.querySelector<HTMLElement>("#rendering-status");
-const simulationInstantElement = document.querySelector<HTMLElement>("#simulation-instant");
-const playPause = document.querySelector<HTMLButtonElement>("#play-pause");
-const warpSelect = document.querySelector<HTMLSelectElement>("#warp-select");
-const jumpSeconds = document.querySelector<HTMLInputElement>("#jump-seconds");
-const jumpNanoseconds = document.querySelector<HTMLInputElement>("#jump-nanoseconds");
-const jumpTime = document.querySelector<HTMLButtonElement>("#jump-time");
-const scenarioNote = document.querySelector<HTMLElement>("#scenario-note");
-const focusContext = document.querySelector<HTMLElement>("#focus-context");
-const focusSelect = document.querySelector<HTMLSelectElement>("#focus-select");
-const selectedSelect = document.querySelector<HTMLSelectElement>("#selected-select");
-const radiusMode = document.querySelector<HTMLSelectElement>("#radius-mode");
-const focusSelected = document.querySelector<HTMLButtonElement>("#focus-selected");
-const selectedPanel = document.querySelector<HTMLElement>("#selected-panel");
-const samplePath = document.querySelector<HTMLButtonElement>("#sample-path");
-const clearPath = document.querySelector<HTMLButtonElement>("#clear-path");
-const pathStatus = document.querySelector<HTMLElement>("#path-status");
 const canvas = document.querySelector<HTMLCanvasElement>("#scene");
 const clock = new SimulationClock();
 
-function formatInstant(): string {
-  const instant = clock.currentInstant();
-  return `${instant.seconds}s + ${instant.nanoseconds}ns`;
-}
-
-function updateClockUi(): void {
-  if (simulationInstantElement !== null) simulationInstantElement.textContent = formatInstant();
-  if (playPause !== null) playPause.textContent = clock.isPlaying() ? "Pause" : "Play";
-}
-
-function setStatus(element: HTMLElement | null, state: string, message: string): void {
-  if (element === null) return;
-  element.dataset.state = state;
-  element.textContent = message;
-}
-
-function formatVector(value: { readonly x: number; readonly y: number; readonly z: number }): string {
-  return `(${value.x.toExponential(6)}, ${value.y.toExponential(6)}, ${value.z.toExponential(6)})`;
-}
-
-function formatState(state: PropagationState): string {
-  return `epoch ${state.epoch.seconds}s + ${state.epoch.nanoseconds}ns\nframe ${state.referenceFrame}\npos ${formatVector(state.position)} m\nvel ${formatVector(state.velocity)} m/s`;
-}
-
-function populateBodySelect(select: HTMLSelectElement | null, scenario: SolarSystemScenario): void {
-  if (select === null) return;
-  select.replaceChildren(...scenario.bodies.map((entry) => {
-    const option = document.createElement("option");
-    option.value = entry.definition.id;
-    option.textContent = `${entry.definition.name} (${entry.definition.id})`;
-    return option;
-  }));
-  select.disabled = false;
-}
-
 async function bootstrap(): Promise<void> {
-  updateClockUi();
+  let panel!: DemoPanel;
+
+  let scenario: SolarSystemScenario | undefined;
+  let engine: OrbitEngine | undefined;
+  let engineHealth: ReturnType<OrbitEngine["health"]> | undefined;
+  let renderShell: RenderShell | undefined;
+  let scene: SolarSystemScene | undefined;
+  let guides: SceneGuides | undefined;
+  let stateSource: SolarSystemStateSource | undefined;
+  let coordinator: StateQueryCoordinator<ScenarioStateFrame> | undefined;
+  let focusId: ObjectId = SUN_ID;
+  let selectedId: ObjectId = SUN_ID;
+  const pathCache = new PathCache(ORBIT_CACHE_ENTRIES);
+
+  function updateClockUi(): void {
+    panel.setSimulationTime(clock.currentInstant(), clock.isPlaying());
+  }
+
+  function updateSelectedPanel(frame: ScenarioStateFrame): void {
+    if (scenario === undefined || engineHealth === undefined) return;
+    const selectedIndex = scenario.objectIds.indexOf(selectedId);
+    const focusIndex = scenario.objectIds.indexOf(focusId);
+    const selectedEntry = scenario.bodyById.get(selectedId);
+    const state = selectedIndex < 0 ? undefined : frame.states[selectedIndex];
+    const focusState = focusIndex < 0 ? undefined : frame.states[focusIndex];
+    if (selectedEntry === undefined || state === undefined) return;
+    panel.setSelectedBody(selectedEntry, state, focusState);
+    panel.setTechnicalDetails(selectedEntry, state, focusId, engineHealth);
+  }
+
+  function requestCurrentState(): void {
+    if (coordinator === undefined) return;
+    coordinator.request(clock.currentInstant(), `view-center:${focusId}`);
+    panel.setFocusId(focusId);
+  }
+
+  function setSelectedBody(objectIdValue: ObjectId): void {
+    selectedId = objectIdValue;
+    panel.setSelectedId(selectedId);
+    scene?.setSelected(selectedId);
+    if (scene?.selectedOrbitActive()) {
+      panel.setOrbitStatus("ready", `${scene.pathCount()} reference orbits · selected direction highlighted`);
+    } else if (scene !== undefined) {
+      panel.setOrbitStatus("ready", `${scene.pathCount()} reference orbits ready · select a planet or moon to highlight direction`);
+    }
+    const snapshot = coordinator?.latestSnapshot();
+    if (snapshot !== undefined) updateSelectedPanel(snapshot.value);
+  }
+
+  function sampleReferenceOrbits(): void {
+    if (scenario === undefined || stateSource === undefined || scene === undefined) return;
+    let ready = 0;
+    let failures = 0;
+    for (const entry of scenario.bodies) {
+      if (entry.definition.centralBody === undefined || entry.definition.orbitVisualization === undefined) continue;
+      try {
+        const path = createOrbitPath({
+          scenario,
+          body: entry,
+          cache: pathCache,
+          stateAt: (objectIdValue, centralBodyId, target, outputFrame) =>
+            stateSource!.relativeStateAt(objectIdValue, centralBodyId, target, outputFrame),
+        });
+        if (path === undefined) continue;
+        scene.setPath(path);
+        ready += 1;
+      } catch {
+        failures += 1;
+      }
+    }
+    panel.setOrbitStatus(
+      failures === 0 ? "ready" : "warning",
+      failures === 0 ? `${ready} reference orbits ready` : `${ready} reference orbits ready · ${failures} unavailable`,
+    );
+  }
+
+  panel = new DemoPanel({
+    onPlayPause: () => {
+      panel.clearSimulationError();
+      clock.toggle(performance.now());
+      updateClockUi();
+      requestCurrentState();
+    },
+    onWarpChange: (value) => {
+      try {
+        clock.setWarpFactor(value, performance.now());
+        panel.clearSimulationError();
+        updateClockUi();
+        requestCurrentState();
+      } catch (error) {
+        panel.setSimulationError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    onFocusChange: (objectIdValue) => {
+      focusId = objectIdValue;
+      requestCurrentState();
+    },
+    onSelectedChange: setSelectedBody,
+    onCenterSelected: () => {
+      focusId = selectedId;
+      requestCurrentState();
+    },
+    onRadiusModeChange: (mode) => scene?.setRadiusMode(mode),
+    onGridChange: (visible) => guides?.setGridVisible(visible),
+    onOrbitsChange: (visible) => scene?.setOrbitsVisible(visible),
+    onAxesChange: (visible) => guides?.setAxesVisible(visible),
+    onExactJump: (seconds, nanoseconds) => {
+      try {
+        if (!Number.isSafeInteger(seconds) || !Number.isSafeInteger(nanoseconds)) {
+          throw new RangeError("Seconds and nanoseconds must be safe integers");
+        }
+        const target = simulationInstant(seconds, nanoseconds);
+        const end = scenario?.validity.end;
+        if (scenario === undefined || compareSimulationInstants(target, scenario.validity.start) < 0
+            || (end !== undefined && compareSimulationInstants(target, end) >= 0)) {
+          throw new RangeError("Exact time is outside the supported scenario interval");
+        }
+        clock.jump(target, performance.now());
+        panel.clearExactJumpError();
+        updateClockUi();
+        requestCurrentState();
+      } catch (error) {
+        panel.setExactJumpError(error instanceof Error ? error.message : String(error));
+      }
+    },
+  });
+  panel.setSimulationTime(clock.currentInstant(), clock.isPlaying());
+  panel.setGuideSettings(DEFAULT_SCENE_GUIDE_SETTINGS);
+  panel.setOrbitsVisible(true);
+  panel.setControlsReady(false);
+
   if (canvas === null) {
-    setStatus(engineStatus, "error", "Canvas element is missing.");
+    panel.setEngineStatus("error", "Scene canvas is missing");
     return;
   }
 
-  let engine: OrbitEngine;
   try {
     engine = await createDemoEngine();
-    const health = engine.health();
-    setStatus(engineStatus, "ready", `WASM ready · protocol ${health.protocolVersion} · core ${health.coreVersion}`);
-    if (playPause !== null) playPause.disabled = false;
+    engineHealth = engine.health();
+    panel.setEngineStatus("ready", "Engine ready", `WASM · protocol ${engineHealth.protocolVersion} · core ${engineHealth.coreVersion}`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    setStatus(engineStatus, "error", `WASM initialization failed: ${message}`);
+    panel.setEngineStatus("error", "Engine initialization failed", error instanceof Error ? error.message : String(error));
     return;
   }
 
-  let scenario: SolarSystemScenario;
   try {
     scenario = loadSolarSystemScenario(engine);
     if (scenario.bodies.length !== 10) throw new Error(`Expected 10 bodies, received ${scenario.bodies.length}`);
     if (scenario.rootFrame !== SCENARIO_ROOT_FRAME) throw new Error("Scenario root frame is not the engine root frame");
     if (scenario.bodyById.get(EARTH_ID) === undefined) throw new Error("Scenario Earth registration is missing");
-    setStatus(scenarioNote, "ready", `Offline deterministic scenario ready · ${scenario.bodies.length} bodies · no runtime network`);
-    populateBodySelect(focusSelect, scenario);
-    populateBodySelect(selectedSelect, scenario);
-    if (focusSelect !== null) focusSelect.value = SUN_ID;
-    if (selectedSelect !== null) selectedSelect.value = SUN_ID;
-    if (focusSelected !== null) focusSelected.disabled = false;
-    if (warpSelect !== null) warpSelect.disabled = false;
-    if (jumpSeconds !== null) jumpSeconds.disabled = false;
-    if (jumpNanoseconds !== null) jumpNanoseconds.disabled = false;
-    if (jumpTime !== null) jumpTime.disabled = false;
-    if (samplePath !== null) samplePath.disabled = false;
-    if (clearPath !== null) clearPath.disabled = false;
+    panel.populateBodies(scenario);
+    panel.setFocusId(focusId);
+    panel.setSelectedId(selectedId);
+    panel.setScenarioNote("ready", "Offline deterministic scenario · 10 bodies");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    setStatus(scenarioNote, "error", `Scenario loading failed: ${message}`);
+    panel.setScenarioNote("error", error instanceof Error ? error.message : String(error));
     return;
   }
 
-  let renderShell: RenderShell | undefined;
-  let solarSystemScene: SolarSystemScene | undefined;
-  let focusId: ObjectId = SUN_ID;
-  let pathVisible = false;
-  const pathCache = new PathCache(4);
-  const stateSource = new SolarSystemStateSource(engine, scenario);
-  const coordinator = new StateQueryCoordinator<ScenarioStateFrame>({
+  stateSource = new SolarSystemStateSource(engine, scenario);
+  coordinator = new StateQueryCoordinator<ScenarioStateFrame>({
     source: {
       query: (request) => {
-        const requestedFocus = request.contextKey.startsWith("focus:")
-          ? objectId(request.contextKey.slice("focus:".length))
+        const requestedFocus = request.contextKey.startsWith("view-center:")
+          ? objectId(request.contextKey.slice("view-center:".length))
           : focusId;
-        return stateSource.query(requestedFocus, request.target);
+        return stateSource!.query(requestedFocus, request.target);
       },
     },
     onSnapshot: (snapshot) => {
-      solarSystemScene?.update(snapshot.value.states);
-      updateSelectedPanel(scenario, snapshot.value);
+      scene?.update(snapshot.value.states);
+      updateSelectedPanel(snapshot.value);
     },
     onError: (error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus(scenarioNote, "error", `State query failed: ${message}`);
+      panel.setScenarioNote("error", `State query failed: ${error instanceof Error ? error.message : String(error)}`);
     },
   });
-
-  function requestCurrentState(): void {
-    coordinator.request(clock.currentInstant(), `focus:${focusId}`);
-    if (focusContext !== null) focusContext.textContent = `${focusId} / ${scenario.rootFrame}`;
-  }
-
-  function selectedBodyId(): ObjectId {
-    return objectId(selectedSelect?.value || SUN_ID);
-  }
-
-  function setPathStatus(state: string, message: string): void {
-    setStatus(pathStatus, state, message);
-  }
-
-  function sampleCurrentPath(): void {
-    const selectedId = selectedBodyId();
-    const entry = scenario.bodyById.get(selectedId);
-    const end = scenario.validity.end;
-    if (entry === undefined || end === undefined) {
-      setPathStatus("error", "Selected body or path interval is unavailable.");
-      return;
-    }
-    setPathStatus("pending", "Sampling public engine states…");
-    solarSystemScene?.clearPaths();
-    try {
-      const path = pathCache.getOrCreate({
-        objectId: selectedId,
-        focusId,
-        outputFrame: scenario.rootFrame,
-        interval: { start: scenario.validity.start, end },
-        sampleCount: 96,
-        motionRevision: entry.record.motion.motionRevision,
-        configurationRevision: entry.record.motion.configurationRevision,
-        stateAt: (objectIdValue, target, outputFrame) =>
-          stateSource.stateAt(objectIdValue, focusId, target, outputFrame),
-      });
-      solarSystemScene?.setPath(path);
-      pathVisible = true;
-      setPathStatus("ready", `Sampled ${path.sampleCount} public states · ${path.interval.start.seconds}s–${path.interval.end.seconds}s · focus ${focusId}`);
-    } catch (error) {
-      pathVisible = false;
-      const message = error instanceof Error ? error.message : String(error);
-      setPathStatus("error", `Path sampling failed: ${message}`);
-    }
-  }
-
-  function clearCurrentPaths(): void {
-    pathVisible = false;
-    solarSystemScene?.clearPaths();
-    setPathStatus("pending", "No path sampled.");
-  }
-
-  function jumpToInputInstant(): void {
-    try {
-      const seconds = Number(jumpSeconds?.value ?? "");
-      const nanoseconds = Number(jumpNanoseconds?.value ?? "0");
-      if (!Number.isSafeInteger(seconds) || !Number.isSafeInteger(nanoseconds)) {
-        throw new RangeError("Jump values must be safe integers");
-      }
-      const target = simulationInstant(seconds, nanoseconds);
-      const end = scenario.validity.end;
-      if (compareSimulationInstants(target, scenario.validity.start) < 0
-          || (end !== undefined && compareSimulationInstants(target, end) >= 0)) {
-        throw new RangeError("Jump instant is outside the supported scenario interval");
-      }
-      clock.jump(target, performance.now());
-      updateClockUi();
-      requestCurrentState();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setPathStatus("error", `Exact jump failed: ${message}`);
-    }
-  }
-
-  function updateSelectedPanel(currentScenario: SolarSystemScenario, frame: ScenarioStateFrame): void {
-    if (selectedPanel === null) return;
-    const selectedId = selectedBodyId();
-    const index = currentScenario.objectIds.indexOf(selectedId);
-    const entry = currentScenario.bodyById.get(selectedId);
-    const state = index < 0 ? undefined : frame.states[index];
-    if (entry === undefined || state === undefined) {
-      selectedPanel.textContent = "Selected state unavailable.";
-      return;
-    }
-    const properties = entry.record.properties;
-    selectedPanel.textContent = `${entry.definition.name} · ObjectId ${entry.definition.id} · ${entry.definition.type}\n` +
-      `mass ${properties.mass ?? "n/a"} kg · μ ${properties.mu ?? "n/a"} m³/s² · radius ${properties.physicalRadius ?? "n/a"} m\n` +
-      `model ${entry.record.motion.modelKind} · motion rev ${entry.record.motion.motionRevision} · reference ${entry.record.referenceStatus}\n${formatState(state)}`;
-  }
 
   try {
     renderShell = createRenderShell(canvas);
-    setStatus(renderingStatus, "ready", "WebGL 2 ready · identity axes · +Z up");
-    solarSystemScene = new SolarSystemScene(renderShell.scene, scenario, {
-      onSelect: (objectId) => {
-        if (selectedSelect !== null) selectedSelect.value = objectId;
-        const snapshot = coordinator.latestSnapshot();
-        if (snapshot !== undefined) updateSelectedPanel(scenario, snapshot.value);
-        if (pathVisible) sampleCurrentPath();
-      },
+    guides = new SceneGuides(renderShell.scene);
+    guides.updateForCamera(renderShell.camera);
+    panel.setRenderingStatus("ready", "WebGL ready", "WebGL 2 · identity axes · +Z up");
+    scene = new SolarSystemScene(renderShell.scene, scenario, {
+      onSelect: setSelectedBody,
     });
-    solarSystemScene.setSelected(SUN_ID);
+    scene.setSelected(selectedId);
+    sampleReferenceOrbits();
   } catch (error) {
     if (error instanceof WebGL2UnavailableError) {
-      setStatus(renderingStatus, "unsupported", error.message);
+      panel.setRenderingStatus("unsupported", "WebGL 2 unavailable", error.message);
     } else {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus(renderingStatus, "error", `Rendering initialization failed: ${message}`);
+      panel.setRenderingStatus("error", "Rendering initialization failed", error instanceof Error ? error.message : String(error));
     }
   }
 
-  focusSelect?.addEventListener("change", () => {
-    if (focusSelect.value.length === 0) return;
-    focusId = objectId(focusSelect.value);
-    requestCurrentState();
-    if (pathVisible) sampleCurrentPath();
-  });
-  selectedSelect?.addEventListener("change", () => {
-    if (solarSystemScene !== undefined && selectedSelect.value.length > 0) {
-      solarSystemScene.setSelected(objectId(selectedSelect.value));
-    }
-    const snapshot = coordinator.latestSnapshot();
-    if (snapshot !== undefined) updateSelectedPanel(scenario, snapshot.value);
-    if (pathVisible) sampleCurrentPath();
-  });
-  focusSelected?.addEventListener("click", () => {
-    if (selectedSelect === null || selectedSelect.value.length === 0) return;
-    focusId = objectId(selectedSelect.value);
-    if (focusSelect !== null) focusSelect.value = focusId;
-    requestCurrentState();
-    if (pathVisible) sampleCurrentPath();
-  });
-  radiusMode?.addEventListener("change", () => {
-    solarSystemScene?.setRadiusMode(radiusMode.value === "physical" ? "physical" : "visible");
-  });
-  warpSelect?.addEventListener("change", () => {
-    try {
-      const value = Number(warpSelect.value);
-      clock.setWarpFactor(value, performance.now());
-      updateClockUi();
-      requestCurrentState();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setPathStatus("error", `Warp change failed: ${message}`);
-    }
-  });
-  jumpTime?.addEventListener("click", jumpToInputInstant);
-  samplePath?.addEventListener("click", sampleCurrentPath);
-  clearPath?.addEventListener("click", clearCurrentPaths);
-  canvas.addEventListener("click", (event) => {
-    if (solarSystemScene === undefined || renderShell === undefined) return;
-    const bounds = canvas.getBoundingClientRect();
-    const x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
-    const y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
-    solarSystemScene.selectFromPointer(x, y, renderShell.camera);
-  });
+  panel.setControlsReady(true);
+  panel.setGuideSettings(guides?.settings() ?? DEFAULT_SCENE_GUIDE_SETTINGS);
+  panel.setOrbitsVisible(scene?.orbitsVisible() ?? true);
   requestCurrentState();
-
-  if (playPause !== null) {
-    playPause.addEventListener("click", () => {
-      clock.toggle(performance.now());
-      updateClockUi();
-      requestCurrentState();
-    });
-  }
 
   if (renderShell === undefined) return;
   const resize = (): void => {
-    renderShell.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+    renderShell!.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
   };
   window.addEventListener("resize", resize);
   resize();
 
+  canvas.addEventListener("click", (event) => {
+    if (scene === undefined || renderShell === undefined) return;
+    const bounds = canvas.getBoundingClientRect();
+    const x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+    const y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+    scene.selectFromPointer(x, y, renderShell.camera);
+  });
+
   const loop = createAnimationLoop(() => {
-    // Use the same monotonic source as control handlers. The timestamp passed
-    // to requestAnimationFrame can describe an earlier frame than a
-    // performance.now() sample taken by a control event before this callback.
     clock.advanceTo(performance.now());
     updateClockUi();
     requestCurrentState();
-    renderShell.renderer.render(renderShell.scene, renderShell.camera);
+    guides?.updateForCamera(renderShell!.camera);
+    renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
   });
   loop.start();
   window.addEventListener("beforeunload", () => {
     loop.stop();
     window.removeEventListener("resize", resize);
-    renderShell.dispose();
-    solarSystemScene?.dispose();
+    guides?.dispose();
+    scene?.dispose();
+    renderShell?.dispose();
   }, { once: true });
 }
 

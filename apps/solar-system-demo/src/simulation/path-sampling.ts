@@ -24,6 +24,7 @@ export interface OrbitPath {
   readonly sampleCount: number;
   readonly motionRevision: RevisionId;
   readonly configurationRevision: RevisionId;
+  readonly closedReferenceOrbit?: boolean;
   readonly samples: readonly PathSample[];
 }
 
@@ -35,6 +36,7 @@ export interface PathSamplingRequest {
   readonly sampleCount: number;
   readonly motionRevision: RevisionId;
   readonly configurationRevision: RevisionId;
+  readonly closedReferenceOrbit?: boolean;
   readonly stateAt: (objectId: ObjectId, target: SimulationInstant, outputFrame: ReferenceFrameId) => PropagationState;
 }
 
@@ -77,6 +79,7 @@ function cacheKey(request: PathSamplingRequest): string {
     request.sampleCount,
     request.motionRevision,
     request.configurationRevision,
+    request.closedReferenceOrbit ?? true,
   ].join("|");
 }
 
@@ -104,6 +107,7 @@ export function sampleOrbitPath(request: PathSamplingRequest): OrbitPath {
     sampleCount: request.sampleCount,
     motionRevision: request.motionRevision,
     configurationRevision: request.configurationRevision,
+    closedReferenceOrbit: request.closedReferenceOrbit ?? true,
     samples,
   });
 }

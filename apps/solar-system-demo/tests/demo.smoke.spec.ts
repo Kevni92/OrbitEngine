@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("demo initializes the public WASM engine and reports rendering capability", async ({ page }) => {
+test("demo exposes polished guide, orbit, time, and advanced controls", async ({ page }) => {
   const pageErrors: Error[] = [];
   page.on("pageerror", (error) => pageErrors.push(error));
   await page.addInitScript(() => {
@@ -10,23 +10,49 @@ test("demo initializes the public WASM engine and reports rendering capability",
     });
   });
   await page.goto("/");
+
   await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
-  await expect(page.locator("#engine-status")).toContainText("WASM ready");
+  await expect(page.locator("#engine-status")).toContainText("Engine ready");
   await expect(page.locator("#scenario-note")).toHaveAttribute("data-state", "ready");
-  await expect(page.locator("#scenario-note")).toContainText("10 bodies");
   await expect(page.locator("#focus-select")).toBeEnabled();
-  await expect(page.locator("#selected-panel")).toContainText("epoch 0s");
+  await expect(page.locator("#grid-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#orbits-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#axes-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#orbit-status")).toContainText("reference orbits ready");
+
+  await page.click("#panel-toggle");
+  await expect(page.locator("#demo-panel")).toHaveClass(/is-collapsed/);
+  await expect(page.locator("#panel-toggle")).toHaveAttribute("aria-expanded", "false");
+  await page.click("#panel-toggle");
+  await expect(page.locator("#demo-panel")).not.toHaveClass(/is-collapsed/);
+
+  await page.click("#axes-toggle");
+  await expect(page.locator("#axes-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#grid-toggle")).toHaveAttribute("aria-pressed", "true");
+  await page.click("#grid-toggle");
+  await expect(page.locator("#grid-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#axes-toggle")).toHaveAttribute("aria-pressed", "true");
+  await page.click("#grid-toggle");
+  await page.click("#orbits-toggle");
+  await expect(page.locator("#orbits-toggle")).toHaveAttribute("aria-pressed", "false");
+  await page.click("#orbits-toggle");
+
+  await page.selectOption("#selected-select", "1003");
+  await expect(page.locator("#selected-name")).toHaveText("Earth");
+  await expect(page.locator("#selected-type")).toContainText("Planet");
+  await expect(page.locator("#orbit-status")).toContainText("direction highlighted");
   await page.selectOption("#focus-select", "1003");
-  await expect(page.locator("#focus-context")).toContainText("1003");
-  await page.selectOption("#selected-select", "1001");
-  await page.click("#sample-path");
-  await expect(page.locator("#path-status")).toHaveAttribute("data-state", "ready");
-  await expect(page.locator("#path-status")).toContainText("Sampled 96 public states");
+  await expect(page.locator("#focus-select")).toHaveValue("1003");
+
+  await page.locator("#advanced-details").locator("summary").click();
+  await expect(page.locator("#technical-details")).toContainText("ObjectId: 1003");
+  await expect(page.locator("#jump-seconds")).toBeVisible();
+
   await page.selectOption("#warp-select", "2592000");
   await page.click("#play-pause");
   await page.waitForTimeout(120);
   await page.click("#play-pause");
-  await expect(page.locator("#simulation-instant")).not.toHaveText("0s + 0ns");
+  await expect(page.locator("#simulation-instant")).not.toHaveText("J2000 + 0 d 00:00:00");
   await expect(page.locator("#rendering-status")).toHaveAttribute("data-state", /^(ready|unsupported)$/);
   expect(pageErrors).toHaveLength(0);
 });

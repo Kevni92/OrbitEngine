@@ -21,6 +21,15 @@ export class SolarSystemStateSource {
     return this.#engine.relativeStateAt(objectId, focusId, target, outputFrame);
   }
 
+  relativeStateAt(
+    objectId: ObjectId,
+    centralBodyId: ObjectId,
+    target: SimulationInstant,
+    outputFrame: ReferenceFrameId,
+  ): PropagationState {
+    return this.#engine.relativeStateAt(objectId, centralBodyId, target, outputFrame);
+  }
+
   query(focusId: ObjectId, target: SimulationInstant): ScenarioStateFrame {
     if (focusId === SUN_ID) {
       return Object.freeze({
