@@ -11,6 +11,8 @@ Two compiled backends wrap the same portable C++ core:
 
 The concrete repository, packaging, initialization, artifact, test, and CI decisions are defined in [11 — Build, Package, and Backend Architecture](11-build-package-and-backend-architecture.md).
 
+Fundamental unit, time, precision, and marshalling semantics are defined in [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md).
+
 ## Layering
 
 ```text
@@ -79,16 +81,24 @@ Once a valid native module is loaded, protocol mismatch or backend initializatio
 
 Raw binding objects, Emscripten modules, artifact paths, and backend implementation classes are internal and are not exported from the normal public package entry point.
 
+## Numeric and time transfer contract
+
+Canonical physical continuous values cross the TypeScript/backend boundary as IEEE-754 binary64 (`number` ↔ C++ `double` ↔ WASM `f64`). They must never be silently down-cast to f32.
+
+`SimulationInstant` and `Duration` do not cross as a floating-point count of total seconds. Public TypeScript uses safe-integer `seconds` plus integer `nanoseconds`; the portable core uses signed 64-bit seconds plus unsigned nanoseconds. Low-level adapters preserve the 64-bit seconds exactly through signed-high/unsigned-low 32-bit words or an equivalent lossless i64 mechanism. The public API does not require JavaScript `BigInt` for the supported simulation horizon.
+
+Batch interfaces use binary64 arrays for continuous quantities and exact integer fields/typed arrays for time values. Backend-specific packing is internal and must not leak into public value shapes.
+
 ## Performance boundary
 
 Crossing JavaScript ↔ native/WASM boundaries has overhead. Prefer batch-oriented interfaces for large data sets rather than thousands of tiny calls. Data ownership and transfer formats should be designed deliberately once feature-level requirements and profiling data exist.
 
-Keep orchestration, public validation, and API ergonomics in TypeScript unless measurement or architecture justifies moving work into C++.
+Keep orchestration, public validation, unit conversion, and API ergonomics in TypeScript unless measurement or architecture justifies moving work into C++.
 
 ## Testing expectation
 
 Where both backends implement the same feature, shared parity tests execute the same high-level scenario against native and WASM.
 
-Parity means equivalent public behavior, not unconditional bit-identical floating-point results. Numerical features must define their own tolerances when they are introduced.
+Exact integer/time normalization, ordering, and marshalling behavior must match exactly. Floating-point feature results use their documented numerical tolerances; parity does not require unconditional bit-identical floating-point results across native and WASM.
 
 Backend-specific tests additionally cover loading, initialization, marshalling, artifact resolution, and error translation. Portable core behavior is tested directly in C++ through CTest.
