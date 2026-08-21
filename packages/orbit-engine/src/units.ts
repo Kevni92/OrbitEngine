@@ -4,6 +4,7 @@ declare const metersPerSecondSquaredBrand: unique symbol;
 declare const kilogramsBrand: unique symbol;
 declare const radiansBrand: unique symbol;
 declare const radiansPerSecondBrand: unique symbol;
+declare const radiansPerSecondSquaredBrand: unique symbol;
 
 export type Meters = number & { readonly [metersBrand]: "Meters" };
 export type MetersPerSecond = number & { readonly [metersPerSecondBrand]: "MetersPerSecond" };
@@ -11,6 +12,7 @@ export type MetersPerSecondSquared = number & { readonly [metersPerSecondSquared
 export type Kilograms = number & { readonly [kilogramsBrand]: "Kilograms" };
 export type Radians = number & { readonly [radiansBrand]: "Radians" };
 export type RadiansPerSecond = number & { readonly [radiansPerSecondBrand]: "RadiansPerSecond" };
+export type RadiansPerSecondSquared = number & { readonly [radiansPerSecondSquaredBrand]: "RadiansPerSecondSquared" };
 
 function finiteValue(value: number, name: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -42,4 +44,8 @@ export function radians(value: number): Radians {
 
 export function radiansPerSecond(value: number): RadiansPerSecond {
   return finiteValue(value, "radiansPerSecond") as RadiansPerSecond;
+}
+
+export function radiansPerSecondSquared(value: number): RadiansPerSecondSquared {
+  return finiteValue(value, "radiansPerSecondSquared") as RadiansPerSecondSquared;
 }

@@ -1,5 +1,6 @@
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/object.hpp"
+#include "orbit_engine/propagation.hpp"
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/time.hpp"
 
@@ -24,7 +25,7 @@ int main() {
     return 1;
   }
 
-  if (orbit_engine::kBindingProtocolVersion != 4) {
+  if (orbit_engine::kBindingProtocolVersion != 5) {
     std::cerr << "unexpected binding protocol version\n";
     return 1;
   }
@@ -318,6 +319,76 @@ int main() {
   CHECK(!orbit_engine::frame::round_trip(
     FrameWire{0, 0, frameWire.epoch, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
     frameRoundTrip
+  ));
+
+  using orbit_engine::propagation::PropagationWire;
+  const PropagationWire propagationWire{
+    maxIdWire.high,
+    maxIdWire.low,
+    2,
+    2,
+    0,
+    frameIdWire.high,
+    frameIdWire.low,
+    maxIdWire.high,
+    maxIdWire.low,
+    0,
+    7,
+    orbit_engine::time::to_wire(SimulationInstant{-5, 1}),
+    true,
+    orbit_engine::time::to_wire(SimulationInstant{5, 2}),
+    orbit_engine::time::to_wire(SimulationInstant{0, 3}),
+    1,
+    0,
+    1,
+    binary64Sentinel,
+    -2.0,
+    3.0,
+    -4.0,
+    5.0,
+    6.0,
+    7.0,
+    8.0,
+    0.001,
+    9.0,
+  };
+  CHECK(orbit_engine::propagation::is_valid(propagationWire));
+  PropagationWire propagationRoundTrip{};
+  CHECK(orbit_engine::propagation::round_trip(propagationWire, propagationRoundTrip));
+  CHECK(propagationRoundTrip.object_id_high == propagationWire.object_id_high);
+  CHECK(propagationRoundTrip.position_x == binary64Sentinel);
+  CHECK(!orbit_engine::propagation::round_trip(
+    PropagationWire{
+      propagationWire.object_id_high,
+      propagationWire.object_id_low,
+      0,
+      propagationWire.direction_code,
+      propagationWire.bounded_direction_code,
+      propagationWire.propagation_frame_high,
+      propagationWire.propagation_frame_low,
+      propagationWire.configuration_revision_high,
+      propagationWire.configuration_revision_low,
+      propagationWire.motion_revision_high,
+      propagationWire.motion_revision_low,
+      propagationWire.segment_start,
+      propagationWire.segment_end_present,
+      propagationWire.segment_end,
+      propagationWire.target,
+      propagationWire.outcome_code,
+      propagationWire.result_frame_high,
+      propagationWire.result_frame_low,
+      propagationWire.position_x,
+      propagationWire.position_y,
+      propagationWire.position_z,
+      propagationWire.velocity_x,
+      propagationWire.velocity_y,
+      propagationWire.velocity_z,
+      propagationWire.position_absolute_meters,
+      propagationWire.position_relative,
+      propagationWire.velocity_absolute_meters_per_second,
+      propagationWire.velocity_relative,
+    },
+    propagationRoundTrip
   ));
 
   return 0;

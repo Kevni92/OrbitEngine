@@ -4,6 +4,7 @@ import { BackendInitializationError } from "./errors.js";
 import type { TimeWire } from "../time-wire.js";
 import type { ObjectWire } from "../object-wire.js";
 import type { FrameWire } from "../frame-wire.js";
+import type { PropagationWire } from "../propagation-wire.js";
 
 type ObjectRoundTripArgs = [
   number,
@@ -40,6 +41,12 @@ type FrameRoundTripArgs = [
   number,
 ];
 
+type PropagationRoundTripArgs = [
+  number, number, number, number, number, number, number, number, number, number, number,
+  number, number, number, number, number, number, number, number, number, number, number,
+  number, number, number, number, number, number, number, number, number, number, number, number,
+];
+
 interface WasmModule {
   readonly _orbit_engine_binding_protocol_version: () => number;
   readonly _orbit_engine_core_version: () => number;
@@ -48,6 +55,41 @@ interface WasmModule {
   readonly _orbit_engine_round_trip_time_seconds_low: (secondsHigh: number, secondsLow: number, nanoseconds: number) => number;
   readonly _orbit_engine_round_trip_time_nanoseconds: (secondsHigh: number, secondsLow: number, nanoseconds: number) => number;
   readonly _orbit_engine_round_trip_double: (value: number) => number;
+  readonly _orbit_engine_round_trip_propagation: (...args: PropagationRoundTripArgs) => number;
+  readonly _orbit_engine_propagation_object_id_high: () => number;
+  readonly _orbit_engine_propagation_object_id_low: () => number;
+  readonly _orbit_engine_propagation_model_kind_code: () => number;
+  readonly _orbit_engine_propagation_direction_code: () => number;
+  readonly _orbit_engine_propagation_bounded_direction_code: () => number;
+  readonly _orbit_engine_propagation_frame_high: () => number;
+  readonly _orbit_engine_propagation_frame_low: () => number;
+  readonly _orbit_engine_propagation_configuration_revision_high: () => number;
+  readonly _orbit_engine_propagation_configuration_revision_low: () => number;
+  readonly _orbit_engine_propagation_motion_revision_high: () => number;
+  readonly _orbit_engine_propagation_motion_revision_low: () => number;
+  readonly _orbit_engine_propagation_segment_start_seconds_high: () => number;
+  readonly _orbit_engine_propagation_segment_start_seconds_low: () => number;
+  readonly _orbit_engine_propagation_segment_start_nanoseconds: () => number;
+  readonly _orbit_engine_propagation_segment_end_present: () => number;
+  readonly _orbit_engine_propagation_segment_end_seconds_high: () => number;
+  readonly _orbit_engine_propagation_segment_end_seconds_low: () => number;
+  readonly _orbit_engine_propagation_segment_end_nanoseconds: () => number;
+  readonly _orbit_engine_propagation_target_seconds_high: () => number;
+  readonly _orbit_engine_propagation_target_seconds_low: () => number;
+  readonly _orbit_engine_propagation_target_nanoseconds: () => number;
+  readonly _orbit_engine_propagation_outcome_code: () => number;
+  readonly _orbit_engine_propagation_result_frame_high: () => number;
+  readonly _orbit_engine_propagation_result_frame_low: () => number;
+  readonly _orbit_engine_propagation_position_x: () => number;
+  readonly _orbit_engine_propagation_position_y: () => number;
+  readonly _orbit_engine_propagation_position_z: () => number;
+  readonly _orbit_engine_propagation_velocity_x: () => number;
+  readonly _orbit_engine_propagation_velocity_y: () => number;
+  readonly _orbit_engine_propagation_velocity_z: () => number;
+  readonly _orbit_engine_propagation_position_absolute_meters: () => number;
+  readonly _orbit_engine_propagation_position_relative: () => number;
+  readonly _orbit_engine_propagation_velocity_absolute_meters_per_second: () => number;
+  readonly _orbit_engine_propagation_velocity_relative: () => number;
   readonly _orbit_engine_round_trip_frame_reference_frame_id_high: (...args: FrameRoundTripArgs) => number;
   readonly _orbit_engine_round_trip_frame_reference_frame_id_low: (...args: FrameRoundTripArgs) => number;
   readonly _orbit_engine_round_trip_frame_epoch_seconds_high: (...args: FrameRoundTripArgs) => number;
@@ -132,6 +174,83 @@ export async function loadWasmBackend(): Promise<Backend> {
       ) >>> 0,
     }),
     roundTripDouble: (value: number) => module._orbit_engine_round_trip_double(value),
+    roundTripPropagation: (value: PropagationWire) => {
+      const args: PropagationRoundTripArgs = [
+        value.objectIdHigh,
+        value.objectIdLow,
+        value.modelKindCode,
+        value.directionCode,
+        value.boundedDirectionCode,
+        value.propagationFrameHigh,
+        value.propagationFrameLow,
+        value.configurationRevisionHigh,
+        value.configurationRevisionLow,
+        value.motionRevisionHigh,
+        value.motionRevisionLow,
+        value.segmentStartSecondsHigh,
+        value.segmentStartSecondsLow,
+        value.segmentStartNanoseconds,
+        value.segmentEndPresent ? 1 : 0,
+        value.segmentEndSecondsHigh,
+        value.segmentEndSecondsLow,
+        value.segmentEndNanoseconds,
+        value.targetSecondsHigh,
+        value.targetSecondsLow,
+        value.targetNanoseconds,
+        value.outcomeCode,
+        value.resultFrameHigh,
+        value.resultFrameLow,
+        value.positionX,
+        value.positionY,
+        value.positionZ,
+        value.velocityX,
+        value.velocityY,
+        value.velocityZ,
+        value.positionAbsoluteMeters,
+        value.positionRelative,
+        value.velocityAbsoluteMetersPerSecond,
+        value.velocityRelative,
+      ];
+      if (module._orbit_engine_round_trip_propagation(...args) === 0) {
+        throw new RangeError("WASM propagation round-trip rejected the wire value");
+      }
+      return {
+        objectIdHigh: module._orbit_engine_propagation_object_id_high() >>> 0,
+        objectIdLow: module._orbit_engine_propagation_object_id_low() >>> 0,
+        modelKindCode: module._orbit_engine_propagation_model_kind_code() >>> 0,
+        directionCode: module._orbit_engine_propagation_direction_code() >>> 0,
+        boundedDirectionCode: module._orbit_engine_propagation_bounded_direction_code() >>> 0,
+        propagationFrameHigh: module._orbit_engine_propagation_frame_high() >>> 0,
+        propagationFrameLow: module._orbit_engine_propagation_frame_low() >>> 0,
+        configurationRevisionHigh: module._orbit_engine_propagation_configuration_revision_high() >>> 0,
+        configurationRevisionLow: module._orbit_engine_propagation_configuration_revision_low() >>> 0,
+        motionRevisionHigh: module._orbit_engine_propagation_motion_revision_high() >>> 0,
+        motionRevisionLow: module._orbit_engine_propagation_motion_revision_low() >>> 0,
+        segmentStartSecondsHigh: module._orbit_engine_propagation_segment_start_seconds_high(),
+        segmentStartSecondsLow: module._orbit_engine_propagation_segment_start_seconds_low() >>> 0,
+        segmentStartNanoseconds: module._orbit_engine_propagation_segment_start_nanoseconds() >>> 0,
+        segmentEndPresent: module._orbit_engine_propagation_segment_end_present() !== 0,
+        segmentEndSecondsHigh: module._orbit_engine_propagation_segment_end_seconds_high(),
+        segmentEndSecondsLow: module._orbit_engine_propagation_segment_end_seconds_low() >>> 0,
+        segmentEndNanoseconds: module._orbit_engine_propagation_segment_end_nanoseconds() >>> 0,
+        targetSecondsHigh: module._orbit_engine_propagation_target_seconds_high(),
+        targetSecondsLow: module._orbit_engine_propagation_target_seconds_low() >>> 0,
+        targetNanoseconds: module._orbit_engine_propagation_target_nanoseconds() >>> 0,
+        outcomeCode: module._orbit_engine_propagation_outcome_code() >>> 0,
+        resultFrameHigh: module._orbit_engine_propagation_result_frame_high() >>> 0,
+        resultFrameLow: module._orbit_engine_propagation_result_frame_low() >>> 0,
+        positionX: module._orbit_engine_propagation_position_x(),
+        positionY: module._orbit_engine_propagation_position_y(),
+        positionZ: module._orbit_engine_propagation_position_z(),
+        velocityX: module._orbit_engine_propagation_velocity_x(),
+        velocityY: module._orbit_engine_propagation_velocity_y(),
+        velocityZ: module._orbit_engine_propagation_velocity_z(),
+        positionAbsoluteMeters: module._orbit_engine_propagation_position_absolute_meters(),
+        positionRelative: module._orbit_engine_propagation_position_relative(),
+        velocityAbsoluteMetersPerSecond: module._orbit_engine_propagation_velocity_absolute_meters_per_second(),
+        velocityRelative: module._orbit_engine_propagation_velocity_relative(),
+      };
+    },
     roundTripFrame: (value: FrameWire) => {
       const args: FrameRoundTripArgs = [
         value.referenceFrameIdHigh,

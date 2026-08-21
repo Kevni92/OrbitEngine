@@ -1,6 +1,7 @@
 #include "orbit_engine/core.hpp"
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/object.hpp"
+#include "orbit_engine/propagation.hpp"
 #include "orbit_engine/time.hpp"
 
 #include <cmath>
@@ -132,6 +133,67 @@ bool readFrameWire(const Napi::Value& value, orbit_engine::frame::FrameWire& out
     && readDouble("angularVelocityZ", output.angular_velocity_z);
 }
 
+bool readPropagationWire(const Napi::Value& value, orbit_engine::propagation::PropagationWire& output) {
+  if (!value.IsObject()) {
+    return false;
+  }
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) return false;
+    const auto number = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number);
+    return true;
+  };
+  const auto readDouble = [&object](const char* name, double& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) return false;
+    target = value.As<Napi::Number>().DoubleValue();
+    return std::isfinite(target);
+  };
+  const auto readBoolean = [&object](const char* name, bool& target) {
+    const auto value = object.Get(name);
+    if (!value.IsBoolean()) return false;
+    target = value.As<Napi::Boolean>().Value();
+    return true;
+  };
+  return readInteger("objectIdHigh", 0.0, 4'294'967'295.0, output.object_id_high)
+    && readInteger("objectIdLow", 0.0, 4'294'967'295.0, output.object_id_low)
+    && readInteger("modelKindCode", 0.0, 65'535.0, output.model_kind_code)
+    && readInteger("directionCode", 0.0, 65'535.0, output.direction_code)
+    && readInteger("boundedDirectionCode", 0.0, 65'535.0, output.bounded_direction_code)
+    && readInteger("propagationFrameHigh", 0.0, 4'294'967'295.0, output.propagation_frame_high)
+    && readInteger("propagationFrameLow", 0.0, 4'294'967'295.0, output.propagation_frame_low)
+    && readInteger("configurationRevisionHigh", 0.0, 4'294'967'295.0, output.configuration_revision_high)
+    && readInteger("configurationRevisionLow", 0.0, 4'294'967'295.0, output.configuration_revision_low)
+    && readInteger("motionRevisionHigh", 0.0, 4'294'967'295.0, output.motion_revision_high)
+    && readInteger("motionRevisionLow", 0.0, 4'294'967'295.0, output.motion_revision_low)
+    && readInteger("segmentStartSecondsHigh", -2'147'483'648.0, 2'147'483'647.0, output.segment_start.seconds_high)
+    && readInteger("segmentStartSecondsLow", 0.0, 4'294'967'295.0, output.segment_start.seconds_low)
+    && readInteger("segmentStartNanoseconds", 0.0, 999'999'999.0, output.segment_start.nanoseconds)
+    && readBoolean("segmentEndPresent", output.segment_end_present)
+    && readInteger("segmentEndSecondsHigh", -2'147'483'648.0, 2'147'483'647.0, output.segment_end.seconds_high)
+    && readInteger("segmentEndSecondsLow", 0.0, 4'294'967'295.0, output.segment_end.seconds_low)
+    && readInteger("segmentEndNanoseconds", 0.0, 999'999'999.0, output.segment_end.nanoseconds)
+    && readInteger("targetSecondsHigh", -2'147'483'648.0, 2'147'483'647.0, output.target.seconds_high)
+    && readInteger("targetSecondsLow", 0.0, 4'294'967'295.0, output.target.seconds_low)
+    && readInteger("targetNanoseconds", 0.0, 999'999'999.0, output.target.nanoseconds)
+    && readInteger("outcomeCode", 0.0, 65'535.0, output.outcome_code)
+    && readInteger("resultFrameHigh", 0.0, 4'294'967'295.0, output.result_frame_high)
+    && readInteger("resultFrameLow", 0.0, 4'294'967'295.0, output.result_frame_low)
+    && readDouble("positionX", output.position_x)
+    && readDouble("positionY", output.position_y)
+    && readDouble("positionZ", output.position_z)
+    && readDouble("velocityX", output.velocity_x)
+    && readDouble("velocityY", output.velocity_y)
+    && readDouble("velocityZ", output.velocity_z)
+    && readDouble("positionAbsoluteMeters", output.position_absolute_meters)
+    && readDouble("positionRelative", output.position_relative)
+    && readDouble("velocityAbsoluteMetersPerSecond", output.velocity_absolute_meters_per_second)
+    && readDouble("velocityRelative", output.velocity_relative);
+}
+
 Napi::Object writeWire(Napi::Env env, orbit_engine::time::TimeWire value) {
   auto result = Napi::Object::New(env);
   result.Set("secondsHigh", Napi::Number::New(env, value.seconds_high));
@@ -179,6 +241,45 @@ Napi::Object writeFrameWire(Napi::Env env, orbit_engine::frame::FrameWire value)
   result.Set("angularVelocityX", Napi::Number::New(env, value.angular_velocity_x));
   result.Set("angularVelocityY", Napi::Number::New(env, value.angular_velocity_y));
   result.Set("angularVelocityZ", Napi::Number::New(env, value.angular_velocity_z));
+  return result;
+}
+
+Napi::Object writePropagationWire(Napi::Env env, orbit_engine::propagation::PropagationWire value) {
+  auto result = Napi::Object::New(env);
+  result.Set("objectIdHigh", Napi::Number::New(env, value.object_id_high));
+  result.Set("objectIdLow", Napi::Number::New(env, value.object_id_low));
+  result.Set("modelKindCode", Napi::Number::New(env, value.model_kind_code));
+  result.Set("directionCode", Napi::Number::New(env, value.direction_code));
+  result.Set("boundedDirectionCode", Napi::Number::New(env, value.bounded_direction_code));
+  result.Set("propagationFrameHigh", Napi::Number::New(env, value.propagation_frame_high));
+  result.Set("propagationFrameLow", Napi::Number::New(env, value.propagation_frame_low));
+  result.Set("configurationRevisionHigh", Napi::Number::New(env, value.configuration_revision_high));
+  result.Set("configurationRevisionLow", Napi::Number::New(env, value.configuration_revision_low));
+  result.Set("motionRevisionHigh", Napi::Number::New(env, value.motion_revision_high));
+  result.Set("motionRevisionLow", Napi::Number::New(env, value.motion_revision_low));
+  result.Set("segmentStartSecondsHigh", Napi::Number::New(env, value.segment_start.seconds_high));
+  result.Set("segmentStartSecondsLow", Napi::Number::New(env, value.segment_start.seconds_low));
+  result.Set("segmentStartNanoseconds", Napi::Number::New(env, value.segment_start.nanoseconds));
+  result.Set("segmentEndPresent", Napi::Boolean::New(env, value.segment_end_present));
+  result.Set("segmentEndSecondsHigh", Napi::Number::New(env, value.segment_end.seconds_high));
+  result.Set("segmentEndSecondsLow", Napi::Number::New(env, value.segment_end.seconds_low));
+  result.Set("segmentEndNanoseconds", Napi::Number::New(env, value.segment_end.nanoseconds));
+  result.Set("targetSecondsHigh", Napi::Number::New(env, value.target.seconds_high));
+  result.Set("targetSecondsLow", Napi::Number::New(env, value.target.seconds_low));
+  result.Set("targetNanoseconds", Napi::Number::New(env, value.target.nanoseconds));
+  result.Set("outcomeCode", Napi::Number::New(env, value.outcome_code));
+  result.Set("resultFrameHigh", Napi::Number::New(env, value.result_frame_high));
+  result.Set("resultFrameLow", Napi::Number::New(env, value.result_frame_low));
+  result.Set("positionX", Napi::Number::New(env, value.position_x));
+  result.Set("positionY", Napi::Number::New(env, value.position_y));
+  result.Set("positionZ", Napi::Number::New(env, value.position_z));
+  result.Set("velocityX", Napi::Number::New(env, value.velocity_x));
+  result.Set("velocityY", Napi::Number::New(env, value.velocity_y));
+  result.Set("velocityZ", Napi::Number::New(env, value.velocity_z));
+  result.Set("positionAbsoluteMeters", Napi::Number::New(env, value.position_absolute_meters));
+  result.Set("positionRelative", Napi::Number::New(env, value.position_relative));
+  result.Set("velocityAbsoluteMetersPerSecond", Napi::Number::New(env, value.velocity_absolute_meters_per_second));
+  result.Set("velocityRelative", Napi::Number::New(env, value.velocity_relative));
   return result;
 }
 
@@ -260,6 +361,25 @@ Napi::Value RoundTripFrame(const Napi::CallbackInfo& info) {
   return writeFrameWire(env, output);
 }
 
+Napi::Value RoundTripPropagation(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1) {
+    Napi::TypeError::New(env, "roundTripPropagation expects one propagation wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  orbit_engine::propagation::PropagationWire input{};
+  if (!readPropagationWire(info[0], input)) {
+    Napi::TypeError::New(env, "roundTripPropagation received an invalid wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  orbit_engine::propagation::PropagationWire output{};
+  if (!orbit_engine::propagation::round_trip(input, output)) {
+    Napi::RangeError::New(env, "roundTripPropagation received an invalid propagation value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  return writePropagationWire(env, output);
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("protocolVersion", Napi::Number::New(env, orbit_engine::kBindingProtocolVersion));
   exports.Set("initialize", Napi::Function::New(env, Initialize));
@@ -267,6 +387,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("roundTripDouble", Napi::Function::New(env, RoundTripDouble));
   exports.Set("roundTripObject", Napi::Function::New(env, RoundTripObject));
   exports.Set("roundTripFrame", Napi::Function::New(env, RoundTripFrame));
+  exports.Set("roundTripPropagation", Napi::Function::New(env, RoundTripPropagation));
   return exports;
 }
 
