@@ -36,7 +36,7 @@ OrbitEngine registration/configuration
 ## Proposed engine subsystems
 
 ### Time System
-Owns simulation epoch/time representation and supports efficient jumps over long intervals. Time must not be tied to render ticks or wall-clock time.
+Owns the exact simulation instant/duration model and supports efficient jumps over long intervals. Time must not be tied to render ticks or wall-clock time. The canonical contract is defined in [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md): TDB relative to the J2000 TDB origin, represented as normalized whole seconds plus nanoseconds. Mutable advancement is monotonic/event-driven; civil-time and leap-second conversion remain outside the portable runtime core.
 
 ### Object Registry
 Stores stable IDs, object type, physical state, propagation metadata, reference-frame relationship, and interaction configuration.
@@ -66,7 +66,7 @@ Plans physically valid transfers toward moving targets using object state, mass,
 
 1. The C++ core must not import game concepts.
 2. The C++ core must not depend directly on Node.js or Emscripten.
-3. Bindings translate between TypeScript-facing data and portable core types.
-4. Data importers may know JPL/NASA formats; OrbitEngine core should not require network access or vendor-specific schemas.
+3. Bindings translate between TypeScript-facing data and portable core types without changing canonical units, time semantics, or binary64 precision.
+4. Data importers may know JPL/NASA formats; OrbitEngine core should not require network access or vendor-specific schemas. Importers normalize source time scales/epochs to the canonical TDB instant contract before runtime use.
 5. A game layer may attach arbitrary metadata to an OrbitEngine ID outside the engine.
 6. Architectural changes require documentation updates in the same PR.
