@@ -136,6 +136,33 @@ function anchor(
   });
 }
 
+// The original primary-planet fixture values were authored in the J2000
+// ecliptic plane. Rotate those deterministic fixtures into the canonical
+// ICRS/ICRF-aligned engine axes so they share Earth's JPL reference plane.
+const J2000_ECLIPTIC_OBLIQUITY_RADIANS = 23.43928 * Math.PI / 180;
+const J2000_ECLIPTIC_COSINE = Math.cos(J2000_ECLIPTIC_OBLIQUITY_RADIANS);
+const J2000_ECLIPTIC_SINE = Math.sin(J2000_ECLIPTIC_OBLIQUITY_RADIANS);
+
+function eclipticFixtureAnchor(
+  x: number,
+  y: number,
+  z: number,
+  velocityX: number,
+  velocityY: number,
+  velocityZ: number,
+  frame: ReferenceFrameId,
+): PropagationState {
+  return anchor(
+    x,
+    J2000_ECLIPTIC_COSINE * y - J2000_ECLIPTIC_SINE * z,
+    J2000_ECLIPTIC_SINE * y + J2000_ECLIPTIC_COSINE * z,
+    velocityX,
+    J2000_ECLIPTIC_COSINE * velocityY - J2000_ECLIPTIC_SINE * velocityZ,
+    J2000_ECLIPTIC_SINE * velocityY + J2000_ECLIPTIC_COSINE * velocityZ,
+    frame,
+  );
+}
+
 function horizonsAnchor(
   xKilometres: number,
   yKilometres: number,
@@ -276,7 +303,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "2",
     { mass: 3.3011e23, mu: 2.2032e13, physicalRadius: 2_439_700 },
-    anchor(56_754_897_931.32163, 11_504_787_374.949291, 0, -9_510.706115768091, 46_917.78624527545, 0, SUN_CENTERED_FRAME),
+    eclipticFixtureAnchor(56_754_897_931.32163, 11_504_787_374.949291, 0, -9_510.706115768091, 46_917.78624527545, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(7_600_000),
   ),
@@ -288,7 +315,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "3",
     { mass: 4.8675e24, mu: 3.24859e14, physicalRadius: 6_051_800 },
-    anchor(58_465_828_859.28082, 91_055_133_493.79546, 0, -29_468.79092110239, 18_921.69305095249, 0, SUN_CENTERED_FRAME),
+    eclipticFixtureAnchor(58_465_828_859.28082, 91_055_133_493.79546, 0, -29_468.79092110239, 18_921.69305095249, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(19_400_000),
   ),
@@ -300,7 +327,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "4",
     { mass: 5.97219e24, mu: 3.986004418e14, physicalRadius: 6_371_000 },
-    horizonsAnchor(-26_499.0336774305, 132_757.4173383451, 57_556.71847054072, -29.79426007043741, -5.018052308799903, -2.175393802830554, SUN_CENTERED_FRAME),
+    horizonsAnchor(-26_499_033.6774305, 132_757_417.3383451, 57_556_718.47054072, -29.79426007043741, -5.018052308799903, -2.175393802830554, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(31_557_600),
     {
@@ -316,7 +343,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "5",
     { mass: 6.4171e23, mu: 4.282837e13, physicalRadius: 3_389_500 },
-    anchor(-214_769_406_554.1414, 76_356_930_956.01689, 0, -8_083.059055501473, -22_735.248454290246, 0, SUN_CENTERED_FRAME),
+    eclipticFixtureAnchor(-214_769_406_554.1414, 76_356_930_956.01689, 0, -8_083.059055501473, -22_735.248454290246, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(59_400_000),
   ),
@@ -328,7 +355,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "6",
     { mass: 1.89813e27, mu: 1.26686534e17, physicalRadius: 69_911_000 },
-    anchor(-508_757_512_504.3964, -589_050_275_532.8215, 0, 9_882.196114454531, -8_535.165370600633, 0, SUN_CENTERED_FRAME),
+    eclipticFixtureAnchor(-508_757_512_504.3964, -589_050_275_532.8215, 0, 9_882.196114454531, -8_535.165370600633, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(374_000_000),
   ),
@@ -340,7 +367,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "7",
     { mass: 5.6834e26, mu: 3.7931187e16, physicalRadius: 58_232_000 },
-    anchor(124_831_861_632.19225, -1_421_194_598_210.8584, 0, 9_607.838746010182, 843.912859249703, 0, SUN_CENTERED_FRAME),
+    eclipticFixtureAnchor(124_831_861_632.19225, -1_421_194_598_210.8584, 0, 9_607.838746010182, 843.912859249703, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(929_000_000),
   ),
@@ -352,7 +379,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "8",
     { mass: 8.6810e25, mu: 5.793939e15, physicalRadius: 25_362_000 },
-    anchor(1_591_419_226_261.024, -2_389_155_345_961.324, 0, 5_658.8473782743295, 3_769.364989801019, 0, SUN_CENTERED_FRAME),
+    eclipticFixtureAnchor(1_591_419_226_261.024, -2_389_155_345_961.324, 0, 5_658.8473782743295, 3_769.364989801019, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(2_650_000_000),
   ),
@@ -364,7 +391,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_CENTERED_FRAME,
     "9",
     { mass: 1.02413e26, mu: 6.836529e15, physicalRadius: 24_622_000 },
-    anchor(3_983_417_843_444.868, -2_089_964_790_355.6897, 0, 2_523.5283977712284, 4_809.778659673478, 0, SUN_CENTERED_FRAME),
+    eclipticFixtureAnchor(3_983_417_843_444.868, -2_089_964_790_355.6897, 0, 2_523.5283977712284, 4_809.778659673478, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(5_200_000_000),
   ),

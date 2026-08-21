@@ -41,7 +41,15 @@ async function bootstrap(): Promise<void> {
   let coordinator: StateQueryCoordinator<ScenarioStateFrame> | undefined;
   let focusId: ObjectId = SUN_ID;
   let selectedId: ObjectId = SUN_ID;
+  let recenterAfterState = false;
+  let orbitResampleTimer: number | undefined;
   const pathCache = new PathCache(ORBIT_CACHE_ENTRIES);
+
+  function centerCameraOnFocus(): void {
+    const focusMesh = scene?.meshFor(focusId);
+    if (focusMesh === undefined || renderShell === undefined) return;
+    renderShell.centerOn(focusMesh.position);
+  }
 
   function updateClockUi(): void {
     panel.setSimulationTime(clock.currentInstant(), clock.isPlaying());
@@ -59,8 +67,12 @@ async function bootstrap(): Promise<void> {
     panel.setTechnicalDetails(selectedEntry, state, focusId, engineHealth);
   }
 
-  function requestCurrentState(): void {
+  function requestCurrentState(recenter = false, centerImmediately = false): void {
     if (coordinator === undefined) return;
+    if (recenter) {
+      recenterAfterState = true;
+      if (centerImmediately) centerCameraOnFocus();
+    }
     coordinator.request(clock.currentInstant(), `view-center:${focusId}`);
     panel.setFocusId(focusId);
   }
@@ -78,32 +90,68 @@ async function bootstrap(): Promise<void> {
     if (snapshot !== undefined) updateSelectedPanel(snapshot.value);
   }
 
+  function orbitEntries(): readonly SolarSystemScenario["bodies"][number][] {
+    return scenario?.bodies.filter((entry) =>
+      entry.definition.centralBody !== undefined && entry.definition.propagation.orbitVisualization !== undefined) ?? [];
+  }
+
+  function sampleReferenceOrbit(entry: SolarSystemScenario["bodies"][number]): boolean {
+    if (stateSource === undefined || scene === undefined) return false;
+    try {
+      const path = createOrbitPath({
+        scenario: scenario!,
+        body: entry,
+        cache: pathCache,
+        stateAt: (objectIdValue, centralBodyId, target, outputFrame) =>
+          stateSource!.relativeStateAt(objectIdValue, centralBodyId, target, outputFrame),
+        anchorInstant: clock.currentInstant(),
+      });
+      if (path === undefined) return false;
+      scene.setPath(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function sampleReferenceOrbits(): void {
     if (scenario === undefined || stateSource === undefined || scene === undefined) return;
     let ready = 0;
     let failures = 0;
-    for (const entry of scenario.bodies) {
-      if (entry.definition.centralBody === undefined || entry.definition.propagation.orbitVisualization === undefined) continue;
-      try {
-        const path = createOrbitPath({
-          scenario,
-          body: entry,
-          cache: pathCache,
-          stateAt: (objectIdValue, centralBodyId, target, outputFrame) =>
-            stateSource!.relativeStateAt(objectIdValue, centralBodyId, target, outputFrame),
-          anchorInstant: clock.currentInstant(),
-        });
-        if (path === undefined) continue;
-        scene.setPath(path);
-        ready += 1;
-      } catch {
-        failures += 1;
-      }
+    for (const entry of orbitEntries()) {
+      if (sampleReferenceOrbit(entry)) ready += 1;
+      else failures += 1;
     }
     panel.setOrbitStatus(
       failures === 0 ? "ready" : "warning",
       failures === 0 ? `${ready} reference orbits ready` : `${ready} reference orbits ready · ${failures} unavailable`,
     );
+  }
+
+  function scheduleReferenceOrbitResample(): void {
+    if (orbitResampleTimer !== undefined) window.clearTimeout(orbitResampleTimer);
+    const entries = orbitEntries();
+    let index = 0;
+    let ready = 0;
+    let failures = 0;
+    panel.setOrbitStatus("pending", "Updating reference orbits…");
+    const sampleNext = (): void => {
+      orbitResampleTimer = undefined;
+      const entry = entries[index];
+      index += 1;
+      if (entry === undefined) {
+        panel.setOrbitStatus(
+          failures === 0 ? "ready" : "warning",
+          failures === 0 ? `${ready} reference orbits ready` : `${ready} reference orbits ready · ${failures} unavailable`,
+        );
+        return;
+      }
+      if (sampleReferenceOrbit(entry)) ready += 1;
+      else failures += 1;
+      panel.setOrbitStatus("pending", `Updating reference orbits… ${index}/${entries.length}`);
+      orbitResampleTimer = window.setTimeout(sampleNext, 0);
+    };
+    orbitResampleTimer = window.setTimeout(sampleNext, 0);
   }
 
   panel = new DemoPanel({
@@ -125,12 +173,13 @@ async function bootstrap(): Promise<void> {
     },
     onFocusChange: (objectIdValue) => {
       focusId = objectIdValue;
-      requestCurrentState();
+      requestCurrentState(true);
     },
     onSelectedChange: setSelectedBody,
     onCenterSelected: () => {
+      const focusAlreadySelected = focusId === selectedId;
       focusId = selectedId;
-      requestCurrentState();
+      requestCurrentState(true, focusAlreadySelected);
     },
     onRadiusModeChange: (mode) => scene?.setRadiusMode(mode),
     onGridChange: (visible) => guides?.setGridVisible(visible),
@@ -149,9 +198,10 @@ async function bootstrap(): Promise<void> {
         }
         clock.jump(target, performance.now());
         panel.clearExactJumpError();
-        sampleReferenceOrbits();
+        panel.syncLocalDateTime(target);
         updateClockUi();
         requestCurrentState();
+        scheduleReferenceOrbitResample();
       } catch (error) {
         panel.setExactJumpError(error instanceof Error ? error.message : String(error));
       }
@@ -166,9 +216,10 @@ async function bootstrap(): Promise<void> {
         }
         clock.jump(target, performance.now());
         panel.clearLocalDateTimeJumpError();
-        sampleReferenceOrbits();
+        panel.syncLocalDateTime(target);
         updateClockUi();
         requestCurrentState();
+        scheduleReferenceOrbitResample();
       } catch (error) {
         panel.setLocalDateTimeJumpError(error instanceof Error ? error.message : String(error));
       }
@@ -218,6 +269,10 @@ async function bootstrap(): Promise<void> {
     },
     onSnapshot: (snapshot) => {
       scene?.update(snapshot.value.states);
+      if (recenterAfterState && snapshot.value.focusId === focusId) {
+        centerCameraOnFocus();
+        recenterAfterState = false;
+      }
       updateSelectedPanel(snapshot.value);
     },
     onError: (error) => {

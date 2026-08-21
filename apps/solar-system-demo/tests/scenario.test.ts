@@ -8,6 +8,7 @@ import {
   EUROPA_ID,
   MARS_ID,
   JUPITER_ID,
+  MERCURY_ID,
   MOON_ID,
   SCENARIO_BODIES,
   SCENARIO_CENTERED_FRAMES,
@@ -75,4 +76,36 @@ test("scenario definitions carry normalized physical and per-body provenance dat
   assert.equal(earth.provenance.sourceIdentifier, "399 Earth");
   assert.match(earth.provenance.limitations, /not a precision long-term ephemeris/);
   assert.equal(moon.centralBody, EARTH_ID);
+});
+
+test("Earth and primary-planet fixtures share one heliocentric orbital plane", () => {
+  const earth = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
+  const mercury = SCENARIO_BODIES.find((body) => body.id === MERCURY_ID)!;
+  const earthPosition = earth.anchor.position;
+  const earthVelocity = earth.anchor.velocity;
+  const mercuryPosition = mercury.anchor.position;
+  const mercuryVelocity = mercury.anchor.velocity;
+  const earthRadius = Math.hypot(earthPosition.x, earthPosition.y, earthPosition.z);
+  assert.ok(earthRadius > 1.4e11 && earthRadius < 1.6e11);
+  assert.ok(Math.abs(earthPosition.z) > 1e10);
+  assert.ok(Math.abs(mercuryPosition.z) > 1e9);
+
+  const earthNormal = {
+    x: earthPosition.y * earthVelocity.z - earthPosition.z * earthVelocity.y,
+    y: earthPosition.z * earthVelocity.x - earthPosition.x * earthVelocity.z,
+    z: earthPosition.x * earthVelocity.y - earthPosition.y * earthVelocity.x,
+  };
+  const mercuryNormal = {
+    x: mercuryPosition.y * mercuryVelocity.z - mercuryPosition.z * mercuryVelocity.y,
+    y: mercuryPosition.z * mercuryVelocity.x - mercuryPosition.x * mercuryVelocity.z,
+    z: mercuryPosition.x * mercuryVelocity.y - mercuryPosition.y * mercuryVelocity.x,
+  };
+  const earthNormalLength = Math.hypot(earthNormal.x, earthNormal.y, earthNormal.z);
+  const mercuryNormalLength = Math.hypot(mercuryNormal.x, mercuryNormal.y, mercuryNormal.z);
+  const normalAlignment = (
+    earthNormal.x * mercuryNormal.x
+    + earthNormal.y * mercuryNormal.y
+    + earthNormal.z * mercuryNormal.z
+  ) / (earthNormalLength * mercuryNormalLength);
+  assert.ok(normalAlignment > 0.99999);
 });
