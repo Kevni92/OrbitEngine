@@ -5,6 +5,7 @@ export * from "./time.js";
 export * from "./units.js";
 export * from "./objects.js";
 export * from "./properties.js";
+export * from "./frames.js";
 
 export type OrbitEngineBackend = BackendKind;
 export type OrbitEngineBackendPreference = BackendPreference;

@@ -4,6 +4,7 @@ declare const objectIdBrand: unique symbol;
 
 export type ObjectId = string & {
   readonly [objectIdBrand]: "ObjectId";
+  readonly __orbitEngineObjectId: never;
 };
 
 function isCanonicalObjectIdText(value: unknown): value is string {

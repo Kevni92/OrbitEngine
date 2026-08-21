@@ -9,6 +9,7 @@ import {
 import { BackendInitializationError } from "./errors.js";
 import { validateTimeWire, type TimeWire } from "../time-wire.js";
 import { validateObjectWire, type ObjectWire } from "../object-wire.js";
+import { validateFrameWire, type FrameWire } from "../frame-wire.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -30,7 +31,8 @@ export async function backendFromRawBinding(
     || typeof raw.initialize !== "function"
     || typeof raw.roundTripTime !== "function"
     || typeof raw.roundTripDouble !== "function"
-    || typeof raw.roundTripObject !== "function") {
+    || typeof raw.roundTripObject !== "function"
+    || typeof raw.roundTripFrame !== "function") {
     throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
   }
 
@@ -97,6 +99,16 @@ export async function backendFromRawBinding(
         throw new BackendInitializationError(kind, `${kind} object round-trip failed`, cause);
       }
       return validateObjectWire(result);
+    },
+    roundTripFrame: (value: FrameWire): FrameWire => {
+      const input = validateFrameWire(value);
+      let result: unknown;
+      try {
+        result = binding.roundTripFrame(input);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} frame round-trip failed`, cause);
+      }
+      return validateFrameWire(result);
     },
   };
 }

@@ -9,10 +9,11 @@ import { initializeBackend } from "../../src/internal/backends/selection.js";
 function fakeBackend(kind: "native" | "wasm"): Backend {
   return {
     kind,
-    health: () => ({ protocolVersion: 3, coreVersion: 1, healthCode: 42 }),
+    health: () => ({ protocolVersion: 4, coreVersion: 1, healthCode: 42 }),
     roundTripTime: (value) => value,
     roundTripDouble: (value) => value,
     roundTripObject: (value) => value,
+    roundTripFrame: (value) => value,
   };
 }
 
@@ -112,6 +113,7 @@ test("binding handshake rejects a mismatched protocol", async () => {
       roundTripTime: (value: unknown) => value,
       roundTripDouble: (value: unknown) => value,
       roundTripObject: (value: unknown) => value,
+      roundTripFrame: (value: unknown) => value,
     }),
     (error: unknown) => error instanceof BackendInitializationError
       && error.message.includes("protocol mismatch"),

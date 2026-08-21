@@ -4,6 +4,7 @@ import test from "node:test";
 import { OrbitEngine } from "../../src/index.js";
 import { loadWasmBackend } from "../../src/internal/backends/wasm.js";
 import { assertObjectRoundTrip } from "../shared/object-roundtrip.js";
+import { assertFrameRoundTrip } from "../shared/frame-roundtrip.js";
 import { assertTimeRoundTrip } from "../shared/time-roundtrip.js";
 
 test("real WASM backend initializes and reports the shared core health", async () => {
@@ -13,7 +14,7 @@ test("real WASM backend initializes and reports the shared core health", async (
   assert.equal(engine.backend, "wasm");
   assert.deepEqual(health, {
     backend: "wasm",
-    protocolVersion: 3,
+    protocolVersion: 4,
     coreVersion: 1,
     healthCode: 42,
   });
@@ -21,4 +22,5 @@ test("real WASM backend initializes and reports the shared core health", async (
   const backend = await loadWasmBackend();
   assertTimeRoundTrip(backend);
   assertObjectRoundTrip(backend);
+  assertFrameRoundTrip(backend);
 });
