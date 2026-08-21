@@ -61,12 +61,15 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await page.locator("#advanced-details").locator("summary").click();
   await expect(page.locator("#technical-details")).toContainText("ObjectId: 1003");
   await expect(page.locator("#jump-seconds")).toBeVisible();
+  await page.locator("#jump-local-datetime").fill("2026-08-22T00:16:32");
+  await page.click("#jump-local-time");
+  await expect(page.locator("#simulation-instant")).toContainText("22.08.2026 00:16:32 Uhr");
 
   await page.selectOption("#warp-select", "2592000");
   await page.click("#play-pause");
   await page.waitForTimeout(120);
   await page.click("#play-pause");
-  await expect(page.locator("#simulation-instant")).not.toHaveText("J2000 + 0 d 00:00:00");
+  await expect(page.locator("#simulation-instant")).toContainText("Uhr");
   await expect(page.locator("#rendering-status")).toHaveAttribute("data-state", /^(ready|unsupported)$/);
   expect(pageErrors).toHaveLength(0);
 });

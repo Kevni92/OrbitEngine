@@ -72,5 +72,7 @@ test("scenario definitions carry normalized physical and per-body provenance dat
   const moon = SCENARIO_BODIES.find((body) => body.id === MOON_ID)!;
   assert.equal(sun.centralBody, undefined);
   assert.equal(earth.centralBody, SUN_ID);
+  assert.equal(earth.provenance.sourceIdentifier, "399 Earth");
+  assert.match(earth.provenance.limitations, /not a precision long-term ephemeris/);
   assert.equal(moon.centralBody, EARTH_ID);
 });

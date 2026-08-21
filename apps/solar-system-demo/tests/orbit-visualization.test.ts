@@ -65,3 +65,24 @@ test("orbit visualization omits Sun and uses bounded body-specific relative samp
   assert.ok(moonPath !== undefined);
   assert.ok(calls.slice(callCount).every((call) => call[1] === EARTH_ID));
 });
+
+test("orbit visualization can be re-anchored at the current simulation instant", () => {
+  const loaded = scenario();
+  const cache = new PathCache(12);
+  const anchor = simulationInstant(86_400);
+  const path = createOrbitPath({
+    scenario: loaded,
+    body: loaded.bodyById.get(EARTH_ID)!,
+    cache,
+    anchorInstant: anchor,
+    stateAt: (objectIdValue, centralBodyId, target, frame) => propagationState({
+      position: { x: meters(target.seconds), y: meters(0), z: meters(0) },
+      velocity: { x: metersPerSecond(1), y: metersPerSecond(0), z: metersPerSecond(0) },
+      epoch: target,
+      referenceFrame: frame,
+    }),
+  });
+  assert.ok(path !== undefined);
+  assert.deepEqual(path!.interval.start, anchor);
+  assert.equal(path!.samples[0]?.state.epoch.seconds, anchor.seconds);
+});
