@@ -45,3 +45,14 @@ test("clock authority keeps nanoseconds exact instead of accumulating float seco
   clock.advanceTo(0.001);
   assert.deepEqual(clock.currentInstant(), simulationInstant(0, 1_000));
 });
+
+test("a fresh performance timestamp remains valid after a control event", () => {
+  const clock = new SimulationClock();
+  clock.play(1000.5);
+
+  assert.throws(
+    () => clock.advanceTo(1000.4),
+    /wall-clock timestamps must be monotonic while playing/,
+  );
+  assert.doesNotThrow(() => clock.advanceTo(1000.6));
+});
