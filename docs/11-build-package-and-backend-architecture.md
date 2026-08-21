@@ -255,6 +255,10 @@ The expected package shape is an ES-module loader plus its `.wasm` binary. Asset
 
 The Emscripten SDK version used by CI/release is pinned by the bootstrap implementation and updated deliberately. The exact patch version is a toolchain maintenance choice, not public architecture.
 
+The bootstrap workflow pins Emscripten to `3.1.74` through `mymindstorm/setup-emsdk` and uses Ubuntu 22.04
+(`glibc 2.35`) as the deliberate Linux native-release baseline. These are reproducibility choices for the initial
+toolchain and may be updated deliberately without changing the public backend contract.
+
 ## Artifact and package distribution
 
 ### No consumer compilation
