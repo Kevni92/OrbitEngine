@@ -17,6 +17,7 @@ function fakeBackend(kind: "native" | "wasm"): Backend {
     roundTripPropagation: (value) => value,
     roundTripRegistry: (value) => value,
     roundTripFrameRegistry: (value) => value,
+    roundTripTwoBody: (value) => value,
   };
 }
 
@@ -120,6 +121,7 @@ test("binding handshake rejects a mismatched protocol", async () => {
       roundTripPropagation: (value: unknown) => value,
       roundTripRegistry: (value: unknown) => value,
       roundTripFrameRegistry: (value: unknown) => value,
+      roundTripTwoBody: (value: unknown) => value,
     }),
     (error: unknown) => error instanceof BackendInitializationError
       && error.message.includes("protocol mismatch"),

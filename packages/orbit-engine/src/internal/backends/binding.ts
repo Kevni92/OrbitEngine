@@ -13,6 +13,7 @@ import { validateFrameWire, type FrameWire } from "../frame-wire.js";
 import { validatePropagationWire, type PropagationWire } from "../propagation-wire.js";
 import { validateRegistryWire, type RegistryWire } from "../registry-wire.js";
 import { validateFrameRegistryWire, type FrameRegistryWire } from "../frame-registry-wire.js";
+import { validateTwoBodyWire, type TwoBodyWire } from "../two-body-wire.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -40,7 +41,8 @@ export async function backendFromRawBinding(
     throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
   }
   if (typeof raw.roundTripRegistry !== "function"
-      || typeof raw.roundTripFrameRegistry !== "function") {
+      || typeof raw.roundTripFrameRegistry !== "function"
+      || typeof raw.roundTripTwoBody !== "function") {
     throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
   }
 
@@ -147,6 +149,16 @@ export async function backendFromRawBinding(
         throw new BackendInitializationError(kind, `${kind} frame registry operation failed`, cause);
       }
       return validateFrameRegistryWire(result);
+    },
+    roundTripTwoBody: (value: TwoBodyWire): TwoBodyWire => {
+      const input = validateTwoBodyWire(value);
+      let result: unknown;
+      try {
+        result = binding.roundTripTwoBody(input);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} two-body operation failed`, cause);
+      }
+      return validateTwoBodyWire(result);
     },
   };
 }

@@ -5,6 +5,7 @@
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
 #include "orbit_engine/time.hpp"
+#include "orbit_engine/two_body.hpp"
 
 #include <emscripten/emscripten.h>
 
@@ -794,5 +795,85 @@ FRAME_REG_GETTER(orbit_engine_frame_registry_transform_angular_velocity_z, trans
 
 #undef FRAME_REG_GETTER
 #undef FRAME_REG_PARAMETERS
+
+#define TWO_BODY_PARAMETERS \
+  std::uint16_t result_code, std::uint32_t central_object_id_high, std::uint32_t central_object_id_low, double mu, \
+  std::uint32_t anchor_frame_high, std::uint32_t anchor_frame_low, \
+  std::int32_t anchor_epoch_seconds_high, std::uint32_t anchor_epoch_seconds_low, std::uint32_t anchor_epoch_nanoseconds, \
+  double anchor_position_x, double anchor_position_y, double anchor_position_z, \
+  double anchor_velocity_x, double anchor_velocity_y, double anchor_velocity_z, \
+  std::int32_t target_epoch_seconds_high, std::uint32_t target_epoch_seconds_low, std::uint32_t target_epoch_nanoseconds, \
+  std::uint32_t result_frame_high, std::uint32_t result_frame_low, \
+  std::int32_t result_epoch_seconds_high, std::uint32_t result_epoch_seconds_low, std::uint32_t result_epoch_nanoseconds, \
+  double result_position_x, double result_position_y, double result_position_z, \
+  double result_velocity_x, double result_velocity_y, double result_velocity_z
+
+orbit_engine::two_body::TwoBodyWire g_two_body_output{};
+
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_two_body(TWO_BODY_PARAMETERS) {
+  const orbit_engine::two_body::TwoBodyWire input{
+    result_code,
+    central_object_id_high,
+    central_object_id_low,
+    mu,
+    anchor_frame_high,
+    anchor_frame_low,
+    orbit_engine::time::TimeWire{anchor_epoch_seconds_high, anchor_epoch_seconds_low, anchor_epoch_nanoseconds},
+    anchor_position_x,
+    anchor_position_y,
+    anchor_position_z,
+    anchor_velocity_x,
+    anchor_velocity_y,
+    anchor_velocity_z,
+    orbit_engine::time::TimeWire{target_epoch_seconds_high, target_epoch_seconds_low, target_epoch_nanoseconds},
+    result_frame_high,
+    result_frame_low,
+    orbit_engine::time::TimeWire{result_epoch_seconds_high, result_epoch_seconds_low, result_epoch_nanoseconds},
+    result_position_x,
+    result_position_y,
+    result_position_z,
+    result_velocity_x,
+    result_velocity_y,
+    result_velocity_z,
+  };
+  g_two_body_output = orbit_engine::two_body::evaluate(input);
+  return 1;
+}
+
+#define TWO_BODY_GETTER(name, field, type) \
+  EMSCRIPTEN_KEEPALIVE type name() { return g_two_body_output.field; }
+
+TWO_BODY_GETTER(orbit_engine_two_body_result_code, result_code, std::uint16_t)
+TWO_BODY_GETTER(orbit_engine_two_body_central_object_id_high, central_object_id_high, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_central_object_id_low, central_object_id_low, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_mu, mu, double)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_frame_high, anchor_frame_high, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_frame_low, anchor_frame_low, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_epoch_seconds_high, anchor_epoch.seconds_high, std::int32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_epoch_seconds_low, anchor_epoch.seconds_low, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_epoch_nanoseconds, anchor_epoch.nanoseconds, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_position_x, anchor_position_x, double)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_position_y, anchor_position_y, double)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_position_z, anchor_position_z, double)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_velocity_x, anchor_velocity_x, double)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_velocity_y, anchor_velocity_y, double)
+TWO_BODY_GETTER(orbit_engine_two_body_anchor_velocity_z, anchor_velocity_z, double)
+TWO_BODY_GETTER(orbit_engine_two_body_target_epoch_seconds_high, target_epoch.seconds_high, std::int32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_target_epoch_seconds_low, target_epoch.seconds_low, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_target_epoch_nanoseconds, target_epoch.nanoseconds, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_result_frame_high, result_frame_high, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_result_frame_low, result_frame_low, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_result_epoch_seconds_high, result_epoch.seconds_high, std::int32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_result_epoch_seconds_low, result_epoch.seconds_low, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_result_epoch_nanoseconds, result_epoch.nanoseconds, std::uint32_t)
+TWO_BODY_GETTER(orbit_engine_two_body_result_position_x, result_position_x, double)
+TWO_BODY_GETTER(orbit_engine_two_body_result_position_y, result_position_y, double)
+TWO_BODY_GETTER(orbit_engine_two_body_result_position_z, result_position_z, double)
+TWO_BODY_GETTER(orbit_engine_two_body_result_velocity_x, result_velocity_x, double)
+TWO_BODY_GETTER(orbit_engine_two_body_result_velocity_y, result_velocity_y, double)
+TWO_BODY_GETTER(orbit_engine_two_body_result_velocity_z, result_velocity_z, double)
+
+#undef TWO_BODY_GETTER
+#undef TWO_BODY_PARAMETERS
 
 }

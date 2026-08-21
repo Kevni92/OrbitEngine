@@ -5,6 +5,7 @@
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
 #include "orbit_engine/time.hpp"
+#include "orbit_engine/two_body.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -330,6 +331,48 @@ bool readFrameRegistryWire(const Napi::Value& value, orbit_engine::frame_registr
     && readDouble("transformAngularVelocityZ", output.transform.angular_velocity_z);
 }
 
+bool readTwoBodyWire(const Napi::Value& value, orbit_engine::two_body::TwoBodyWire& output) {
+  if (!value.IsObject()) return false;
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) return false;
+    const auto number = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number);
+    return true;
+  };
+  const auto readDouble = [&object](const char* name, double& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) return false;
+    target = value.As<Napi::Number>().DoubleValue();
+    return std::isfinite(target);
+  };
+  return readInteger("resultCode", 0.0, 65'535.0, output.result_code)
+    && readInteger("centralObjectIdHigh", 0.0, 4'294'967'295.0, output.central_object_id_high)
+    && readInteger("centralObjectIdLow", 0.0, 4'294'967'295.0, output.central_object_id_low)
+    && readDouble("mu", output.mu)
+    && readInteger("anchorFrameHigh", 0.0, 4'294'967'295.0, output.anchor_frame_high)
+    && readInteger("anchorFrameLow", 0.0, 4'294'967'295.0, output.anchor_frame_low)
+    && readWire(object.Get("anchorEpoch"), output.anchor_epoch)
+    && readDouble("anchorPositionX", output.anchor_position_x)
+    && readDouble("anchorPositionY", output.anchor_position_y)
+    && readDouble("anchorPositionZ", output.anchor_position_z)
+    && readDouble("anchorVelocityX", output.anchor_velocity_x)
+    && readDouble("anchorVelocityY", output.anchor_velocity_y)
+    && readDouble("anchorVelocityZ", output.anchor_velocity_z)
+    && readWire(object.Get("targetEpoch"), output.target_epoch)
+    && readInteger("resultFrameHigh", 0.0, 4'294'967'295.0, output.result_frame_high)
+    && readInteger("resultFrameLow", 0.0, 4'294'967'295.0, output.result_frame_low)
+    && readWire(object.Get("resultEpoch"), output.result_epoch)
+    && readDouble("resultPositionX", output.result_position_x)
+    && readDouble("resultPositionY", output.result_position_y)
+    && readDouble("resultPositionZ", output.result_position_z)
+    && readDouble("resultVelocityX", output.result_velocity_x)
+    && readDouble("resultVelocityY", output.result_velocity_y)
+    && readDouble("resultVelocityZ", output.result_velocity_z);
+}
+
 Napi::Object writeWire(Napi::Env env, orbit_engine::time::TimeWire value) {
   auto result = Napi::Object::New(env);
   result.Set("secondsHigh", Napi::Number::New(env, value.seconds_high));
@@ -505,6 +548,34 @@ Napi::Object writeFrameRegistryWire(Napi::Env env, orbit_engine::frame_registry:
   return result;
 }
 
+Napi::Object writeTwoBodyWire(Napi::Env env, orbit_engine::two_body::TwoBodyWire value) {
+  auto result = Napi::Object::New(env);
+  result.Set("resultCode", Napi::Number::New(env, value.result_code));
+  result.Set("centralObjectIdHigh", Napi::Number::New(env, value.central_object_id_high));
+  result.Set("centralObjectIdLow", Napi::Number::New(env, value.central_object_id_low));
+  result.Set("mu", Napi::Number::New(env, value.mu));
+  result.Set("anchorFrameHigh", Napi::Number::New(env, value.anchor_frame_high));
+  result.Set("anchorFrameLow", Napi::Number::New(env, value.anchor_frame_low));
+  result.Set("anchorEpoch", writeWire(env, value.anchor_epoch));
+  result.Set("anchorPositionX", Napi::Number::New(env, value.anchor_position_x));
+  result.Set("anchorPositionY", Napi::Number::New(env, value.anchor_position_y));
+  result.Set("anchorPositionZ", Napi::Number::New(env, value.anchor_position_z));
+  result.Set("anchorVelocityX", Napi::Number::New(env, value.anchor_velocity_x));
+  result.Set("anchorVelocityY", Napi::Number::New(env, value.anchor_velocity_y));
+  result.Set("anchorVelocityZ", Napi::Number::New(env, value.anchor_velocity_z));
+  result.Set("targetEpoch", writeWire(env, value.target_epoch));
+  result.Set("resultFrameHigh", Napi::Number::New(env, value.result_frame_high));
+  result.Set("resultFrameLow", Napi::Number::New(env, value.result_frame_low));
+  result.Set("resultEpoch", writeWire(env, value.result_epoch));
+  result.Set("resultPositionX", Napi::Number::New(env, value.result_position_x));
+  result.Set("resultPositionY", Napi::Number::New(env, value.result_position_y));
+  result.Set("resultPositionZ", Napi::Number::New(env, value.result_position_z));
+  result.Set("resultVelocityX", Napi::Number::New(env, value.result_velocity_x));
+  result.Set("resultVelocityY", Napi::Number::New(env, value.result_velocity_y));
+  result.Set("resultVelocityZ", Napi::Number::New(env, value.result_velocity_z));
+  return result;
+}
+
 Napi::Value RoundTripTime(const Napi::CallbackInfo& info) {
   const auto env = info.Env();
   if (info.Length() != 1) {
@@ -630,6 +701,20 @@ Napi::Value RoundTripFrameRegistry(const Napi::CallbackInfo& info) {
   return writeFrameRegistryWire(env, g_frame_registry.command(input));
 }
 
+Napi::Value RoundTripTwoBody(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1) {
+    Napi::TypeError::New(env, "roundTripTwoBody expects one two-body wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  orbit_engine::two_body::TwoBodyWire input{};
+  if (!readTwoBodyWire(info[0], input)) {
+    Napi::TypeError::New(env, "roundTripTwoBody received an invalid wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  return writeTwoBodyWire(env, orbit_engine::two_body::evaluate(input));
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("protocolVersion", Napi::Number::New(env, orbit_engine::kBindingProtocolVersion));
   exports.Set("initialize", Napi::Function::New(env, Initialize));
@@ -640,6 +725,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("roundTripPropagation", Napi::Function::New(env, RoundTripPropagation));
   exports.Set("roundTripRegistry", Napi::Function::New(env, RoundTripRegistry));
   exports.Set("roundTripFrameRegistry", Napi::Function::New(env, RoundTripFrameRegistry));
+  exports.Set("roundTripTwoBody", Napi::Function::New(env, RoundTripTwoBody));
   return exports;
 }
 

@@ -5,6 +5,7 @@ add_library(orbit_engine_core STATIC
   src/object.cpp
   src/propagation.cpp
   src/registry.cpp
+  src/two_body.cpp
   src/time.cpp
 )
 
