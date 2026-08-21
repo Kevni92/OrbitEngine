@@ -19,10 +19,14 @@
       dt { color: #8fa4c7; } dd { margin: 0; text-align: right; }
       dd[data-state="error"] { color: #ff8d8d; } dd[data-state="ready"] { color: #8de3b0; }
       .controls { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; margin: .75rem 0; }
+      .time-controls, .path-controls { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; margin: .5rem 0; }
       label { color: #b9c9e5; display: grid; font-size: .8rem; gap: .25rem; }
       select, button { background: #111d35; border: 1px solid #3a4c6e; border-radius: 6px; color: #edf4ff; padding: .4rem .5rem; }
       button { cursor: pointer; }
       #selected-panel { border-top: 1px solid #293856; color: #b9c9e5; font-family: ui-monospace, monospace; font-size: .72rem; line-height: 1.45; margin-top: .75rem; padding-top: .65rem; white-space: pre-wrap; }
+      #path-status { color: #b9c9e5; font-size: .75rem; margin: .5rem 0; }
+      #path-status[data-state="error"] { color: #ff8d8d; }
+      #path-status[data-state="ready"] { color: #8de3b0; }
       .hint { color: #8fa4c7; font-size: .75rem; }
     </style>
   </head>
@@ -66,6 +70,28 @@
           <button id="focus-selected" type="button" disabled>Focus selected</button>
         </div>
         <button id="play-pause" type="button" disabled>Play</button>
+        <div class="time-controls">
+          <label>Warp
+            <select id="warp-select" disabled>
+              <option value="1">1×</option>
+              <option value="86400">1 day/s</option>
+              <option value="604800">1 week/s</option>
+              <option value="2592000">30 days/s</option>
+            </select>
+          </label>
+          <label>Jump seconds
+            <input id="jump-seconds" type="number" min="0" step="1" value="0" disabled />
+          </label>
+          <label>Jump nanoseconds
+            <input id="jump-nanoseconds" type="number" min="0" max="999999999" step="1" value="0" disabled />
+          </label>
+          <button id="jump-time" type="button" disabled>Jump exact time</button>
+        </div>
+        <div class="path-controls">
+          <button id="sample-path" type="button" disabled>Sample selected path</button>
+          <button id="clear-path" type="button" disabled>Clear paths</button>
+        </div>
+        <p id="path-status" data-state="pending">No path sampled.</p>
         <p class="hint">Click a body to select it. Positions come from OrbitEngine state-at-time queries.</p>
         <div id="selected-panel" aria-live="polite">No state snapshot yet.</div>
       </section>

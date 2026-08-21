@@ -3,6 +3,8 @@ import test from "node:test";
 import * as THREE from "three";
 import { positionToSceneUnits } from "../src/rendering/render-space.js";
 import { SolarSystemScene } from "../src/rendering/solar-system-scene.js";
+import { objectId, referenceFrameId, revisionId, simulationInstant } from "orbit-engine";
+import type { OrbitPath } from "../src/simulation/path-sampling.js";
 import { SCENARIO_BODIES, SCENARIO_OBJECT_IDS, SUN_ID } from "../src/scenario/scenario-data.js";
 import type { SolarSystemScenario } from "../src/scenario/load-solar-system.js";
 
@@ -40,6 +42,23 @@ test("scene keys meshes by stable ObjectId and consumes returned positions", () 
   assert.equal(visual.selectedObjectId(), SUN_ID);
   visual.setRadiusMode("physical");
   assert.ok(visual.stateFor(SUN_ID) !== undefined);
+  const path: OrbitPath = {
+    objectId: SUN_ID,
+    focusId: objectId("1000"),
+    outputFrame: referenceFrameId("1"),
+    interval: { start: simulationInstant(0), end: simulationInstant(10) },
+    sampleCount: 2,
+    motionRevision: revisionId("1"),
+    configurationRevision: revisionId("1"),
+    samples: [
+      { instant: simulationInstant(0), state: SCENARIO_BODIES[0]!.anchor },
+      { instant: simulationInstant(1), state: SCENARIO_BODIES[0]!.anchor },
+    ],
+  };
+  visual.setPath(path);
+  assert.equal(visual.pathCount(), 1);
+  visual.clearPaths();
+  assert.equal(visual.pathCount(), 0);
   visual.dispose();
   assert.equal(visual.meshFor(SUN_ID), undefined);
 });

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { meters, type Meters, type ObjectId, type PropagationState } from "orbit-engine";
 import type { SolarSystemScenario } from "../scenario/load-solar-system.js";
+import type { OrbitPath } from "../simulation/path-sampling.js";
 import { positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
 
 interface SceneBody {
@@ -21,6 +22,7 @@ export interface SolarSystemSceneOptions {
 export class SolarSystemScene {
   readonly #scene: THREE.Scene;
   readonly #bodies = new Map<ObjectId, SceneBody>();
+  readonly #paths = new Map<ObjectId, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
   readonly #states = new Map<ObjectId, PropagationState>();
   readonly #onSelect?: (objectId: ObjectId) => void;
   #radiusMode: RadiusMode = "visible";
@@ -91,6 +93,40 @@ export class SolarSystemScene {
     return this.#states.get(objectId);
   }
 
+  setPath(path: OrbitPath): void {
+    this.clearPath(path.objectId);
+    const points = path.samples.map((sample) => {
+      const position = positionToSceneUnits(sample.state.position);
+      return new THREE.Vector3(position.x, position.y, position.z);
+    });
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({ color: this.#bodies.get(path.objectId)?.mesh.material.color ?? 0x8fb8ff }),
+    );
+    line.name = `Orbit path ${path.objectId}`;
+    line.userData.objectId = path.objectId;
+    line.userData.focusId = path.focusId;
+    this.#scene.add(line);
+    this.#paths.set(path.objectId, line);
+  }
+
+  clearPath(objectId: ObjectId): void {
+    const line = this.#paths.get(objectId);
+    if (line === undefined) return;
+    this.#scene.remove(line);
+    line.geometry.dispose();
+    line.material.dispose();
+    this.#paths.delete(objectId);
+  }
+
+  clearPaths(): void {
+    for (const objectId of [...this.#paths.keys()]) this.clearPath(objectId);
+  }
+
+  pathCount(): number {
+    return this.#paths.size;
+  }
+
   meshFor(objectId: ObjectId): THREE.Mesh | undefined {
     return this.#bodies.get(objectId)?.mesh;
   }
@@ -100,6 +136,7 @@ export class SolarSystemScene {
   }
 
   dispose(): void {
+    this.clearPaths();
     for (const body of this.#bodies.values()) {
       this.#scene.remove(body.mesh);
       body.mesh.geometry.dispose();
