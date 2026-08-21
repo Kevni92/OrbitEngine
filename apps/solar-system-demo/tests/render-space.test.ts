@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { meters, vec3 } from "orbit-engine";
+import { MERCURY_ID, SCENARIO_BODIES } from "../src/scenario/scenario-data.js";
 import {
   ASTRONOMICAL_UNIT_METERS,
   J2000_ECLIPTIC_OBLIQUITY_RADIANS,
@@ -29,6 +30,13 @@ test("render space uses a reversible J2000-ecliptic presentation transform", () 
   const scene = positionToSceneUnits(onEclipticPlane);
   assert.ok(Math.abs(scene.z) < 1e-12);
   assert.ok(Math.abs(scene.y - 100) < 1e-12);
+});
+
+test("presentation obliquity matches the committed primary-planet normalization", () => {
+  const mercury = SCENARIO_BODIES.find((body) => body.id === MERCURY_ID)!;
+  assert.ok(Math.abs(mercury.anchor.position.z) > 1e9);
+  const scene = positionToSceneUnits(mercury.anchor.position);
+  assert.ok(Math.abs(scene.z) < 1e-12);
 });
 
 test("render space preserves focus-relative SI conversion before presentation rotation", () => {
