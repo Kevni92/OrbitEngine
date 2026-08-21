@@ -8,7 +8,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 2. [Architecture](02-architecture.md) — major subsystems and separation between engine, data ingestion, and game layers.
 3. [Object Model and Interactions](03-object-model-and-interactions.md) — object/interaction summary and links to the canonical object contract.
 4. [Propagation, Fidelity, and Events](04-propagation-fidelity-and-events.md) — propagation models, dynamic fidelity, encounters, collisions, and time warp.
-5. [Coordinates and Reference Frames](05-coordinates-and-reference-frames.md) — hierarchical frames, surface-fixed objects, and absolute positions.
+5. [Coordinates and Reference Frames](05-coordinates-and-reference-frames.md) — reference-frame overview and links to the canonical frame contract.
 6. [Solar-System Data](06-solar-system-data.md) — external astronomical data boundary and reproducible import strategy.
 7. [TypeScript, Native C++, and WebAssembly](07-typescript-native-wasm.md) — npm API and dual C++ backend strategy.
 8. [Development Workflow](08-development-workflow.md) — mandatory issue/branch/PR/CI/merge workflow.
@@ -17,6 +17,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 11. [Build, Package, and Backend Architecture](11-build-package-and-backend-architecture.md) — concrete pnpm/CMake layout, backend selection, artifact distribution, platform support, tests, and CI contract.
 12. [Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md) — SI unit contract, TDB/J2000 time model, exact durations, binary64 policy, time-warp semantics, and backend transfer rules.
 13. [Physical Object and State Model](13-physical-object-and-state-model.md) — exact object identity/type contract, canonical Cartesian state, optional physical properties, divergence semantics, lifecycle, and backend representation.
+14. [Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md) — SSB/ICRS root, frame identity/graph, rigid-state transforms, quaternion convention, local/relative precision, surface attachment, lifecycle, caching, and backend contract.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -25,12 +26,14 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - OrbitEngine is a reusable physics/orbit library, not a game layer.
 - The engine simulates registered objects; it does not invent or generate them.
 - A stable, never-reused object ID is the boundary between OrbitEngine and consuming systems.
-- Object physical classification is separate from propagation model, fidelity, and game role.
+- Object physical classification is separate from propagation model, fidelity, frame attachment, and game role.
 - Fidelity is independent from the chosen propagation model.
 - Stable astronomical trajectories should be cheap to query across large time jumps.
 - Expensive simulation is activated only where interaction, perturbation, maneuvering, or collision risk requires it.
 - Canonical physical values use SI units; absolute simulation time uses the exact TDB/J2000 representation defined in document 12 rather than wall-clock/civil time.
 - Canonical dynamic translational handoff state is Cartesian position/velocity at an exact epoch in a defined frame.
+- The canonical root is SSB-centered and ICRS/ICRF-aligned; local/reference-frame state is preserved so precision-sensitive work is not forced through giant root coordinates.
+- Frame transforms are geometric and same-epoch; propagation changes time, frame transforms do not.
 - Public behavior is exposed through TypeScript even when calculations execute in C++.
 - The portable C++ core must not depend on Node.js or Emscripten APIs.
 - Native and WASM backends must preserve equivalent public semantics.
