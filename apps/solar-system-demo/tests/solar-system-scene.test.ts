@@ -14,6 +14,8 @@ import {
 } from "../src/scenario/scenario-data.js";
 import type { SolarSystemScenario } from "../src/scenario/load-solar-system.js";
 
+const FLOAT32_SCENE_POSITION_TOLERANCE = 1e-4;
+
 function scenario(): SolarSystemScenario {
   const bodies = SCENARIO_BODIES.map((definition) => ({
     definition,
@@ -79,7 +81,9 @@ test("scene keys meshes by stable ObjectId and consumes returned positions", () 
     positions.getY(0),
     positions.getZ(0),
   ).add(orbitGroup.position);
-  assert.ok(firstOrbitPoint.distanceTo(earthMesh.position) < 1e-12);
+  // BufferGeometry position attributes are Float32, while body mesh positions
+  // retain JavaScript double precision. They must coincide within GPU geometry precision.
+  assert.ok(firstOrbitPoint.distanceTo(earthMesh.position) < FLOAT32_SCENE_POSITION_TOLERANCE);
 
   visual.clearPaths();
   assert.equal(visual.pathCount(), 0);
