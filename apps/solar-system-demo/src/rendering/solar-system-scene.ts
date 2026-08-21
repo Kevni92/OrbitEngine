@@ -39,7 +39,7 @@ export class SolarSystemScene {
       if (radius === undefined) throw new TypeError(`Scenario body ${entry.definition.id} has no physical radius`);
       const mesh = new THREE.Mesh(
         new THREE.SphereGeometry(1, 24, 16),
-        new THREE.MeshBasicMaterial({ color: entry.definition.color }),
+        new THREE.MeshBasicMaterial({ color: entry.definition.display.color }),
       );
       mesh.name = entry.definition.name;
       mesh.userData.objectId = entry.definition.id;

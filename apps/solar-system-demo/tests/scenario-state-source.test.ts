@@ -10,6 +10,8 @@ function scenario(): SolarSystemScenario {
     epoch: simulationInstant(0),
     validity: { start: simulationInstant(0), end: simulationInstant(10) },
     provenance: {} as SolarSystemScenario["provenance"],
+    catalog: {} as SolarSystemScenario["catalog"],
+    centeredFrames: [],
     rootFrame: SCENARIO_ROOT_FRAME,
     sunCenteredFrame: referenceFrameId("100"),
     earthCenteredFrame: referenceFrameId("101"),

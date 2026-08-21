@@ -44,6 +44,16 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await page.selectOption("#focus-select", "1003");
   await expect(page.locator("#focus-select")).toHaveValue("1003");
 
+  await page.selectOption("#selected-select", "1202");
+  await expect(page.locator("#selected-name")).toHaveText("Europa");
+  await expect(page.locator("#selected-type")).toContainText("Moon");
+  await page.selectOption("#selected-select", "2001");
+  await expect(page.locator("#selected-name")).toHaveText("Ceres");
+  await page.selectOption("#selected-select", "3007");
+  await expect(page.locator("#selected-name")).toHaveText("Apophis");
+  await page.selectOption("#selected-select", "1003");
+  await expect(page.locator("#selected-name")).toHaveText("Earth");
+
   await page.locator("#scene").hover();
   for (let index = 0; index < 160; index += 1) await page.mouse.wheel(0, 100);
   await page.waitForTimeout(250);
