@@ -2,67 +2,72 @@
 
 ## Requirement
 
-OrbitEngine must be able to provide the position and velocity of any registered object in an appropriate absolute/root frame while also supporting convenient local representations.
+OrbitEngine must provide consistent geometric position, velocity, and optional attitude transforms from Solar-System scale down to local surface operations without forcing all authoritative state into one giant global coordinate vector.
 
-A single flat coordinate system is insufficient for everything from solar-system scale to surface buildings. The engine should therefore use hierarchical reference frames.
+The canonical architecture is defined in [14 — Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md). Object identity and canonical frame-qualified state semantics are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md).
 
-Object identity and canonical state semantics are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md). Every Cartesian state is qualified by an exact epoch and a reference-frame association.
+## Canonical root and hierarchy
 
-## Expected frame hierarchy
+OrbitEngine uses one explicit frame graph rooted at the Solar System Barycenter with fixed ICRS/ICRF-aligned right-handed axes.
 
-Examples:
+Representative hierarchy:
 
 ```text
-Solar System Barycentric Frame
-├── Sun-centered frame
-├── Earth-centered inertial frame
-│   ├── Earth-fixed rotating frame
-│   │   └── surface/local frames
-│   └── Moon-centered frame
-└── Mars-centered inertial frame
-    ├── Mars-fixed rotating frame
+SSB / ICRS root
+├── Sun-centered non-rotating frame
+├── Earth-centered non-rotating frame
+│   ├── Earth body-fixed frame
+│   │   └── ENU/local surface frames
+│   └── Moon-centered non-rotating frame
+└── Mars-centered non-rotating frame
+    ├── Mars body-fixed frame
     │   └── settlement/building local frames
     └── Phobos-centered frame
 ```
 
-This is conceptual; exact frame names and standards remain implementation decisions for Architecture issue #10.
+Every non-root frame has one immutable parent and evaluates one rigid-state transform relative to that parent at an exact `SimulationInstant`.
+
+## Transform semantics
+
+A frame edge provides translation, origin velocity, unit-quaternion rotation, and angular velocity. Position/velocity transformation includes the rotating-frame `omega x r` velocity contribution.
+
+Frame transformation is a same-epoch operation only. It does not propagate an object to another time. A high-level state-at-time query first obtains the object's state at the requested time from its motion/propagation authority and only then transforms that state into the requested output frame.
+
+Core frame/object states are geometric. Observer-dependent light-time, stellar aberration, apparent-position, rendering, and camera transformations are separate concerns.
 
 ## Surface objects
 
-A building on Mars should not need to be numerically integrated around the Sun. It can be represented relative to a Mars-fixed rotating frame using local coordinates such as latitude, longitude, and elevation or an equivalent Cartesian representation.
+A building on Mars does not need independent Solar-System integration. It may remain fixed in a Mars body-fixed frame or a static local child frame.
 
-Given time T, OrbitEngine can transform:
+Runtime canonical surface representation is Cartesian in that body-fixed/local frame. Latitude/longitude/height are convenience/import representations whose meaning depends on an explicit shape/coordinate convention and are converted before the portable core relies on them.
 
-1. local/surface coordinates → Mars-fixed frame;
-2. Mars-fixed frame → Mars-centered inertial frame;
-3. Mars-centered frame → root solar-system frame.
-
-The result is the object's absolute position and, where needed, velocity caused by Mars rotation and orbital motion.
+A standard local topocentric frame uses right-handed ENU axes: +X east, +Y north, +Z outward/up. Irregular-body tooling may provide a custom local tangent basis while preserving the same rigid-transform contract.
 
 ## Parent attachment vs. object type
 
 Attachment is a motion/reference-frame relationship, not an object identity hierarchy. `ObjectType` remains the immutable physical classification defined in document 13.
 
-A `surfaceObject` will commonly be frame-attached, but object type must not be used as a hidden propagator selector. Other objects may also use attached/fixed motion where physically appropriate. Attached objects still produce the normal frame-qualified Cartesian state snapshot when queried.
-
-The engine does not need to know an attached object's gameplay meaning.
+A `surfaceObject` will commonly be frame-attached, but object type must not be used as a hidden frame or propagator selector. Other objects may also use attached/fixed motion where physically appropriate.
 
 ## Precision considerations
 
-Frame design must avoid unnecessary loss of floating-point precision at very different spatial scales. [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md) establishes IEEE-754 binary64 for continuous coordinates and shows that root-frame spacing grows from roughly 0.03 mm at 1 AU to millimetres across the outer planetary system and centimetres by roughly 1000 AU.
+Document 12 establishes binary64 for coordinates and requires local computation paths. Document 14 therefore makes relative-state queries first-class and requires transform composition through the nearest useful common frame rather than unconditional conversion of both objects to root coordinates followed by subtraction.
 
-Therefore local calculations must remain local where possible. Issue #10 must preserve local/reference-frame state and relative-state query paths so close-range operations are not forced to subtract two huge barycentric vectors. Absolute/root coordinates should be computed for queries and interactions that actually require them.
+Absolute/root coordinates are computed on demand when they are actually required.
+
+## Dependency safety
+
+A frame may depend on an object's propagated state to define its origin or attitude, but the combined frame/motion dependency graph must remain acyclic. An object cannot depend for its own authoritative motion on a frame whose transform already depends on that same object or one of its descendants.
 
 ## API expectations
 
-The public API should eventually support concepts such as:
+The public API may expose high-level operations such as:
 
-- query object state in its native frame;
-- query/transform state into another frame;
-- query absolute/root-frame state at time T;
-- query relative state without unnecessary root-frame subtraction;
-- register local/body-fixed objects;
-- register orbiting/free objects;
-- transform positions and velocities consistently across frame boundaries.
+- query object state at time `T` in a requested frame;
+- transform a supplied state into another frame at the state's exact epoch;
+- query absolute/root state;
+- query relative state without unnecessary root-frame cancellation;
+- register supported body-centered/body-fixed/local/object-attached frame definitions;
+- register surface/local objects through the common object model.
 
-The engine should treat frame transformations as first-class simulation functionality, not presentation-only helpers.
+The portable C++ core owns authoritative graph validation/composition/caching; TypeScript owns backend-neutral value shapes, validation, and convenience conversions.
