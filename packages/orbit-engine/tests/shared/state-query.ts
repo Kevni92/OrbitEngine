@@ -6,6 +6,8 @@ import {
   OrbitEngine,
   ObjectType,
   PropagationDirection,
+  PropagationError,
+  PropagationErrorCode,
   PropagationModelKind,
   ReferenceStatus,
   StateQueryError,
@@ -125,6 +127,23 @@ export async function assertStateQueryIntegration(backend: Backend): Promise<voi
     (error: unknown) => error instanceof StateQueryError && error.code === StateQueryErrorCode.modelBindingMismatch,
   );
 
+  const staleCentralBodyModel = engine.twoBodyModel({
+    anchor: earthAnchor,
+    centralBody: sunId,
+    centralBodyRevision: revisionId("9"),
+    mu: gravitationalParameter(1),
+    muRevision: registry.get(sunId).propertyRevision,
+    propagationFrame: sunFrame,
+    frameRevision: revisionId("1"),
+    validity,
+    configurationRevision: revisionId("2"),
+  });
+  assert.throws(
+    () => engine.bindMotionModel(earthId, staleCentralBodyModel),
+    (error: unknown) => error instanceof StateQueryError
+      && error.code === StateQueryErrorCode.dependencyRevisionMismatch,
+  );
+
   const earthModel = engine.twoBodyModel({
     anchor: earthAnchor,
     centralBody: sunId,
@@ -206,6 +225,84 @@ export async function assertStateQueryIntegration(backend: Backend): Promise<voi
   assert.equal(earthRelativeToSun.referenceFrame, sunFrame);
   assert.ok(Math.abs(earthRelativeToSun.position.x - 1) < 1e-12);
   assert.ok(Math.abs(earthRelativeToSun.position.y) < 1e-12);
+
+  const unboundId = objectId("1098");
+  registry.register({
+    id: unboundId,
+    type: ObjectType.debris,
+    state: state(3, 0, 0, 0, start, root),
+    motion: {
+      modelKind: PropagationModelKind.referenceEphemeris,
+      direction: PropagationDirection.bidirectional,
+      propagationFrame: root,
+      segmentStart: start,
+      segmentEnd: end,
+      configurationRevision: revisionId("11"),
+      motionRevision: revisionId("1"),
+    },
+  });
+  assert.throws(
+    () => engine.stateAt(unboundId, start, root),
+    (error: unknown) => error instanceof StateQueryError && error.code === StateQueryErrorCode.missingModelBinding,
+  );
+
+  registry.updateProperties(sunId, start, { mu: 2 });
+  assert.throws(
+    () => engine.stateAt(earthId, start, sunFrame),
+    (error: unknown) => error instanceof StateQueryError
+      && error.code === StateQueryErrorCode.dependencyRevisionMismatch,
+  );
+
+  const cycleA = objectId("1101");
+  const cycleB = objectId("1102");
+  const cycleAnchorA = state(1, 0, 0, 1, start, root);
+  const cycleAnchorB = state(-1, 0, 0, -1, start, root);
+  for (const [id, anchor, configurationRevision] of [
+    [cycleA, cycleAnchorA, revisionId("20")],
+    [cycleB, cycleAnchorB, revisionId("21")],
+  ] as const) {
+    registry.register({
+      id,
+      type: ObjectType.planet,
+      properties: { mu: 1 },
+      state: anchor,
+      motion: {
+        modelKind: PropagationModelKind.twoBodyAnalytical,
+        direction: PropagationDirection.bidirectional,
+        propagationFrame: root,
+        segmentStart: start,
+        segmentEnd: end,
+        configurationRevision,
+        motionRevision: revisionId("1"),
+      },
+    });
+  }
+  engine.bindMotionModel(cycleA, engine.twoBodyModel({
+    anchor: cycleAnchorA,
+    centralBody: cycleB,
+    centralBodyRevision: revisionId("1"),
+    mu: gravitationalParameter(1),
+    muRevision: registry.get(cycleB).propertyRevision,
+    propagationFrame: root,
+    frameRevision: revisionId("0"),
+    validity,
+    configurationRevision: revisionId("20"),
+  }));
+  engine.bindMotionModel(cycleB, engine.twoBodyModel({
+    anchor: cycleAnchorB,
+    centralBody: cycleA,
+    centralBodyRevision: revisionId("1"),
+    mu: gravitationalParameter(1),
+    muRevision: registry.get(cycleA).propertyRevision,
+    propagationFrame: root,
+    frameRevision: revisionId("0"),
+    validity,
+    configurationRevision: revisionId("21"),
+  }));
+  assert.throws(
+    () => engine.stateAt(cycleA, simulationInstant(1), root),
+    (error: unknown) => error instanceof PropagationError && error.code === PropagationErrorCode.dependencyCycle,
+  );
 
   registry.diverge(sunId, start, {
     state: state(0, 0, 0, 0, start, root),

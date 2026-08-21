@@ -6,6 +6,7 @@ import {
   PropagationErrorCode,
   evaluatePropagationModel,
   propagationEvaluationContext,
+  revisionId,
   type PropagationDependency,
   type PropagationModel,
   type PropagationState,
@@ -21,6 +22,7 @@ import {
 export const StateQueryErrorCode = Object.freeze({
   missingModelBinding: "missingModelBinding",
   modelBindingMismatch: "modelBindingMismatch",
+  dependencyRevisionMismatch: "dependencyRevisionMismatch",
   dependencyCycle: "dependencyCycle",
   unsupportedDependency: "unsupportedDependency",
 } as const);
@@ -130,6 +132,7 @@ export class ObjectStateQueries {
     }
     const record = this.#registry.get(normalizedId);
     assertModelMatchesRecord(record, model);
+    this.#assertDependenciesCurrent(model);
     this.#frames.setObjectPropagationFrame(normalizedId, record.motion.propagationFrame);
     this.#bindings.set(normalizedId, Object.freeze({
       model,
@@ -203,6 +206,7 @@ export class ObjectStateQueries {
       );
     }
     assertModelMatchesRecord(record, binding.model);
+    this.#assertDependenciesCurrent(binding.model);
     return binding;
   }
 
@@ -230,8 +234,8 @@ export class ObjectStateQueries {
     const cached = context.rawStates.get(key);
     if (cached !== undefined) return cached;
     if (context.activeObjects.has(key)) {
-      throw new StateQueryError(
-        StateQueryErrorCode.dependencyCycle,
+      throw new PropagationError(
+        PropagationErrorCode.dependencyCycle,
         `Object motion dependency cycle detected while evaluating ${id}`,
         { objectId: id, target },
       );
@@ -283,6 +287,72 @@ export class ObjectStateQueries {
       );
     }
 
+    const dependencyRecord = this.#registry.get(dependencyId);
+    if (dependencyRecord.motion.motionRevision !== dependency.revision) {
+      this.#dependencyMismatch(dependency, dependencyRecord.motion.motionRevision);
+    }
     return this.#stateAt(dependencyId, target, model.declaration.propagationFrame, context);
+  }
+
+  #assertDependenciesCurrent(model: PropagationModel): void {
+    for (const dependency of model.declaration.dependencies) {
+      switch (dependency.kind) {
+        case "object": {
+          const record = this.#registry.get(objectId(dependency.id));
+          if (record.motion.motionRevision !== dependency.revision) {
+            this.#dependencyMismatch(dependency, record.motion.motionRevision);
+          }
+          break;
+        }
+        case "property": {
+          const separator = dependency.id.lastIndexOf(":");
+          const dependencyObject = separator <= 0 ? "" : dependency.id.slice(0, separator);
+          const propertyName = separator <= 0 ? "" : dependency.id.slice(separator + 1);
+          if (propertyName !== "mu") {
+            throw new StateQueryError(
+              StateQueryErrorCode.unsupportedDependency,
+              `Unsupported registered physical-property dependency: ${dependency.id}`,
+              { dependency },
+            );
+          }
+          const record = this.#registry.get(objectId(dependencyObject));
+          if (record.propertyRevision !== dependency.revision) {
+            this.#dependencyMismatch(dependency, record.propertyRevision);
+          }
+          if (record.properties.mu === undefined) {
+            throw new PropagationError(
+              PropagationErrorCode.missingPhysicalProperty,
+              `Registered object ${record.id} is missing required gravitational parameter`,
+              { dependency },
+            );
+          }
+          break;
+        }
+        case "frame": {
+          const frame = this.#frames.get(referenceFrameId(dependency.id));
+          const currentRevision = frame.provider.revision ?? revisionId("0");
+          if (currentRevision !== dependency.revision) {
+            this.#dependencyMismatch(dependency, currentRevision);
+          }
+          break;
+        }
+        case "source":
+        case "attitude":
+        case "mass":
+          break;
+      }
+    }
+  }
+
+  #dependencyMismatch(dependency: PropagationDependency, actualRevision: RevisionId): never {
+    throw new StateQueryError(
+      StateQueryErrorCode.dependencyRevisionMismatch,
+      `Propagation dependency revision is stale for ${dependency.kind}:${dependency.id}`,
+      {
+        dependency,
+        expectedRevision: dependency.revision,
+        actualRevision,
+      },
+    );
   }
 }
