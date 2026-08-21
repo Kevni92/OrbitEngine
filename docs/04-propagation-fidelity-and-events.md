@@ -10,7 +10,7 @@ Fidelity answers: “How much computational effort/precision is justified for th
 
 A diverged asteroid may therefore use a newly derived analytical orbit at low fidelity, while the same object temporarily switches to high-fidelity numerical treatment during a close encounter.
 
-Object identity, canonical Cartesian handoff state, and reference/divergence semantics are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md).
+Object identity, canonical Cartesian handoff state, and reference/divergence semantics are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md). Reference-frame and same-epoch transform semantics are defined in [14 — Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md).
 
 ## Propagation models
 
@@ -21,9 +21,13 @@ Expected model families include:
 - analytical or semi-analytical propagation with selected perturbations;
 - numerical multi-body integration;
 - active thrust trajectory propagation;
-- parent/body-fixed propagation for surface-attached objects.
+- parent/body-fixed attached motion for surface/local objects.
 
 The exact algorithms remain implementation decisions and should be selected based on accuracy, stability, and performance requirements.
+
+A propagator must operate on the common frame-qualified state contract. Frame transformation is not a substitute for propagation: it transforms a state at one exact epoch, while a propagator supplies state at another requested epoch.
+
+A propagator must explicitly support the motion/frame conditions it uses. It may not infer that a frame is inertial merely from object type or from a colloquial name such as “body-centered inertial.” Document 14 distinguishes the true inertial root from translated/non-rotating and rotating frames.
 
 ## Fidelity concept
 
@@ -48,7 +52,7 @@ Promotion may be triggered by:
 - external impulse/explosion;
 - explicit high-precision query.
 
-After the interaction stabilizes, the engine should derive an appropriate cheaper representation from the current state and demote the object again. Position and velocity at the handoff epoch must remain continuous.
+After the interaction stabilizes, the engine should derive an appropriate cheaper representation from the current canonical state and demote the object again. Position and velocity at the handoff epoch must remain continuous in a mutually supported frame.
 
 Changing fidelity or propagation model never changes `ObjectType` and never clears reference divergence.
 
@@ -59,6 +63,12 @@ A reference-following natural object uses its reference source as authoritative 
 At the divergence instant the transition is atomic: evaluate the reference state, apply the physical change, capture the resulting canonical Cartesian state, make dynamic propagation authoritative, retain the original reference only as provenance/history, and invalidate predictions based on the old reference future.
 
 Once diverged, an object does not return to its original reference future merely because it later uses cheap analytical propagation. The exact propagator/source transition contract is completed by Architecture issue #11.
+
+## Frame/motion dependency safety
+
+Object-centered and body-fixed frame providers may depend on another object's propagated state. The combined object-motion/frame graph must remain acyclic as required by document 14.
+
+Issue #11 must therefore make propagator dependencies explicit enough that registration/switching cannot create a state dependency cycle. A propagator cannot make object A depend on a frame whose transform already depends on object A through the same or a descendant path.
 
 ## Encounter detection
 
@@ -88,7 +98,7 @@ current time ---- event A ---- event B ---------------- target time
       cheap jump     refine       high fidelity             jump
 ```
 
-If an event changes an object's trajectory, future encounter predictions involving that object must be invalidated and recomputed.
+If an event changes an object's trajectory, future encounter predictions involving that object and future frame transforms driven by that state must be invalidated/recomputed from the event epoch onward.
 
 ## Example: redirected asteroid
 
@@ -97,7 +107,7 @@ If an event changes an object's trajectory, future encounter predictions involvi
 3. An explosion applies an impulse and changes position/velocity state.
 4. The reference state at that exact instant is converted atomically into a diverged dynamic handoff state.
 5. After local effects settle, a new analytical orbit is derived from the new state and the asteroid returns to F0 without clearing divergence.
-6. Broad-phase/encounter data is rebuilt for the new orbit.
+6. Broad-phase/encounter and dependent frame caches are rebuilt for the new future.
 7. A possible Mars encounter 200 years later is discovered and scheduled.
 8. As that encounter approaches, fidelity increases again automatically.
 
