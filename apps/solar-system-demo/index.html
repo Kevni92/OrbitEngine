@@ -4,13 +4,34 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OrbitEngine Solar-System Reference Demo</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; overflow: hidden; background: #050914; }
+      .demo-shell { height: 100%; position: relative; }
+      #scene { display: block; height: 100%; width: 100%; }
+      .demo-panel { background: rgba(8, 15, 31, .88); border: 1px solid #293856; border-radius: 12px; left: 1rem; max-width: 30rem; padding: 1rem; position: absolute; top: 1rem; z-index: 2; }
+      h1 { font-size: 1.25rem; margin: .15rem 0 .5rem; }
+      p { margin: .35rem 0; }
+      .eyebrow { color: #8fa4c7; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; }
+      .status-list { display: grid; gap: .35rem; margin: 1rem 0; }
+      .status-list div { display: flex; gap: .5rem; justify-content: space-between; }
+      dt { color: #8fa4c7; } dd { margin: 0; text-align: right; }
+      dd[data-state="error"] { color: #ff8d8d; } dd[data-state="ready"] { color: #8de3b0; }
+      .controls { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; margin: .75rem 0; }
+      label { color: #b9c9e5; display: grid; font-size: .8rem; gap: .25rem; }
+      select, button { background: #111d35; border: 1px solid #3a4c6e; border-radius: 6px; color: #edf4ff; padding: .4rem .5rem; }
+      button { cursor: pointer; }
+      #selected-panel { border-top: 1px solid #293856; color: #b9c9e5; font-family: ui-monospace, monospace; font-size: .72rem; line-height: 1.45; margin-top: .75rem; padding-top: .65rem; white-space: pre-wrap; }
+      .hint { color: #8fa4c7; font-size: .75rem; }
+    </style>
   </head>
   <body>
     <main class="demo-shell">
       <section class="demo-panel" aria-labelledby="demo-title">
         <p class="eyebrow">OrbitEngine reference consumer</p>
         <h1 id="demo-title">Solar-System demo shell</h1>
-        <p id="scenario-note">The deterministic Solar-System scenario arrives in the next stage.</p>
+        <p id="scenario-note">Offline deterministic scenario loading…</p>
         <dl class="status-list">
           <div>
             <dt>Engine</dt>
@@ -24,8 +45,29 @@
             <dt>Simulation instant</dt>
             <dd id="simulation-instant">0s + 0ns</dd>
           </div>
+          <div>
+            <dt>Focus / output</dt>
+            <dd id="focus-context">Loading</dd>
+          </div>
         </dl>
+        <div class="controls">
+          <label>Focus
+            <select id="focus-select" disabled></select>
+          </label>
+          <label>Selected
+            <select id="selected-select" disabled></select>
+          </label>
+          <label>Radius presentation
+            <select id="radius-mode">
+              <option value="visible">Visible (exaggerated)</option>
+              <option value="physical">Physical scale</option>
+            </select>
+          </label>
+          <button id="focus-selected" type="button" disabled>Focus selected</button>
+        </div>
         <button id="play-pause" type="button" disabled>Play</button>
+        <p class="hint">Click a body to select it. Positions come from OrbitEngine state-at-time queries.</p>
+        <div id="selected-panel" aria-live="polite">No state snapshot yet.</div>
       </section>
       <canvas id="scene" aria-label="OrbitEngine demo scene"></canvas>
     </main>
