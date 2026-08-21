@@ -11,7 +11,7 @@ Two compiled backends wrap the same portable C++ core:
 
 The concrete repository, packaging, initialization, artifact, test, and CI decisions are defined in [11 — Build, Package, and Backend Architecture](11-build-package-and-backend-architecture.md).
 
-Fundamental unit, time, precision, and marshalling semantics are defined in [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md). Object identity/state semantics are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md).
+Fundamental unit, time, precision, and marshalling semantics are defined in [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md). Object identity/state semantics are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md). Reference-frame identity/transform semantics are defined in [14 — Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md).
 
 ## Layering
 
@@ -30,7 +30,7 @@ binding       binding
 
 The core must:
 
-- contain authoritative runtime object-registry state and physics/math/performance-critical algorithms where justified;
+- contain authoritative runtime object/frame registries and physics/math/performance-critical algorithms where justified;
 - use portable C++20 without direct Node-API or Emscripten dependencies;
 - expose a narrow C++ interface suitable for multiple bindings;
 - avoid game/domain concepts;
@@ -38,11 +38,11 @@ The core must:
 
 Likely C++ candidates include:
 
-- object registry/lifecycle and dense internal indexing;
+- object and frame registry/lifecycle plus dense internal indexing;
+- reference-frame transform composition and relative-state queries;
 - orbit/state propagation over large object sets;
 - numerical integrators;
 - encounter/broad-phase algorithms;
-- reference-frame transformations;
 - trajectory solvers;
 - batch physics calculations.
 
@@ -80,34 +80,38 @@ Semantics:
 
 Once a valid native module is loaded, protocol mismatch or backend initialization failures are surfaced rather than silently hidden by a WASM fallback.
 
-Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense object indexes, and pointer/handle internals are not exported from the normal public package entry point.
+Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense indexes, provider vtables, cache handles, and pointers are not exported from the normal public package entry point.
 
-## Numeric, time, and object transfer contract
+## Numeric, time, object, and frame transfer contract
 
 Canonical continuous physical values cross as IEEE-754 binary64 (`number` ↔ C++ `double` ↔ WASM `f64`) and are never silently down-cast to f32.
 
 `SimulationInstant`/`Duration` cross through the exact integer codec from document 12, never floating total seconds.
 
-`ObjectId` is a canonical nominal decimal string in the public TypeScript API and a `uint64_t` in the portable core. Native/WASM adapters preserve the full value exactly through unsigned high/low 32-bit words or an equivalent lossless i64 mechanism; IDs are never marshalled through binary64.
+`ObjectId` and `ReferenceFrameId` are separate nominal canonical decimal strings in the public TypeScript API and `uint64_t` values in the portable core. Native/WASM adapters preserve each full value exactly through unsigned high/low 32-bit words or an equivalent lossless i64 mechanism; IDs are never marshalled through binary64.
 
 `ObjectType` uses the stable compact integer codes defined in document 13 at the backend boundary while TypeScript exposes the documented named values.
 
-Optional physical properties use explicit presence state, never `NaN` sentinels. Batch interfaces use binary64 arrays for continuous data and integer typed arrays/exact fields for IDs, types, and time values.
+Cartesian states transfer f64 position/velocity plus exact epoch and exact frame ID. Frame rigid-state transforms transfer f64 translation, origin velocity, scalar-first quaternion `(w,x,y,z)`, and angular velocity plus exact epoch/IDs.
+
+Optional physical/attitude values use explicit presence state, never `NaN` sentinels. Batch interfaces use binary64 arrays for continuous data and integer typed arrays/exact fields for IDs, types, and time values.
 
 Backend-specific packing is internal and must not leak into public value shapes.
 
 ## Performance boundary
 
-Crossing JavaScript ↔ native/WASM boundaries has overhead. Prefer batch-oriented registration/state-query interfaces for large data sets rather than thousands of tiny calls.
+Crossing JavaScript ↔ native/WASM boundaries has overhead. Prefer batch-oriented registration/state/frame-query interfaces for large data sets rather than thousands of tiny calls.
 
-Keep orchestration, public validation, canonical object-ID parsing/formatting, unit conversion, and API ergonomics in TypeScript unless measurement or architecture justifies moving work into C++.
+For many object queries at one epoch, the backend should evaluate/reuse shared frame-edge transforms in the portable core rather than marshalling intermediate frame transforms through TypeScript repeatedly.
 
-The authoritative live/retired object registry belongs to the portable core so native and WASM cannot diverge in lifecycle semantics.
+Keep orchestration, public validation, canonical ID parsing/formatting, unit conversion, and convenience coordinate conversions in TypeScript unless measurement or architecture justifies moving work into C++.
+
+The authoritative live/retired object and frame registries belong to the portable core so native and WASM cannot diverge in lifecycle/topology semantics.
 
 ## Testing expectation
 
 Where both backends implement the same feature, shared parity tests execute the same high-level scenario against native and WASM.
 
-Exact integer/time/object-ID/type/lifecycle behavior must match exactly. Floating-point feature results use documented numerical tolerances; parity does not require unconditional bit-identical floating-point results across native and WASM.
+Exact integer/time/object-ID/frame-ID/type/lifecycle behavior must match exactly. Floating-point state/frame results use documented numerical tolerances; parity does not require unconditional bit-identical floating-point results across native and WASM. Quaternion parity is orientation-equivalent rather than sign-sensitive because `q` and `-q` represent the same rotation.
 
 Backend-specific tests additionally cover loading, initialization, marshalling, artifact resolution, and error translation. Portable core behavior is tested directly in C++ through CTest.
