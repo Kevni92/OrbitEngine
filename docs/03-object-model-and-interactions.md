@@ -1,14 +1,16 @@
 # 03 — Object Model and Interactions
 
+The canonical object/state contract is defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md). This document summarizes how that model relates to interactions.
+
 ## Stable object identity
 
-Every registered OrbitEngine object has a stable, unique ID. The ID is the integration point between OrbitEngine and higher layers.
+Every registered OrbitEngine object has one stable, non-zero `ObjectId`. IDs are supplied by the registering layer, are exact unsigned 64-bit logical values, and are never reused after retirement within the same simulation lineage.
 
-The engine does not need to know that an ID represents “Tycho Station” or a specific game ship. It only stores the physical and simulation-relevant properties supplied for that ID.
+The ID is the integration point between OrbitEngine and higher layers. It carries no game or physical semantics; higher layers associate their own metadata externally.
 
 ## Object type
 
-Each object has exactly one physical `ObjectType`. The initial taxonomy may include:
+Every object has exactly one immutable physical `ObjectType` from the closed initial taxonomy:
 
 - Star
 - Planet
@@ -22,66 +24,40 @@ Each object has exactly one physical `ObjectType`. The initial taxonomy may incl
 - SurfaceObject
 - Debris
 
-The taxonomy may evolve, but types should remain physical/simulation categories rather than gameplay roles. For example, “MilitaryStation” belongs to a game layer, while `Station` belongs to OrbitEngine.
+Types are physical/simulation categories rather than gameplay roles. Changing propagation model, fidelity, state, mass, or reference/divergence status does not change `ObjectType`.
 
-## Physical state
+## Physical state and properties
 
-A movable object should have, as applicable:
+The common translational state snapshot is Cartesian position + velocity + exact `SimulationInstant` + reference-frame association. Orbital elements and other propagator-specific forms are derived data, not authoritative identity/state.
 
-- stable ID;
-- object type;
-- mass;
-- radius and/or collision geometry;
-- position;
-- velocity;
-- orientation;
-- angular velocity/rotation data;
-- state epoch (the time at which the stored state is valid);
-- reference frame;
-- propagation model metadata;
-- interaction policy metadata.
+Only ID and type are universal definition fields. Mass, gravitational parameter, physical radius, collision bounding radius, and rotational state are optional and explicitly modeled. Missing is distinct from zero.
 
-Position + velocity + state epoch form the essential dynamic state from which a new trajectory/orbit can be propagated after a perturbation.
+Physical radius and collision radius are separate concepts. Mass and gravitational parameter are also explicit separate properties; the registry does not silently derive one from the other.
 
 ## Reference vs. diverged astronomical objects
 
-A known natural body may begin as a reference object following imported real-world ephemeris/orbital data.
+Reference-following vs. diverged is propagation metadata, not an object type.
 
-If gameplay changes its physical state — for example, an asteroid receives an impulse from an explosion — the object becomes diverged. From that point onward the original reference trajectory is historical/reference data only. The current physical state becomes authoritative and a new orbit/trajectory is derived from it.
+When a simulation event changes a reference object's state, OrbitEngine evaluates the reference state at that exact instant, applies the physical change, captures the resulting Cartesian handoff state, marks the object diverged, and makes dynamic propagation authoritative. The original reference source remains provenance/history only.
 
-A diverged object can later return to a cheap analytical fidelity level. “Cheap” must never mean “snap back to the original NASA/JPL trajectory.”
+The transition is one-way during normal runtime. Returning to cheap analytical propagation or low fidelity never means snapping back to the original astronomical reference future.
 
-## Game objects
+## Artificial and surface objects
 
-Spacecraft, stations, satellites, and similar artificial entities are normal OrbitEngine objects. They are typically more interaction-relevant than untouched natural bodies because they can maneuver and gameplay outcomes depend on collisions or close approaches.
+Spacecraft, stations, satellites, debris, and surface objects use the same ID/type/property/state abstraction as natural bodies. OrbitEngine does not attach ownership, economy, population, role, cargo, or other game-domain data to them.
 
-## Interaction policy
+Surface/frame attachment is a motion/reference-frame relationship, not a second object hierarchy. Attached objects can remain cheap while still producing normal Cartesian state snapshots when queried.
 
-Object type acts as a key into configurable interaction rules. At minimum, gravity, encounter detection, and collision detection should be separable concerns.
+## Lifecycle
 
-Example conceptual policy:
+Registration and removal are explicit and atomic. IDs and types are immutable in place; mutable physical properties/state change only through explicit physical APIs at exact simulation instants.
 
-| Pair | Gravity | Encounter | Collision |
-|---|---|---|---|
-| Planet ↔ Moon | reference/model dependent | usually no runtime search | usually no runtime search |
-| Untouched Asteroid ↔ Asteroid | usually ignored | configurable | usually ignored |
-| Spacecraft ↔ Planet | yes/relevant | yes | yes |
-| Spacecraft ↔ Asteroid | asteroid gravity usually negligible | yes | yes |
-| Spacecraft ↔ Station | local/relevant as configured | yes | yes |
-| Diverged Asteroid ↔ Planet | yes | yes | yes |
-| Station ↔ Asteroid | asteroid gravity usually negligible | yes | yes |
+Removal retires the ID permanently for the simulation lineage. It does not silently cascade through structural dependents; structural dependents must be removed/reparented first. Future cached predictions/events referring to a removed object are invalidated by their owning subsystems.
 
-Exact defaults are an implementation decision, but the policy must be configurable and must avoid unnecessary all-pairs work.
+## Interaction policy boundary
 
-## Collision relevance
+Object-side facts such as `ObjectType`, optional gravitational parameter/mass, collision bounding radius, and reference/divergence status may be inputs to later interaction policies.
 
-Untouched astronomical reference bodies do not need continuous pairwise collision checks against every other reference body. Their known/reference trajectories already describe the baseline system.
+Gravity, encounter detection, and collision detection remain separate configurable concerns. Having mass or radius never implies continuous all-pairs work.
 
-Collision detection becomes especially relevant when:
-
-- a gameplay object can hit a natural body or another gameplay object;
-- an artificial object is maneuvering;
-- a natural body has diverged from its reference trajectory;
-- an encounter predictor identifies a credible future collision candidate.
-
-This distinction is central to scaling the engine to large asteroid/comet catalogs.
+Untouched astronomical reference bodies generally do not need wasteful mutual collision searches when their reference evolution already defines the baseline. Collision/encounter relevance increases for artificial objects, maneuvering objects, diverged natural bodies, and predicted close approaches.

@@ -10,6 +10,8 @@ Fidelity answers: “How much computational effort/precision is justified for th
 
 A diverged asteroid may therefore use a newly derived analytical orbit at low fidelity, while the same object temporarily switches to high-fidelity numerical treatment during a close encounter.
 
+Object identity, canonical Cartesian handoff state, and reference/divergence semantics are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md).
+
 ## Propagation models
 
 Expected model families include:
@@ -48,6 +50,16 @@ Promotion may be triggered by:
 
 After the interaction stabilizes, the engine should derive an appropriate cheaper representation from the current state and demote the object again. Position and velocity at the handoff epoch must remain continuous.
 
+Changing fidelity or propagation model never changes `ObjectType` and never clears reference divergence.
+
+## Reference divergence
+
+A reference-following natural object uses its reference source as authoritative motion until a simulation event changes its state.
+
+At the divergence instant the transition is atomic: evaluate the reference state, apply the physical change, capture the resulting canonical Cartesian state, make dynamic propagation authoritative, retain the original reference only as provenance/history, and invalidate predictions based on the old reference future.
+
+Once diverged, an object does not return to its original reference future merely because it later uses cheap analytical propagation. The exact propagator/source transition contract is completed by Architecture issue #11.
+
 ## Encounter detection
 
 The engine must not compare every object pair on every tick. Encounter detection is hierarchical:
@@ -83,8 +95,8 @@ If an event changes an object's trajectory, future encounter predictions involvi
 1. Asteroid follows imported reference trajectory at F0.
 2. A spacecraft approaches; fidelity is promoted.
 3. An explosion applies an impulse and changes position/velocity state.
-4. The asteroid is marked diverged.
-5. After local effects settle, a new analytical orbit is derived from the new state and the asteroid returns to F0.
+4. The reference state at that exact instant is converted atomically into a diverged dynamic handoff state.
+5. After local effects settle, a new analytical orbit is derived from the new state and the asteroid returns to F0 without clearing divergence.
 6. Broad-phase/encounter data is rebuilt for the new orbit.
 7. A possible Mars encounter 200 years later is discovered and scheduled.
 8. As that encounter approaches, fidelity increases again automatically.
