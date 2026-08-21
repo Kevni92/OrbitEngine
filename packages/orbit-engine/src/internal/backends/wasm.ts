@@ -2,6 +2,21 @@ import type { Backend } from "./contract.js";
 import { backendFromRawBinding } from "./binding.js";
 import { BackendInitializationError } from "./errors.js";
 import type { TimeWire } from "../time-wire.js";
+import type { ObjectWire } from "../object-wire.js";
+
+type ObjectRoundTripArgs = [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
 
 interface WasmModule {
   readonly _orbit_engine_binding_protocol_version: () => number;
@@ -11,6 +26,17 @@ interface WasmModule {
   readonly _orbit_engine_round_trip_time_seconds_low: (secondsHigh: number, secondsLow: number, nanoseconds: number) => number;
   readonly _orbit_engine_round_trip_time_nanoseconds: (secondsHigh: number, secondsLow: number, nanoseconds: number) => number;
   readonly _orbit_engine_round_trip_double: (value: number) => number;
+  readonly _orbit_engine_round_trip_object_id_high: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_id_low: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_type_code: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_mass_present: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_mass: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_mu_present: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_mu: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_physical_radius_present: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_physical_radius: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_collision_radius_present: (...args: ObjectRoundTripArgs) => number;
+  readonly _orbit_engine_round_trip_object_collision_radius: (...args: ObjectRoundTripArgs) => number;
 }
 
 interface WasmModuleFactory {
@@ -66,6 +92,34 @@ export async function loadWasmBackend(): Promise<Backend> {
       ) >>> 0,
     }),
     roundTripDouble: (value: number) => module._orbit_engine_round_trip_double(value),
+    roundTripObject: (value: ObjectWire) => {
+      const args: ObjectRoundTripArgs = [
+        value.objectIdHigh,
+        value.objectIdLow,
+        value.objectTypeCode,
+        value.massPresent ? 1 : 0,
+        value.mass,
+        value.muPresent ? 1 : 0,
+        value.mu,
+        value.physicalRadiusPresent ? 1 : 0,
+        value.physicalRadius,
+        value.collisionBoundingRadiusPresent ? 1 : 0,
+        value.collisionBoundingRadius,
+      ];
+      return {
+        objectIdHigh: module._orbit_engine_round_trip_object_id_high(...args) >>> 0,
+        objectIdLow: module._orbit_engine_round_trip_object_id_low(...args) >>> 0,
+        objectTypeCode: module._orbit_engine_round_trip_object_type_code(...args) >>> 0,
+        massPresent: module._orbit_engine_round_trip_object_mass_present(...args) !== 0,
+        mass: module._orbit_engine_round_trip_object_mass(...args),
+        muPresent: module._orbit_engine_round_trip_object_mu_present(...args) !== 0,
+        mu: module._orbit_engine_round_trip_object_mu(...args),
+        physicalRadiusPresent: module._orbit_engine_round_trip_object_physical_radius_present(...args) !== 0,
+        physicalRadius: module._orbit_engine_round_trip_object_physical_radius(...args),
+        collisionBoundingRadiusPresent: module._orbit_engine_round_trip_object_collision_radius_present(...args) !== 0,
+        collisionBoundingRadius: module._orbit_engine_round_trip_object_collision_radius(...args),
+      };
+    },
   };
 
   return backendFromRawBinding("wasm", raw);

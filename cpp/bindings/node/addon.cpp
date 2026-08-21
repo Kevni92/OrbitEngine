@@ -1,4 +1,5 @@
 #include "orbit_engine/core.hpp"
+#include "orbit_engine/object.hpp"
 #include "orbit_engine/time.hpp"
 
 #include <cmath>
@@ -40,11 +41,73 @@ bool readWire(const Napi::Value& value, orbit_engine::time::TimeWire& output) {
     && readInteger("nanoseconds", 0.0, 999'999'999.0, output.nanoseconds);
 }
 
+bool readObjectWire(const Napi::Value& value, orbit_engine::object::ObjectWire& output) {
+  if (!value.IsObject()) {
+    return false;
+  }
+
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) {
+      return false;
+    }
+    const auto number = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) {
+      return false;
+    }
+    target = static_cast<std::decay_t<decltype(target)>>(number);
+    return true;
+  };
+  const auto readOptional = [&object](const char* presenceName, const char* valueName,
+                                      orbit_engine::object::OptionalPhysicalScalar& target) {
+    const auto presence = object.Get(presenceName);
+    const auto value = object.Get(valueName);
+    if (!presence.IsBoolean() || !value.IsNumber()) {
+      return false;
+    }
+    target.present = presence.As<Napi::Boolean>().Value();
+    target.value = value.As<Napi::Number>().DoubleValue();
+    return std::isfinite(target.value);
+  };
+
+  return readInteger("objectIdHigh", 0.0, 4'294'967'295.0, output.object_id_high)
+    && readInteger("objectIdLow", 0.0, 4'294'967'295.0, output.object_id_low)
+    && readInteger("objectTypeCode", 0.0, 65'535.0, output.object_type_code)
+    && readOptional("massPresent", "mass", output.properties.mass)
+    && readOptional("muPresent", "mu", output.properties.mu)
+    && readOptional("physicalRadiusPresent", "physicalRadius", output.properties.physical_radius)
+    && readOptional(
+      "collisionBoundingRadiusPresent",
+      "collisionBoundingRadius",
+      output.properties.collision_bounding_radius
+    );
+}
+
 Napi::Object writeWire(Napi::Env env, orbit_engine::time::TimeWire value) {
   auto result = Napi::Object::New(env);
   result.Set("secondsHigh", Napi::Number::New(env, value.seconds_high));
   result.Set("secondsLow", Napi::Number::New(env, value.seconds_low));
   result.Set("nanoseconds", Napi::Number::New(env, value.nanoseconds));
+  return result;
+}
+
+Napi::Object writeObjectWire(Napi::Env env, orbit_engine::object::ObjectWire value) {
+  auto result = Napi::Object::New(env);
+  result.Set("objectIdHigh", Napi::Number::New(env, value.object_id_high));
+  result.Set("objectIdLow", Napi::Number::New(env, value.object_id_low));
+  result.Set("objectTypeCode", Napi::Number::New(env, value.object_type_code));
+  result.Set("massPresent", Napi::Boolean::New(env, value.properties.mass.present));
+  result.Set("mass", Napi::Number::New(env, value.properties.mass.value));
+  result.Set("muPresent", Napi::Boolean::New(env, value.properties.mu.present));
+  result.Set("mu", Napi::Number::New(env, value.properties.mu.value));
+  result.Set("physicalRadiusPresent", Napi::Boolean::New(env, value.properties.physical_radius.present));
+  result.Set("physicalRadius", Napi::Number::New(env, value.properties.physical_radius.value));
+  result.Set(
+    "collisionBoundingRadiusPresent",
+    Napi::Boolean::New(env, value.properties.collision_bounding_radius.present)
+  );
+  result.Set("collisionBoundingRadius", Napi::Number::New(env, value.properties.collision_bounding_radius.value));
   return result;
 }
 
@@ -84,11 +147,33 @@ Napi::Value RoundTripDouble(const Napi::CallbackInfo& info) {
   return Napi::Number::New(env, orbit_engine::time::round_trip_double(value));
 }
 
+Napi::Value RoundTripObject(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1) {
+    Napi::TypeError::New(env, "roundTripObject expects one object wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  orbit_engine::object::ObjectWire input{};
+  if (!readObjectWire(info[0], input)) {
+    Napi::TypeError::New(env, "roundTripObject received an invalid wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  orbit_engine::object::ObjectWire output{};
+  if (!orbit_engine::object::round_trip(input, output)) {
+    Napi::RangeError::New(env, "roundTripObject received an invalid object value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  return writeObjectWire(env, output);
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("protocolVersion", Napi::Number::New(env, orbit_engine::kBindingProtocolVersion));
   exports.Set("initialize", Napi::Function::New(env, Initialize));
   exports.Set("roundTripTime", Napi::Function::New(env, RoundTripTime));
   exports.Set("roundTripDouble", Napi::Function::New(env, RoundTripDouble));
+  exports.Set("roundTripObject", Napi::Function::New(env, RoundTripObject));
   return exports;
 }
 
