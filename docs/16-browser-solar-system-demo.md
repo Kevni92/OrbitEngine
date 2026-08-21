@@ -25,7 +25,7 @@ This document defines application boundaries, browser/WASM loading, render-space
 - One bounded query coordinator owns state requests. It never creates an unbounded queue of stale time queries.
 - Once #20 is available, the visualizer uses same-epoch batch and relative-state queries across the JS↔WASM boundary.
 - Render coordinates are camera/focus-relative whenever possible. Large SSB coordinates are not blindly copied into Three.js for local views.
-- OrbitEngine ICRS axes are preserved directly in Three.js. The demo uses +Z as scene/camera up rather than silently permuting engine axes.
+- OrbitEngine state remains ICRS/ICRF-aligned; the demo applies one explicit J2000-ecliptic presentation rotation at the render-space boundary and uses +Z as scene/camera up.
 - Distances are converted from SI metres to presentation-only scene units. Body-size exaggeration is presentation-only and explicitly separate from physical radius.
 - The first deterministic scenario is offline and committed. It contains the Sun, eight planets, and Earth's Moon, normalized to OrbitEngine contracts with source/provenance metadata.
 - The first useful Solar-System motion demo depends on #20 and #23. Browser-WASM packaging/smoke work may be implemented earlier.
@@ -286,7 +286,7 @@ Owns wall-clock-to-requested-time mapping and bounded query scheduling. It does 
 
 ### `rendering/`
 
-Owns metres→scene-unit conversion, camera-relative origin, meshes, labels, selection raycasting, visual trails, and Three.js resources.
+Owns metres→scene-unit conversion, camera-relative origin, presentation-frame conversion, meshes, labels, selection raycasting, visual trails, and Three.js resources.
 
 ### `ui/`
 
@@ -418,21 +418,26 @@ If the first batch API cannot directly batch relative queries, #20's public/comm
 
 ## Three.js coordinate convention
 
-OrbitEngine's root orientation is ICRS/ICRF-aligned with +Z toward the north celestial pole.
+OrbitEngine's root orientation remains SSB-centered and ICRS/ICRF-aligned with +Z toward the north celestial pole. Canonical engine/scenario `PropagationState` values are never rotated or mutated for rendering.
 
-The demo uses an **identity axis mapping**:
+For presentation, the demo applies one explicit fixed rotation at the `RenderSpace` boundary from ICRS/ICRF axes to J2000-ecliptic axes. The rotation is the inverse of the J2000 ecliptic-obliquity normalization used by the deterministic primary-planet fixture, using the shared `23.43928°` convention. Conceptually:
 
 ```text
-OrbitEngine +X -> Three.js +X
-OrbitEngine +Y -> Three.js +Y
-OrbitEngine +Z -> Three.js +Z
+ICRS/ICRF state
+   |
+   | rotate about +X by -23.43928°
+   v
+J2000-ecliptic presentation state
+   |
+   v
+Three.js scene
 ```
 
-No hidden Y/Z swap is applied.
+The presentation mapping keeps +X fixed and makes scene `z = 0` the J2000 ecliptic reference plane. Three.js cameras used with OrbitControls keep +Z as their up vector before controls are initialized.
 
-Three.js cameras used with OrbitControls set their up vector to +Z before controls are initialized. This preserves the scientific coordinate orientation and avoids a renderer-only rotation that would complicate debugging.
+The transform is centralized and applied consistently to body positions, relative/focus positions, and sampled orbit/path points before the metres→scene-unit scale. Debug/technical UI continues to display the unmodified canonical engine coordinates. Rendering the same physical vector through body and path code must yield the same scene-space vector.
 
-Any future alternate display convention must be an explicit renderer transform with a visible/debuggable setting; it never changes engine state.
+This is a presentation transform only. It is not an OrbitEngine reference frame, does not alter public API/frame semantics, and must never be written back into engine state.
 
 ## Render-space origin and scale
 
@@ -616,12 +621,12 @@ Unit tests cover pure application logic, including:
 - stale query generation discard;
 - bounded pending-target replacement;
 - metres→scene-unit conversion;
-- identity axis mapping;
+- reversible ICRS/ICRF → J2000-ecliptic presentation rotation and sign convention;
 - focus-relative coordinate mapping;
 - physical vs exaggerated radius policy;
 - demo metadata keyed by `ObjectId` without mutating engine objects.
 
-Mocked engine tests verify that body mesh updates consume returned public state snapshots and do not calculate orbital motion locally.
+Mocked engine tests verify that body mesh updates consume returned public state snapshots and do not calculate orbital motion locally. Rendering tests also verify that body meshes, sampled paths, and camera centering use the same transformed presentation coordinates while raw scenario/engine states remain unchanged.
 
 ### Engine/package browser smoke
 

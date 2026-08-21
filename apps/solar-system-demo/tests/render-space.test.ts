@@ -1,22 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { meters, vec3 } from "orbit-engine";
+import { MERCURY_ID, SCENARIO_BODIES } from "../src/scenario/scenario-data.js";
 import {
-  IDENTITY_AXIS_MAPPING,
+  ASTRONOMICAL_UNIT_METERS,
+  J2000_ECLIPTIC_OBLIQUITY_RADIANS,
   MIN_VISIBLE_RADIUS_SCENE_UNITS,
   SCENE_UP_VECTOR,
   focusRelativePosition,
+  icrsToJ2000Ecliptic,
+  j2000EclipticToIcrs,
   metersToSceneUnits,
   positionToSceneUnits,
   radiusToSceneUnits,
 } from "../src/rendering/render-space.js";
 
-test("render space preserves identity axes and uses focus-relative SI conversion", () => {
-  assert.deepEqual(IDENTITY_AXIS_MAPPING, { x: "x", y: "y", z: "z" });
+test("render space uses a reversible J2000-ecliptic presentation transform", () => {
   assert.deepEqual(SCENE_UP_VECTOR, { x: 0, y: 0, z: 1 });
+  assert.ok(J2000_ECLIPTIC_OBLIQUITY_RADIANS > 0);
+
+  const ecliptic = vec3(12, -34, 56);
+  const icrs = j2000EclipticToIcrs(ecliptic);
+  const restored = icrsToJ2000Ecliptic(icrs);
+  assert.ok(Math.abs(restored.x - ecliptic.x) < 1e-12);
+  assert.ok(Math.abs(restored.y - ecliptic.y) < 1e-12);
+  assert.ok(Math.abs(restored.z - ecliptic.z) < 1e-12);
+
+  const onEclipticPlane = j2000EclipticToIcrs(vec3(0, ASTRONOMICAL_UNIT_METERS, 0));
+  const scene = positionToSceneUnits(onEclipticPlane);
+  assert.ok(Math.abs(scene.z) < 1e-12);
+  assert.ok(Math.abs(scene.y - 100) < 1e-12);
+});
+
+test("presentation obliquity matches the committed primary-planet normalization", () => {
+  const mercury = SCENARIO_BODIES.find((body) => body.id === MERCURY_ID)!;
+  assert.ok(Math.abs(mercury.anchor.position.z) > 1e9);
+  const scene = positionToSceneUnits(mercury.anchor.position);
+  assert.ok(Math.abs(scene.z) < 1e-12);
+});
+
+test("render space preserves focus-relative SI conversion before presentation rotation", () => {
   assert.deepEqual(focusRelativePosition(vec3(11, 22, 33), vec3(1, 2, 3)), { x: 10, y: 20, z: 30 });
-  assert.deepEqual(positionToSceneUnits(vec3(149_597_870_700, 0, 0)), { x: 100, y: 0, z: 0 });
-  assert.equal(metersToSceneUnits(149_597_870_700), 100);
+  assert.deepEqual(positionToSceneUnits(vec3(ASTRONOMICAL_UNIT_METERS, 0, 0)), { x: 100, y: 0, z: 0 });
+  assert.equal(metersToSceneUnits(ASTRONOMICAL_UNIT_METERS), 100);
 });
 
 test("radius policy keeps physical and visible presentation values separate", () => {

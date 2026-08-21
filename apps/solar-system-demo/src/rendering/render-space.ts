@@ -1,4 +1,11 @@
 import type { Meters, Vec3 } from "orbit-engine";
+import { icrsToJ2000Ecliptic } from "../coordinate-conventions.js";
+
+export {
+  J2000_ECLIPTIC_OBLIQUITY_RADIANS,
+  icrsToJ2000Ecliptic,
+  j2000EclipticToIcrs,
+} from "../coordinate-conventions.js";
 
 export const ASTRONOMICAL_UNIT_METERS = 149_597_870_700;
 export const SCENE_UNITS_PER_ASTRONOMICAL_UNIT = 100;
@@ -6,12 +13,6 @@ export const METERS_TO_SCENE_UNITS = SCENE_UNITS_PER_ASTRONOMICAL_UNIT / ASTRONO
 export const VISIBLE_RADIUS_MULTIPLIER = 5;
 export const MIN_VISIBLE_RADIUS_SCENE_UNITS = 0.15;
 export const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
-
-export const IDENTITY_AXIS_MAPPING = Object.freeze({
-  x: "x",
-  y: "y",
-  z: "z",
-} as const);
 
 export type RadiusMode = "physical" | "visible";
 
@@ -47,10 +48,11 @@ export function metersToSceneUnits(value: number): number {
 
 export function positionToSceneUnits(position: Vec3<number>, focus: Vec3<number> = { x: 0, y: 0, z: 0 }): RenderVector {
   const relative = focusRelativePosition(position, focus);
+  const presentation = icrsToJ2000Ecliptic(relative);
   return Object.freeze({
-    x: metersToSceneUnits(relative.x),
-    y: metersToSceneUnits(relative.y),
-    z: metersToSceneUnits(relative.z),
+    x: metersToSceneUnits(presentation.x),
+    y: metersToSceneUnits(presentation.y),
+    z: metersToSceneUnits(presentation.z),
   });
 }
 
