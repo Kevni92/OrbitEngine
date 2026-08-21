@@ -10,6 +10,22 @@ test("SimulationClock advances from an exact instant using warp", () => {
   assert.deepEqual(clock.currentInstant(), simulationInstant(11, 500_000_000));
 });
 
+test("high warp keeps representable durations split into seconds and nanoseconds", () => {
+  const clock = new SimulationClock(simulationInstant(10), 2_592_000);
+  clock.play(0);
+  clock.advanceTo(10_000);
+  assert.deepEqual(clock.currentInstant(), simulationInstant(25_920_010));
+});
+
+test("high warp still rejects durations whose scaled seconds are unsafe", () => {
+  const clock = new SimulationClock(undefined, Number.MAX_SAFE_INTEGER);
+  clock.play(0);
+  assert.throws(
+    () => clock.advanceTo(1001),
+    /scaled wall duration exceeds the exact time representation/,
+  );
+});
+
 test("SimulationClock is frame-rate independent and pause freezes time", () => {
   const oneFrame = new SimulationClock();
   oneFrame.play(0);
