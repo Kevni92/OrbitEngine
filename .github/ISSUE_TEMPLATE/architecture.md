@@ -2,7 +2,7 @@
 name: Architecture
 about: Consequential architecture or system-design decision to be executed only in the ChatGPT Architecture Project/session.
 title: "[ARCH] "
-labels: ""
+labels: "architecture"
 assignees: ""
 ---
 

@@ -2,7 +2,7 @@
 name: Spike
 about: Exploratory research, prototype, benchmark, or feasibility investigation before a durable decision is made.
 title: "[SPIKE] "
-labels: ""
+labels: "spike"
 assignees: ""
 ---
 

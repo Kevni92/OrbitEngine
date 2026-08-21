@@ -2,7 +2,7 @@
 name: Implementation
 about: Implementation-ready task with architecture already sufficiently specified for local Codex execution.
 title: "[IMPL] "
-labels: ""
+labels: "implementation"
 assignees: ""
 ---
 
