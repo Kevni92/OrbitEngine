@@ -32,6 +32,14 @@ scenario/game loads objects
 
 Normal game/server execution should not depend on live internet access to JPL/NASA services.
 
+## Time and unit normalization
+
+The canonical runtime conventions are defined in [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md).
+
+Import/build tooling is responsible for converting source units to SI and source epochs/time scales to normalized OrbitEngine `SimulationInstant` values in TDB relative to the J2000 TDB origin. Runtime simulation must not need a live or mutable leap-second table merely to interpret versioned dataset epochs.
+
+The produced dataset must retain source/provenance information sufficient to reproduce time conversion, including the source time scale and the leap-second/time-conversion data version or source where applicable. Rebuilding with changed conversion data is deliberate; runtime instants are not silently reinterpreted.
+
 ## Data categories
 
 Orbit-relevant dataset fields may include:
@@ -43,13 +51,15 @@ Orbit-relevant dataset fields may include:
 - orbital elements where appropriate;
 - rotation period/orientation/frame data;
 - parent/reference relationships;
-- source/provenance/version information.
+- source/provenance/version information, including source unit/time-scale metadata where relevant.
 
 Resource composition, geology, atmosphere as gameplay content, habitability, population, and economy data are outside OrbitEngine unless a physical subset is specifically required by trajectory physics.
 
 ## Accuracy window
 
 The intended simulation use case is approximately ±1000 years around a scenario epoch. We do not need a model optimized for tens of millions of years. Data and propagation choices should be validated against the actual supported time window.
+
+The underlying instant representation has a much larger numerical range; that does not extend the scientific validity of imported data or propagation models automatically.
 
 ## Reference divergence
 

@@ -43,7 +43,9 @@ An object may be attached to another object's frame without the engine understan
 
 ## Precision considerations
 
-Frame design must avoid unnecessary loss of floating-point precision at very different spatial scales. Local calculations should remain local where possible; absolute/root coordinates should be computed for queries and interactions that require them.
+Frame design must avoid unnecessary loss of floating-point precision at very different spatial scales. [12 — Simulation Time, Units, and Numerical Precision](12-simulation-time-units-and-precision.md) establishes IEEE-754 binary64 for continuous coordinates and shows that root-frame spacing grows from roughly 0.03 mm at 1 AU to millimetres across the outer planetary system and centimetres by roughly 1000 AU.
+
+Therefore local calculations must remain local where possible. The later frame architecture must preserve local/reference-frame state and relative-state query paths so close-range operations are not forced to subtract two huge barycentric vectors. Absolute/root coordinates should be computed for queries and interactions that actually require them.
 
 ## API expectations
 
@@ -52,6 +54,7 @@ The public API should eventually support concepts such as:
 - query object state in its native frame;
 - query/transform state into another frame;
 - query absolute/root-frame state at time T;
+- query relative state without unnecessary root-frame subtraction;
 - register local/body-fixed objects;
 - register orbiting/free objects;
 - transform positions and velocities consistently across frame boundaries.
