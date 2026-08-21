@@ -16,6 +16,7 @@ import {
   type PropagationState,
   type ReferenceFrameId,
 } from "orbit-engine";
+import { j2000EclipticToIcrs } from "../coordinate-conventions.js";
 import type {
   CelestialBodyDefinition,
   CelestialCatalogCategory,
@@ -139,10 +140,6 @@ function anchor(
 // The original primary-planet fixture values were authored in the J2000
 // ecliptic plane. Rotate those deterministic fixtures into the canonical
 // ICRS/ICRF-aligned engine axes so they share Earth's JPL reference plane.
-const J2000_ECLIPTIC_OBLIQUITY_RADIANS = 23.43928 * Math.PI / 180;
-const J2000_ECLIPTIC_COSINE = Math.cos(J2000_ECLIPTIC_OBLIQUITY_RADIANS);
-const J2000_ECLIPTIC_SINE = Math.sin(J2000_ECLIPTIC_OBLIQUITY_RADIANS);
-
 function eclipticFixtureAnchor(
   x: number,
   y: number,
@@ -152,13 +149,15 @@ function eclipticFixtureAnchor(
   velocityZ: number,
   frame: ReferenceFrameId,
 ): PropagationState {
+  const position = j2000EclipticToIcrs({ x, y, z });
+  const velocity = j2000EclipticToIcrs({ x: velocityX, y: velocityY, z: velocityZ });
   return anchor(
-    x,
-    J2000_ECLIPTIC_COSINE * y - J2000_ECLIPTIC_SINE * z,
-    J2000_ECLIPTIC_SINE * y + J2000_ECLIPTIC_COSINE * z,
-    velocityX,
-    J2000_ECLIPTIC_COSINE * velocityY - J2000_ECLIPTIC_SINE * velocityZ,
-    J2000_ECLIPTIC_SINE * velocityY + J2000_ECLIPTIC_COSINE * velocityZ,
+    position.x,
+    position.y,
+    position.z,
+    velocity.x,
+    velocity.y,
+    velocity.z,
     frame,
   );
 }
