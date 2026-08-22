@@ -42,6 +42,22 @@ export interface SolarSystemSceneOptions {
   readonly onSelect?: (objectId: ObjectId) => void;
 }
 
+export interface BodyRenderDiagnostics {
+  readonly objectId: ObjectId;
+  readonly representation: RepresentationLevel;
+  readonly submitted: boolean;
+  readonly inFront: boolean;
+  readonly inViewport: boolean;
+  readonly ndcX: number;
+  readonly ndcY: number;
+  readonly ndcZ: number;
+  readonly positionErrorSceneUnits?: number;
+}
+
+function isGlobalContextEntry(entry: RegisteredScenarioBody): boolean {
+  return entry.definition.type === ObjectType.star || entry.definition.type === ObjectType.planet;
+}
+
 /**
  * Presentation-only scene graph. Body positions are always copied from the
  * public engine state snapshots supplied to update(); this class never steps
@@ -185,7 +201,8 @@ export class SolarSystemScene {
       const previous = this.#representations.get(objectId);
       const position = this.#positions.get(objectId);
       if (perspective === undefined || position === undefined) {
-        next.set(objectId, this.#runtimeIds.has(objectId) ? Representation.marker : (previous ?? Representation.hidden));
+        const fallback = this.#runtimeIds.has(objectId) ? Representation.marker : (previous ?? Representation.hidden);
+        next.set(objectId, isGlobalContextEntry(entry) && fallback === Representation.hidden ? Representation.marker : fallback);
         continue;
       }
       const physicalRadius = radiusToSceneUnits({
@@ -211,6 +228,7 @@ export class SolarSystemScene {
         hierarchyEligible,
         selected: objectId === this.#selected || forcedAncestors.has(objectId),
         focused: objectId === this.#focusId,
+        minimumRepresentation: isGlobalContextEntry(entry) ? Representation.marker : undefined,
       }));
     }
 
@@ -232,10 +250,12 @@ export class SolarSystemScene {
     this.#representations.clear();
     for (const [objectId, representation] of next) this.#representations.set(objectId, representation);
 
-    const markerEntries = orderedEntries.filter((entry) => this.#representations.get(entry.definition.id) === Representation.marker);
+    const markerEntries = orderedEntries.filter((entry) =>
+      this.#representations.get(entry.definition.id) === Representation.marker
+      && this.#positions.has(entry.definition.id));
     const markerKey = markerEntries.map((entry) => entry.definition.id).join(",");
     if (markerKey !== this.#markerMembershipKey) {
-      this.#markerLayer.setBodies(markerEntries);
+      this.#markerLayer.setBodies(markerEntries, this.#positions);
       this.#markerMembershipKey = markerKey;
     }
     this.#promotedRuntimeSphereCount = 0;
@@ -283,6 +303,44 @@ export class SolarSystemScene {
 
   representationFor(objectId: ObjectId): RepresentationLevel | undefined {
     return this.#representations.get(objectId);
+  }
+
+  renderDiagnosticsFor(objectId: ObjectId, camera: THREE.Camera): BodyRenderDiagnostics | undefined {
+    const representation = this.#representations.get(objectId);
+    const position = this.#positions.get(objectId);
+    if (representation === undefined || position === undefined) return undefined;
+
+    camera.updateMatrixWorld(true);
+    const cameraSpace = position.clone().applyMatrix4(camera.matrixWorldInverse);
+    const ndc = position.clone().project(camera);
+    const inFront = cameraSpace.z < 0;
+    const inViewport = inFront
+      && ndc.x >= -1 && ndc.x <= 1
+      && ndc.y >= -1 && ndc.y <= 1
+      && ndc.z >= -1 && ndc.z <= 1;
+
+    let submitted = false;
+    let renderPosition: THREE.Vector3 | undefined;
+    if (representation === Representation.marker) {
+      submitted = this.#markerLayer.contains(objectId);
+      renderPosition = this.#markerLayer.positionFor(objectId);
+    } else if (representation === Representation.sphere) {
+      const mesh = this.meshFor(objectId);
+      submitted = mesh?.visible === true;
+      renderPosition = mesh?.position.clone();
+    }
+
+    return Object.freeze({
+      objectId,
+      representation,
+      submitted,
+      inFront,
+      inViewport,
+      ndcX: ndc.x,
+      ndcY: ndc.y,
+      ndcZ: ndc.z,
+      positionErrorSceneUnits: renderPosition?.distanceTo(position),
+    });
   }
 
   setPath(path: OrbitPath): void {
