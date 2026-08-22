@@ -101,6 +101,7 @@ export class OrbitRenderer {
   #visible = true;
   #selected?: ObjectId;
   #positions = new Map<ObjectId, THREE.Vector3>();
+  readonly #representationVisible = new Map<ObjectId, boolean>();
 
   constructor(scene: THREE.Scene) {
     this.#root = new THREE.Group();
@@ -130,6 +131,13 @@ export class OrbitRenderer {
     if (objectId !== undefined) this.#updateSelectedGradient();
     this.#root.userData.selectedObjectId = objectId;
     this.#root.userData.selectedOrbitActive = objectId !== undefined && this.#entries.has(objectId);
+  }
+
+  /** Hide background paths for hidden/marker bodies without changing path ownership. */
+  setBodyRepresentation(objectId: ObjectId, visible: boolean): void {
+    this.#representationVisible.set(objectId, Boolean(visible));
+    const entry = this.#entries.get(objectId);
+    if (entry !== undefined) this.#updateEntryVisibility(entry);
   }
 
   setPath(path: OrbitPath, bodyColor: number): void {
@@ -189,6 +197,7 @@ export class OrbitRenderer {
     entry.baseMaterial.dispose();
     entry.highlightMaterial.dispose();
     this.#entries.delete(objectId);
+    this.#representationVisible.delete(objectId);
     this.#root.userData.orbitCount = this.#entries.size;
     this.#root.userData.selectedOrbitActive = this.#selected !== undefined && this.#entries.has(this.#selected);
   }
@@ -213,13 +222,15 @@ export class OrbitRenderer {
     this.clearPaths();
     this.#root.parent?.remove(this.#root);
     this.#positions.clear();
+    this.#representationVisible.clear();
   }
 
   #updateEntryVisibility(entry: OrbitEntry): void {
     const selected = entry.path.objectId === this.#selected;
     entry.baseMaterial.opacity = selected ? ORBIT_SELECTED_BASE_OPACITY : ORBIT_BASE_OPACITY;
     entry.highlightLine.visible = selected && this.#visible;
-    entry.group.visible = this.#visible;
+    entry.group.visible = this.#visible
+      && ((this.#representationVisible.get(entry.path.objectId) ?? true) || selected);
   }
 
   #updateEntryAnchor(entry: OrbitEntry): void {

@@ -3,7 +3,7 @@ import test from "node:test";
 import * as THREE from "three";
 import { vec3 } from "orbit-engine";
 import { j2000EclipticToIcrs, positionToSceneUnits } from "../src/rendering/render-space.js";
-import { translateViewTo } from "../src/rendering/three-shell.js";
+import { updateCameraClipPlanes, translateViewTo } from "../src/rendering/three-shell.js";
 
 test("view centering translates camera and target together for presentation-space targets", () => {
   const camera = new THREE.PerspectiveCamera();
@@ -18,4 +18,14 @@ test("view centering translates camera and target together for presentation-spac
 
   assert.deepEqual(currentTarget.toArray(), nextTarget.toArray());
   assert.deepEqual(camera.position.toArray(), nextTarget.clone().add(cameraOffset).toArray());
+});
+
+test("camera clipping adapts near plane for compact local-system framing", () => {
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10_000);
+  camera.position.set(0, -0.02, 0.01);
+  const changed = updateCameraClipPlanes(camera, new THREE.Vector3());
+  assert.equal(changed, true);
+  assert.ok(camera.near < 0.01);
+  assert.ok(Number.isFinite(camera.far));
+  assert.ok(camera.near < camera.far / 2);
 });

@@ -23,6 +23,25 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await expect(page.locator("#orbit-status")).toContainText("reference orbits ready");
   await expect(page.locator("#celestial-browser")).toBeVisible();
   await expect(page.locator("#celestial-browser-summary")).toContainText("48 registered bodies");
+  await expect(page.locator("#hierarchy-diagnostics")).toHaveText("Europa representation: hidden");
+
+  await page.locator("#celestial-browser-search").fill("Jupiter");
+  const jupiterResult = page.locator('#celestial-browser-results button[data-object-id="1006"]');
+  await jupiterResult.focus();
+  await jupiterResult.press("Enter");
+  await expect(page.locator("#focus-select")).toHaveValue("1006");
+  await expect(page.locator("#hierarchy-diagnostics")).toHaveText(/Europa representation: (marker|sphere)/);
+
+  for (const [query, id, name] of [["Phobos", "1101", "Phobos"], ["Deimos", "1102", "Deimos"], ["Hygiea", "3003", "Hygiea"]] as const) {
+    await page.locator("#celestial-browser-search").fill(query);
+    const result = page.locator(`#celestial-browser-results button[data-object-id="${id}"]`);
+    await result.focus();
+    await result.press("Enter");
+    await expect(page.locator("#selected-name")).toHaveText(name);
+    await expect(page.locator("#selected-body-section")).toHaveAttribute("data-object-id", id);
+    await expect(page.locator("#selected-body-section")).toHaveAttribute("data-representation", /^(marker|sphere)$/);
+    await expect(page.locator("#selected-body-section")).toHaveAttribute("data-parent-representation", /^(marker|sphere|unknown)$/);
+  }
 
   await page.locator("#celestial-browser-search").fill("Europa");
   await expect(page.locator("#celestial-browser-results")).toContainText("Jupiter › Europa");
@@ -84,24 +103,30 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await expect(page.locator("#radius-mode")).toHaveValue("adaptive");
   await page.selectOption("#radius-mode", "physical");
   await page.selectOption("#radius-mode", "adaptive");
-  await page.locator("#population-count").fill("25");
+  await page.locator("#population-count").fill("300");
   await page.locator("#population-seed").fill("smoke-62");
   await page.click("#add-asteroids");
-  await expect(page.locator("#population-status")).toContainText("25 generated asteroids");
-  await expect(page.locator("#population-diagnostics")).toContainText("Generated asteroids: 25");
-  await expect(page.locator("#population-diagnostics")).toContainText("Current queried objects: 73");
-  await expect(page.locator("#population-diagnostics")).toContainText("Batched markers: 25");
+  await expect(page.locator("#population-status")).toContainText("300 generated asteroids");
+  await expect(page.locator("#population-diagnostics")).toContainText("Generated asteroids: 300");
+  await expect(page.locator("#population-diagnostics")).toContainText("Registered objects: 348");
+  await expect(page.locator("#population-diagnostics")).toContainText("Queried objects: 348");
+  await expect(page.locator("#population-diagnostics")).toContainText("Promoted runtime spheres:");
+  const lodText = await page.locator("#population-diagnostics").textContent();
+  const promotedRuntimeSpheres = Number(lodText?.match(/Promoted runtime spheres: (\d+)/)?.[1] ?? "-1");
+  expect(promotedRuntimeSpheres).toBeGreaterThanOrEqual(0);
+  expect(promotedRuntimeSpheres).toBeLessThanOrEqual(128);
   await page.selectOption("#selected-select", "9000000000000000000");
   await expect(page.locator("#selected-name")).toHaveText("Synthetic Asteroid 1");
+  await expect(page.locator("#selected-body-section")).toHaveAttribute("data-representation", /^(marker|sphere)$/);
   await page.selectOption("#warp-select", "86400");
   await page.click("#play-pause");
   await page.waitForTimeout(120);
   await page.click("#play-pause");
   await page.click("#remove-asteroids");
-  await expect(page.locator("#population-status")).toContainText("Removed 25 generated asteroids");
+  await expect(page.locator("#population-status")).toContainText("Removed 300 generated asteroids");
   await expect(page.locator("#population-diagnostics")).toContainText("Generated asteroids: 0");
-  await expect(page.locator("#population-diagnostics")).toContainText("Current queried objects: 48");
-  await expect(page.locator("#population-diagnostics")).toContainText("Batched markers: 0");
+  await expect(page.locator("#population-diagnostics")).toContainText("Registered objects: 48");
+  await expect(page.locator("#population-diagnostics")).toContainText("Queried objects: 48");
   await expect(page.locator("#selected-name")).toHaveText("Sun");
   await page.selectOption("#selected-select", "1003");
   await expect(page.locator("#selected-name")).toHaveText("Earth");

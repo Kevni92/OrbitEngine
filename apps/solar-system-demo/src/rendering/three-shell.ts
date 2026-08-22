@@ -42,10 +42,13 @@ export function updateCameraClipPlanes(
   );
   if (!Number.isFinite(distance)) return false;
   const far = cameraFarForDistance(distance);
-  const currentNear = Number.isFinite(camera.near) && camera.near > 0
-    ? camera.near
-    : DEFAULT_CAMERA_NEAR;
-  const near = Math.min(Math.max(currentNear, Number.EPSILON), far / 2);
+  // Keep compact local systems visible while retaining a conservative near
+  // plane at Solar-System scale. This is presentation-only clipping policy.
+  const near = Math.min(
+    DEFAULT_CAMERA_NEAR,
+    Math.max(Number.EPSILON, distance / 100),
+    far / 2,
+  );
   if (camera.near === near && camera.far === far) return false;
   camera.near = near;
   camera.far = far;

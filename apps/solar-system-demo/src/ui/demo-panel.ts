@@ -1,5 +1,7 @@
 import { objectId, type ObjectId, type OrbitEngine, type PropagationState, type SimulationInstant } from "orbit-engine";
 import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
+import type { LodDiagnostics } from "../rendering/representation-lod.js";
+import type { RepresentationLevel } from "../rendering/representation-lod.js";
 import {
   formatDistance,
   formatExactInstant,
@@ -58,6 +60,7 @@ export class DemoPanel {
   readonly #removeAsteroids = element<HTMLButtonElement>("remove-asteroids");
   readonly #populationStatus = element<HTMLElement>("population-status");
   readonly #populationDiagnostics = element<HTMLElement>("population-diagnostics");
+  readonly #hierarchyDiagnostics = element<HTMLElement>("hierarchy-diagnostics");
   readonly #focusSelected = element<HTMLButtonElement>("focus-selected");
   readonly #jumpSeconds = element<HTMLInputElement>("jump-seconds");
   readonly #jumpNanoseconds = element<HTMLInputElement>("jump-nanoseconds");
@@ -234,7 +237,13 @@ export class DemoPanel {
     setStatus(this.#orbitStatus, state, message);
   }
 
-  setSelectedBody(entry: RegisteredScenarioBody, state: PropagationState, focusState: PropagationState | undefined): void {
+  setSelectedBody(
+    entry: RegisteredScenarioBody,
+    state: PropagationState,
+    focusState: PropagationState | undefined,
+    representation: RepresentationLevel | undefined = undefined,
+    parentRepresentation: RepresentationLevel | undefined = undefined,
+  ): void {
     const properties = entry.record.properties;
     this.#selectedName.textContent = entry.definition.name;
     this.#selectedType.textContent = formatObjectType(entry.definition.type);
@@ -245,6 +254,8 @@ export class DemoPanel {
     this.#summaryModel.textContent = formatModel(entry.record.motion.modelKind);
     this.#selectedBodySection.dataset.objectId = entry.definition.id;
     this.#selectedBodySection.dataset.hasFocusState = String(focusState !== undefined);
+    this.#selectedBodySection.dataset.representation = representation ?? "unknown";
+    this.#selectedBodySection.dataset.parentRepresentation = parentRepresentation ?? "unknown";
   }
 
   setTechnicalDetails(
@@ -292,12 +303,21 @@ export class DemoPanel {
     setStatus(this.#populationStatus, state, message);
   }
 
-  setPopulationDiagnostics(generatedCount: number, currentObjectCount: number, markerCount: number): void {
+  setPopulationDiagnostics(generatedCount: number, diagnostics: LodDiagnostics): void {
     this.#populationDiagnostics.textContent = [
       `Generated asteroids: ${generatedCount}`,
-      `Current queried objects: ${currentObjectCount}`,
-      `Batched markers: ${markerCount}`,
+      `Registered objects: ${diagnostics.registeredCount}`,
+      `Queried objects: ${diagnostics.queriedCount}`,
+      `Hidden: ${diagnostics.hiddenCount}`,
+      `Markers: ${diagnostics.markerCount}`,
+      `Spheres: ${diagnostics.sphereCount}`,
+      `Promoted runtime spheres: ${diagnostics.promotedRuntimeSphereCount}`,
     ].join(" · ");
+  }
+
+  setHierarchyDiagnostics(representation: RepresentationLevel | undefined): void {
+    const target = representation ?? "pending";
+    this.#hierarchyDiagnostics.textContent = `Europa representation: ${target}`;
   }
 
   #isPressed(button: HTMLButtonElement): boolean {

@@ -1,10 +1,10 @@
 import * as THREE from "three";
 import type { ObjectId, PropagationState } from "orbit-engine";
-import type { RuntimeAsteroidBody } from "../scenario/runtime-asteroid-overlay.js";
+import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
 import { positionToSceneUnits } from "./render-space.js";
 
-/** A single bounded GPU marker layer for the runtime asteroid population. */
-export class RuntimeAsteroidMarkers {
+/** A single bounded GPU marker layer for all unresolved current objects. */
+export class BatchedMarkerLayer {
   readonly #points: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
   #objectIds: readonly ObjectId[] = [];
   #positions = new Float32Array();
@@ -26,7 +26,7 @@ export class RuntimeAsteroidMarkers {
     scene.add(this.#points);
   }
 
-  setBodies(bodies: readonly RuntimeAsteroidBody[]): void {
+  setBodies(bodies: readonly RegisteredScenarioBody[]): void {
     this.#objectIds = Object.freeze(bodies.map((body) => body.definition.id));
     this.#positions = new Float32Array(this.#objectIds.length * 3);
     this.#points.geometry.setAttribute("position", new THREE.BufferAttribute(this.#positions, 3));
@@ -71,3 +71,6 @@ export class RuntimeAsteroidMarkers {
     this.#positions = new Float32Array();
   }
 }
+
+/** @deprecated Kept as a source-compatible alias for the Stage A marker path. */
+export const RuntimeAsteroidMarkers = BatchedMarkerLayer;

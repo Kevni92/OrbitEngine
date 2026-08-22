@@ -17,6 +17,10 @@ import {
   SCENARIO_ROOT_FRAME,
   SUN_CENTERED_FRAME,
   SUN_ID,
+  VESTA_ID,
+  PALLAS_ID,
+  HYGIEA_ID,
+  validateScenarioAnchorSanity,
 } from "../src/scenario/scenario-data.js";
 import { createCelestialCatalog } from "../src/scenario/celestial-catalog.js";
 
@@ -108,4 +112,17 @@ test("Earth and primary-planet fixtures share one heliocentric orbital plane", (
     + earthNormal.z * mercuryNormal.z
   ) / (earthNormalLength * mercuryNormalLength);
   assert.ok(normalAlignment > 0.99999);
+});
+
+test("curated Sun-centered asteroid anchors remain outside the Sun", () => {
+  validateScenarioAnchorSanity();
+  const sun = SCENARIO_BODIES.find((body) => body.id === SUN_ID)!;
+  const sunRadius = sun.properties.physicalRadius!;
+  for (const id of [VESTA_ID, PALLAS_ID, HYGIEA_ID]) {
+    const body = SCENARIO_BODIES.find((candidate) => candidate.id === id)!;
+    assert.ok(
+      Math.hypot(body.anchor.position.x, body.anchor.position.y, body.anchor.position.z) > sunRadius,
+      `${body.name} must begin outside the Sun`,
+    );
+  }
 });

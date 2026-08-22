@@ -24,6 +24,7 @@ import {
   SCENARIO_ROOT_FRAME,
   SCENARIO_VALIDITY,
   SUN_ID,
+  validateScenarioAnchorSanity,
   type ScenarioBodyDefinition,
 } from "./scenario-data.js";
 
@@ -143,6 +144,7 @@ function registerCenteredFrame(engine: OrbitEngine, frame: CelestialCenteredFram
 }
 
 export function loadSolarSystemScenario(engine: OrbitEngine): SolarSystemScenario {
+  validateScenarioAnchorSanity();
   const catalog = createCelestialCatalog(SCENARIO_BODIES, SCENARIO_CENTERED_FRAMES);
   const definitions = catalog.bodyById;
   const registered = new Map<ObjectId, RegisteredScenarioBody>();
