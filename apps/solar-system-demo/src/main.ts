@@ -15,6 +15,7 @@ import { PathCache } from "./simulation/path-sampling.js";
 import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visualization.js";
 import { SimulationClock } from "./simulation/simulation-clock.js";
 import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
+import { CelestialBrowser } from "./ui/celestial-browser.js";
 import { DemoPanel } from "./ui/demo-panel.js";
 import { simulationInstantFromLocalDateTimeInput } from "./ui/civil-time.js";
 import {
@@ -24,6 +25,12 @@ import {
   type ObjectId,
   type OrbitEngine,
 } from "orbit-engine";
+
+interface PendingNavigation {
+  readonly targetId: ObjectId;
+  readonly previousSelectedId: ObjectId;
+  readonly previousFocusId: ObjectId;
+}
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene");
 const clock = new SimulationClock();
@@ -39,16 +46,19 @@ async function bootstrap(): Promise<void> {
   let guides: SceneGuides | undefined;
   let stateSource: SolarSystemStateSource | undefined;
   let coordinator: StateQueryCoordinator<ScenarioStateFrame> | undefined;
+  let browser: CelestialBrowser | undefined;
   let focusId: ObjectId = SUN_ID;
   let selectedId: ObjectId = SUN_ID;
   let recenterAfterState = false;
+  let pendingNavigation: PendingNavigation | undefined;
   let orbitResampleTimer: number | undefined;
   const pathCache = new PathCache(ORBIT_CACHE_ENTRIES);
 
   function centerCameraOnFocus(): void {
-    const focusMesh = scene?.meshFor(focusId);
-    if (focusMesh === undefined || renderShell === undefined) return;
-    renderShell.centerOn(focusMesh.position);
+    const currentScene = scene;
+    const focusMesh = currentScene?.meshFor(focusId);
+    if (focusMesh === undefined || renderShell === undefined || currentScene === undefined) return;
+    renderShell.centerOn(focusMesh.position, currentScene.focusDistanceFor(focusId));
   }
 
   function updateClockUi(): void {
@@ -68,18 +78,20 @@ async function bootstrap(): Promise<void> {
   }
 
   function requestCurrentState(recenter = false, centerImmediately = false): void {
-    if (coordinator === undefined) return;
     if (recenter) {
       recenterAfterState = true;
       if (centerImmediately) centerCameraOnFocus();
     }
-    coordinator.request(clock.currentInstant(), `view-center:${focusId}`);
     panel.setFocusId(focusId);
+    browser?.setViewCenter(focusId);
+    if (coordinator === undefined) return;
+    coordinator.request(clock.currentInstant(), `view-center:${focusId}`);
   }
 
   function setSelectedBody(objectIdValue: ObjectId): void {
     selectedId = objectIdValue;
     panel.setSelectedId(selectedId);
+    browser?.setSelectedBody(selectedId);
     scene?.setSelected(selectedId);
     if (scene?.selectedOrbitActive()) {
       panel.setOrbitStatus("ready", `${scene.pathCount()} reference orbits · selected direction highlighted`);
@@ -88,6 +100,19 @@ async function bootstrap(): Promise<void> {
     }
     const snapshot = coordinator?.latestSnapshot();
     if (snapshot !== undefined) updateSelectedPanel(snapshot.value);
+  }
+
+  function navigateToBody(objectIdValue: ObjectId): void {
+    if (scenario === undefined || !scenario.bodyById.has(objectIdValue)) {
+      panel.setScenarioNote("error", `Cannot navigate to unknown celestial body ${objectIdValue}`);
+      return;
+    }
+    const previousSelectedId = selectedId;
+    const previousFocusId = focusId;
+    setSelectedBody(objectIdValue);
+    focusId = objectIdValue;
+    pendingNavigation = { targetId: objectIdValue, previousSelectedId, previousFocusId };
+    requestCurrentState(true);
   }
 
   function orbitEntries(): readonly SolarSystemScenario["bodies"][number][] {
@@ -172,11 +197,16 @@ async function bootstrap(): Promise<void> {
       }
     },
     onFocusChange: (objectIdValue) => {
+      pendingNavigation = undefined;
       focusId = objectIdValue;
       requestCurrentState(true);
     },
-    onSelectedChange: setSelectedBody,
+    onSelectedChange: (objectIdValue) => {
+      pendingNavigation = undefined;
+      setSelectedBody(objectIdValue);
+    },
     onCenterSelected: () => {
+      pendingNavigation = undefined;
       const focusAlreadySelected = focusId === selectedId;
       focusId = selectedId;
       requestCurrentState(true, focusAlreadySelected);
@@ -248,6 +278,12 @@ async function bootstrap(): Promise<void> {
     scenario = loadSolarSystemScenario(engine);
     if (scenario.rootFrame !== SCENARIO_ROOT_FRAME) throw new Error("Scenario root frame is not the engine root frame");
     if (scenario.catalog.roots.length !== 1) throw new Error("Scenario catalog must have exactly one root");
+    browser = new CelestialBrowser({
+      catalog: scenario.catalog,
+      selectedBodyId: selectedId,
+      viewCenterBodyId: focusId,
+      onNavigateToBody: navigateToBody,
+    });
     panel.populateBodies(scenario);
     panel.setFocusId(focusId);
     panel.setSelectedId(selectedId);
@@ -273,9 +309,23 @@ async function bootstrap(): Promise<void> {
         centerCameraOnFocus();
         recenterAfterState = false;
       }
+      if (pendingNavigation?.targetId === snapshot.value.focusId
+          && snapshot.contextKey === `view-center:${pendingNavigation.targetId}`) {
+        pendingNavigation = undefined;
+      }
       updateSelectedPanel(snapshot.value);
     },
-    onError: (error) => {
+    onError: (error, request) => {
+      const failedNavigation = pendingNavigation;
+      if (failedNavigation !== undefined
+          && request.contextKey === `view-center:${failedNavigation.targetId}`) {
+        pendingNavigation = undefined;
+        recenterAfterState = false;
+        selectedId = failedNavigation.previousSelectedId;
+        focusId = failedNavigation.previousFocusId;
+        setSelectedBody(selectedId);
+        requestCurrentState(true);
+      }
       panel.setScenarioNote("error", `State query failed: ${error instanceof Error ? error.message : String(error)}`);
     },
   });
@@ -333,6 +383,7 @@ async function bootstrap(): Promise<void> {
     guides?.dispose();
     scene?.dispose();
     renderShell?.dispose();
+    browser?.dispose();
   }, { once: true });
 }
 

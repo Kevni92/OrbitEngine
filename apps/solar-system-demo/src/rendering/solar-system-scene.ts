@@ -5,6 +5,10 @@ import type { OrbitPath } from "../simulation/path-sampling.js";
 import { OrbitRenderer } from "./orbit-renderer.js";
 import { positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
 
+export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 1.6;
+export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
+export const FOCUS_DISTANCE_RADIUS_MULTIPLIER = 8;
+
 interface SceneBody {
   readonly objectId: ObjectId;
   readonly physicalRadiusMeters: Meters;
@@ -137,6 +141,17 @@ export class SolarSystemScene {
 
   selectedObjectId(): ObjectId | undefined {
     return this.#selected;
+  }
+
+  /** Presentation-only distance used when a body becomes the camera focus. */
+  focusDistanceFor(objectId: ObjectId): number {
+    const body = this.#bodies.get(objectId);
+    if (body === undefined) throw new RangeError(`Unknown scenario body: ${objectId}`);
+    const visibleRadius = radiusToSceneUnits({ mode: "visible", physicalRadiusMeters: body.physicalRadiusMeters });
+    return Math.min(
+      MAX_FOCUS_DISTANCE_SCENE_UNITS,
+      Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, visibleRadius * FOCUS_DISTANCE_RADIUS_MULTIPLIER),
+    );
   }
 
   dispose(): void {

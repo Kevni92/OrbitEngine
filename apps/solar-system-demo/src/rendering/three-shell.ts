@@ -14,7 +14,7 @@ export interface RenderShell {
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
   readonly controls: OrbitControls;
-  centerOn(target: THREE.Vector3): void;
+  centerOn(target: THREE.Vector3, preferredDistance?: number): void;
   resize(width: number, height: number): void;
   dispose(): void;
 }
@@ -92,8 +92,21 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
     scene.clear();
   }
 
-  function centerOn(target: THREE.Vector3): void {
-    translateViewTo(camera, controls.target, target);
+  function centerOn(target: THREE.Vector3, preferredDistance?: number): void {
+    const nextTarget = target.clone();
+    if (preferredDistance === undefined) {
+      translateViewTo(camera, controls.target, nextTarget);
+    } else {
+      if (!Number.isFinite(preferredDistance) || preferredDistance <= 0) {
+        throw new RangeError("Preferred camera distance must be finite and positive");
+      }
+      const offset = camera.position.clone().sub(controls.target);
+      const direction = offset.lengthSq() > Number.EPSILON
+        ? offset.normalize()
+        : new THREE.Vector3(0, -1, 0.6).normalize();
+      camera.position.copy(nextTarget).addScaledVector(direction, preferredDistance);
+      controls.target.copy(nextTarget);
+    }
     controls.update();
     updateCameraClipPlanes(camera, controls.target);
   }

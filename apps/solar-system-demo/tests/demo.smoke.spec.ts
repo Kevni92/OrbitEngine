@@ -2,7 +2,9 @@ import { test, expect } from "@playwright/test";
 
 test("demo exposes polished guide, orbit, time, and advanced controls", async ({ page }) => {
   const pageErrors: Error[] = [];
+  const requestUrls: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error));
+  page.on("request", (request) => requestUrls.push(request.url()));
   await page.addInitScript(() => {
     const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (callback) => nativeRequestAnimationFrame((timestamp) => {
@@ -19,6 +21,30 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await expect(page.locator("#orbits-toggle")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#axes-toggle")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator("#orbit-status")).toContainText("reference orbits ready");
+  await expect(page.locator("#celestial-browser")).toBeVisible();
+  await expect(page.locator("#celestial-browser-summary")).toContainText("48 registered bodies");
+
+  await page.locator("#celestial-browser-search").fill("Europa");
+  await expect(page.locator("#celestial-browser-results")).toContainText("Jupiter › Europa");
+  const europaResult = page.locator('#celestial-browser-results button[data-object-id="1202"]');
+  await europaResult.focus();
+  await europaResult.press("Enter");
+  await expect(page.locator("#selected-name")).toHaveText("Europa");
+  await expect(page.locator("#focus-select")).toHaveValue("1202");
+  await page.locator("#celestial-browser-clear").click();
+  await expect(page.locator("#celestial-browser-tree")).toBeVisible();
+  await expect(page.locator('#celestial-browser-tree li[data-object-id="1202"]')).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('#celestial-browser-tree li[data-object-id="1202"]')).toBeVisible();
+  const jupiterBranch = page.locator('#celestial-browser-tree li[data-object-id="1006"] > .celestial-tree-row .celestial-branch-toggle');
+  await jupiterBranch.click();
+  await expect(page.locator('#celestial-browser-tree li[data-object-id="1202"]')).not.toBeVisible();
+  await jupiterBranch.click();
+  await expect(page.locator('#celestial-browser-tree li[data-object-id="1202"]')).toBeVisible();
+
+  await page.click("#celestial-browser-toggle");
+  await expect(page.locator("#celestial-browser")).toHaveClass(/is-collapsed/);
+  await page.click("#celestial-browser-toggle");
+  await expect(page.locator("#celestial-browser")).not.toHaveClass(/is-collapsed/);
 
   await page.click("#panel-toggle");
   await expect(page.locator("#demo-panel")).toHaveClass(/is-collapsed/);
@@ -39,6 +65,7 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
 
   await page.selectOption("#selected-select", "1003");
   await expect(page.locator("#selected-name")).toHaveText("Earth");
+  await expect(page.locator('#celestial-browser-tree li[data-object-id="1003"]')).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("#selected-type")).toContainText("Planet");
   await expect(page.locator("#orbit-status")).toContainText("direction highlighted");
   await page.selectOption("#focus-select", "1003");
@@ -72,5 +99,6 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await page.click("#play-pause");
   await expect(page.locator("#simulation-instant")).toContainText("Uhr");
   await expect(page.locator("#rendering-status")).toHaveAttribute("data-state", /^(ready|unsupported)$/);
+  expect(requestUrls.filter((url) => /(nasa|jpl|mpc|horizons)/i.test(url))).toHaveLength(0);
   expect(pageErrors).toHaveLength(0);
 });
