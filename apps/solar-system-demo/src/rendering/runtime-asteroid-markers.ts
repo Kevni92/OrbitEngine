@@ -5,6 +5,10 @@ import { MARKER_RENDER_ORDER } from "./presentation-order.js";
 import { positionToSceneUnits } from "./render-space.js";
 
 export const MARKER_PIXEL_SIZE = 7;
+export const MARKER_PICK_TOLERANCE_PIXELS = 2;
+export const MARKER_PICK_RADIUS_PIXELS = MARKER_PIXEL_SIZE / 2 + MARKER_PICK_TOLERANCE_PIXELS;
+
+const PICK_DEPTH_EPSILON = 1e-7;
 
 const MARKER_VERTEX_SHADER = `
 uniform float uSize;
@@ -28,13 +32,38 @@ void main() {
 }
 `;
 
+interface MarkerPickCandidate {
+  readonly objectId: ObjectId;
+  readonly ndcDepth: number;
+  readonly screenDistancePixels: number;
+}
+
+function fallbackViewport(camera: THREE.Camera): { width: number; height: number } {
+  const browserHeight = typeof window === "undefined" ? undefined : window.innerHeight;
+  const height = browserHeight !== undefined && Number.isFinite(browserHeight) && browserHeight > 0
+    ? browserHeight
+    : 1_000;
+  const aspect = camera instanceof THREE.PerspectiveCamera && Number.isFinite(camera.aspect) && camera.aspect > 0
+    ? camera.aspect
+    : 1;
+  return { width: height * aspect, height };
+}
+
+function isBodyMesh(object: THREE.Object3D): object is THREE.Mesh {
+  return object instanceof THREE.Mesh
+    && object.visible
+    && typeof object.userData.objectId === "string";
+}
+
 /** A single bounded GPU marker layer for all unresolved current objects. */
 export class BatchedMarkerLayer {
+  readonly #scene: THREE.Scene;
   readonly #points: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
   #objectIds: readonly ObjectId[] = [];
   #positions = new Float32Array();
 
   constructor(scene: THREE.Scene) {
+    this.#scene = scene;
     const geometry = new THREE.BufferGeometry();
     const material = new THREE.ShaderMaterial({
       uniforms: {
@@ -101,14 +130,76 @@ export class BatchedMarkerLayer {
     return new THREE.Vector3(positions.getX(index), positions.getY(index), positions.getZ(index));
   }
 
-  pick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera): ObjectId | undefined {
+  /**
+   * Marker hit testing is screen-space based because the rendered marker is a
+   * fixed-size point sprite. A world-space Raycaster Points threshold makes
+   * the invisible hit area explode in compact local systems.
+   */
+  pick(
+    normalizedDeviceX: number,
+    normalizedDeviceY: number,
+    camera: THREE.Camera,
+    viewportWidthPixels?: number,
+    viewportHeightPixels?: number,
+  ): ObjectId | undefined {
     if (!this.#points.visible || this.#objectIds.length === 0) return undefined;
+
+    const fallback = fallbackViewport(camera);
+    const viewportWidth = viewportWidthPixels ?? fallback.width;
+    const viewportHeight = viewportHeightPixels ?? fallback.height;
+    if (!Number.isFinite(viewportWidth) || viewportWidth <= 0
+        || !Number.isFinite(viewportHeight) || viewportHeight <= 0) {
+      throw new RangeError("Marker picking viewport must be finite and positive");
+    }
+
+    camera.updateMatrixWorld(true);
+    const positions = this.#points.geometry.getAttribute("position");
+    if (!(positions instanceof THREE.BufferAttribute)) return undefined;
+
+    const candidates: MarkerPickCandidate[] = [];
+    this.#objectIds.forEach((objectId, index) => {
+      const position = new THREE.Vector3(positions.getX(index), positions.getY(index), positions.getZ(index));
+      const cameraSpace = position.clone().applyMatrix4(camera.matrixWorldInverse);
+      if (!Number.isFinite(cameraSpace.z) || cameraSpace.z >= 0) return;
+
+      const ndc = position.clone().project(camera);
+      if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y) || !Number.isFinite(ndc.z)) return;
+      if (ndc.x < -1 || ndc.x > 1 || ndc.y < -1 || ndc.y > 1 || ndc.z < -1 || ndc.z > 1) return;
+
+      const deltaPixelsX = (ndc.x - normalizedDeviceX) * viewportWidth / 2;
+      const deltaPixelsY = (ndc.y - normalizedDeviceY) * viewportHeight / 2;
+      const screenDistancePixels = Math.hypot(deltaPixelsX, deltaPixelsY);
+      if (screenDistancePixels > MARKER_PICK_RADIUS_PIXELS) return;
+
+      candidates.push({ objectId, ndcDepth: ndc.z, screenDistancePixels });
+    });
+
+    if (candidates.length === 0) return undefined;
+    candidates.sort((left, right) => {
+      const depthDelta = left.ndcDepth - right.ndcDepth;
+      if (Math.abs(depthDelta) > PICK_DEPTH_EPSILON) return depthDelta;
+      const screenDelta = left.screenDistancePixels - right.screenDistancePixels;
+      if (Math.abs(screenDelta) > Number.EPSILON) return screenDelta;
+      return BigInt(left.objectId) < BigInt(right.objectId) ? -1 : 1;
+    });
+
+    // Marker points use normal depth testing. If an opaque body sphere is in
+    // front at the click location, the marker is not visually present there
+    // and must not steal the click before SolarSystemScene raycasts spheres.
+    const bodyMeshes: THREE.Mesh[] = [];
+    this.#scene.traverse((object) => {
+      if (isBodyMesh(object)) bodyMeshes.push(object);
+    });
+    if (bodyMeshes.length === 0) return candidates[0]!.objectId;
+
     const raycaster = new THREE.Raycaster();
-    raycaster.params.Points = { threshold: 0.75 };
     raycaster.setFromCamera(new THREE.Vector2(normalizedDeviceX, normalizedDeviceY), camera);
-    const hit = raycaster.intersectObject(this.#points, false)[0];
-    const index = hit?.index;
-    return index === undefined ? undefined : this.#objectIds[index];
+    const sphereHit = raycaster.intersectObjects(bodyMeshes, false)[0];
+    if (sphereHit === undefined) return candidates[0]!.objectId;
+    const sphereDepth = sphereHit.point.clone().project(camera).z;
+
+    const visibleMarker = candidates.find((candidate) => candidate.ndcDepth <= sphereDepth + PICK_DEPTH_EPSILON);
+    return visibleMarker?.objectId;
   }
 
   count(): number {
