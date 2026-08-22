@@ -87,6 +87,22 @@
             </label>
             <button class="secondary-button" id="focus-selected" type="button" disabled>Center view on selected</button>
             <p class="field-help">Centers the visualization without changing OrbitEngine physics.</p>
+            <div class="scene-context" id="scene-context" data-context-kind="overview" aria-live="polite">
+              <div class="scene-context-heading">
+                <p class="section-kicker">Scene context</p>
+                <span class="context-badge" id="scene-context-kind">Overview</span>
+              </div>
+              <strong id="scene-context-title">Solar-System overview</strong>
+              <p id="scene-context-detail">Sun-centered overview · Selected: Sun · View center: Sun</p>
+            </div>
+            <details class="representation-help" id="representation-help">
+              <summary>How body visibility works</summary>
+              <ul>
+                <li><strong>Sphere</strong> — locally resolved body.</li>
+                <li><strong>Marker</strong> — visible context at small projected size.</li>
+                <li><strong>Hidden</strong> — subordinate detail omitted until its local system is resolved; it remains registered in OrbitEngine.</li>
+              </ul>
+            </details>
           </section>
 
           <section class="panel-section" id="view-section" tabindex="-1" aria-labelledby="view-heading">

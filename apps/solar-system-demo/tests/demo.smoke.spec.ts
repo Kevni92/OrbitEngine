@@ -24,24 +24,37 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await expect(page.locator("#celestial-browser")).toBeVisible();
   await expect(page.locator("#celestial-browser-summary")).toContainText("48 registered bodies");
   await expect(page.locator("#hierarchy-diagnostics")).toHaveText("Europa representation: hidden");
+  await expect(page.locator("#scene-context-title")).toHaveText("Solar-System overview");
+  await expect(page.locator("#scene-context-detail")).toContainText("Sun-centered overview");
 
   await page.locator("#celestial-browser-search").fill("Jupiter");
   const jupiterResult = page.locator('#celestial-browser-results button[data-object-id="1006"]');
   await jupiterResult.focus();
   await jupiterResult.press("Enter");
   await expect(page.locator("#focus-select")).toHaveValue("1006");
+  await expect(page.locator("#scene-context-title")).toHaveText("Local system: Jupiter");
+  await expect(page.locator("#scene-context-detail")).toContainText("Focus: Jupiter");
   await expect(page.locator("#hierarchy-diagnostics")).toHaveText(/Europa representation: (marker|sphere)/);
 
-  for (const [query, id, name] of [["Phobos", "1101", "Phobos"], ["Deimos", "1102", "Deimos"], ["Hygiea", "3003", "Hygiea"]] as const) {
+  for (const [query, id, name] of [["Phobos", "1101", "Phobos"], ["Deimos", "1102", "Deimos"]] as const) {
     await page.locator("#celestial-browser-search").fill(query);
     const result = page.locator(`#celestial-browser-results button[data-object-id="${id}"]`);
     await result.focus();
     await result.press("Enter");
     await expect(page.locator("#selected-name")).toHaveText(name);
+    await expect(page.locator("#scene-context-title")).toHaveText("Local system: Mars");
+    await expect(page.locator("#scene-context-detail")).toContainText(`Focus: ${name}`);
     await expect(page.locator("#selected-body-section")).toHaveAttribute("data-object-id", id);
     await expect(page.locator("#selected-body-section")).toHaveAttribute("data-representation", /^(marker|sphere)$/);
     await expect(page.locator("#selected-body-section")).toHaveAttribute("data-parent-representation", /^(marker|sphere|unknown)$/);
   }
+
+  await page.locator("#celestial-browser-search").fill("Hygiea");
+  const hygieaResult = page.locator('#celestial-browser-results button[data-object-id="3003"]');
+  await hygieaResult.focus();
+  await hygieaResult.press("Enter");
+  await expect(page.locator("#selected-name")).toHaveText("Hygiea");
+  await expect(page.locator("#scene-context-title")).toHaveText("Solar-System overview");
 
   await page.locator("#celestial-browser-search").fill("Europa");
   await expect(page.locator("#celestial-browser-results")).toContainText("Jupiter › Europa");
@@ -50,6 +63,8 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await europaResult.press("Enter");
   await expect(page.locator("#selected-name")).toHaveText("Europa");
   await expect(page.locator("#focus-select")).toHaveValue("1202");
+  await expect(page.locator("#scene-context-title")).toHaveText("Local system: Jupiter");
+  await expect(page.locator("#scene-context-detail")).toContainText("Focus: Europa");
   await page.locator("#celestial-browser-clear").click();
   await expect(page.locator("#celestial-browser-tree")).toBeVisible();
   await expect(page.locator('#celestial-browser-tree li[data-object-id="1202"]')).toHaveAttribute("aria-selected", "true");
@@ -99,6 +114,22 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await expect(page.locator("#selected-name")).toHaveText("Apophis");
   await page.selectOption("#selected-select", "1003");
   await expect(page.locator("#selected-name")).toHaveText("Earth");
+
+  await page.locator("#celestial-browser-search").fill("Moon");
+  const moonResult = page.locator('#celestial-browser-results button[data-object-id="1004"]');
+  await moonResult.focus();
+  await moonResult.press("Enter");
+  await expect(page.locator("#selected-name")).toHaveText("Moon");
+  await expect(page.locator("#scene-context-title")).toHaveText("Local system: Earth");
+  await expect(page.locator("#scene-context-detail")).toContainText("Focus: Moon");
+  await page.locator("#celestial-browser-clear").click();
+
+  await page.locator("#representation-help summary").focus();
+  await page.locator("#representation-help summary").press("Enter");
+  await expect(page.locator("#representation-help")).toHaveAttribute("open", "");
+  await expect(page.locator("#representation-help")).toContainText("Sphere");
+  await expect(page.locator("#representation-help")).toContainText("Marker");
+  await expect(page.locator("#representation-help")).toContainText("Hidden");
 
   await expect(page.locator("#radius-mode")).toHaveValue("adaptive");
   await page.selectOption("#radius-mode", "physical");
