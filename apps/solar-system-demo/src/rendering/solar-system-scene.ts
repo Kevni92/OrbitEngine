@@ -591,7 +591,11 @@ export class SolarSystemScene {
 
   #updateSelectionHalo(camera: THREE.Camera | undefined, viewportHeightPixels?: number): void {
     const selected = this.#selected;
-    const position = selected === undefined ? undefined : this.#positions.get(selected);
+    if (selected === undefined) {
+      this.#selectionHalo.hide();
+      return;
+    }
+    const position = this.#positions.get(selected);
     if (position === undefined) {
       this.#selectionHalo.hide();
       return;
