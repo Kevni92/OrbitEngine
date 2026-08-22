@@ -13,18 +13,27 @@ import {
 } from "./formatters.js";
 import { formatLocalDateTimeInput } from "./civil-time.js";
 
+export interface RuntimeDemoStats {
+  readonly generatedAsteroids: number;
+  readonly totalObjects: number;
+  readonly markerCount: number;
+  readonly queryDurationMs?: number;
+}
+
 export interface DemoPanelOptions {
   readonly onPlayPause?: () => void;
   readonly onWarpChange?: (warpFactor: number) => void;
   readonly onFocusChange?: (objectId: ObjectId) => void;
   readonly onSelectedChange?: (objectId: ObjectId) => void;
   readonly onCenterSelected?: () => void;
-  readonly onRadiusModeChange?: (mode: "visible" | "physical") => void;
+  readonly onRadiusModeChange?: (mode: "adaptive" | "physical") => void;
   readonly onGridChange?: (visible: boolean) => void;
   readonly onOrbitsChange?: (visible: boolean) => void;
   readonly onAxesChange?: (visible: boolean) => void;
   readonly onExactJump?: (seconds: number, nanoseconds: number) => void;
   readonly onLocalDateTimeJump?: (value: string) => void;
+  readonly onAddAsteroids?: (count: number, seed: number) => void;
+  readonly onRemoveAsteroids?: () => void;
 }
 
 function element<T extends HTMLElement>(id: string): T {
@@ -58,6 +67,15 @@ export class DemoPanel {
   readonly #localDateTime = element<HTMLInputElement>("jump-local-datetime");
   readonly #localDateTimeJump = element<HTMLButtonElement>("jump-local-time");
   readonly #localDateTimeError = element<HTMLElement>("local-jump-error");
+  readonly #asteroidCount = element<HTMLSelectElement>("asteroid-count");
+  readonly #asteroidSeed = element<HTMLInputElement>("asteroid-seed");
+  readonly #addAsteroids = element<HTMLButtonElement>("add-asteroids");
+  readonly #removeAsteroids = element<HTMLButtonElement>("remove-asteroids");
+  readonly #asteroidStatus = element<HTMLElement>("asteroid-status");
+  readonly #diagnosticGenerated = element<HTMLElement>("diagnostic-generated");
+  readonly #diagnosticTotal = element<HTMLElement>("diagnostic-total");
+  readonly #diagnosticMarkers = element<HTMLElement>("diagnostic-markers");
+  readonly #diagnosticQueryDuration = element<HTMLElement>("diagnostic-query-duration");
   #localDateTimeDraft = false;
   readonly #selectedName = element<HTMLElement>("selected-name");
   readonly #selectedType = element<HTMLElement>("selected-type");
@@ -89,7 +107,7 @@ export class DemoPanel {
     this.#selectedSelect.addEventListener("change", () => this.#options.onSelectedChange?.(this.selectedId()));
     this.#focusSelected.addEventListener("click", () => this.#options.onCenterSelected?.());
     this.#radiusMode.addEventListener("change", () => {
-      const value = this.#radiusMode.value === "physical" ? "physical" : "visible";
+      const value = this.#radiusMode.value === "physical" ? "physical" : "adaptive";
       this.#options.onRadiusModeChange?.(value);
     });
     this.#gridToggle.addEventListener("click", () => {
@@ -118,6 +136,12 @@ export class DemoPanel {
     this.#localDateTime.addEventListener("input", () => {
       this.#localDateTimeDraft = true;
     });
+    this.#addAsteroids.addEventListener("click", () => {
+      const count = Number(this.#asteroidCount.value);
+      const seed = Number(this.#asteroidSeed.value);
+      this.#options.onAddAsteroids?.(count, seed);
+    });
+    this.#removeAsteroids.addEventListener("click", () => this.#options.onRemoveAsteroids?.());
     this.#panelToggle.addEventListener("click", () => {
       const collapsed = this.#panel.classList.toggle("is-collapsed");
       this.#panelToggle.setAttribute("aria-expanded", String(!collapsed));
@@ -166,6 +190,10 @@ export class DemoPanel {
     this.#jumpTime.disabled = !ready;
     this.#localDateTime.disabled = !ready;
     this.#localDateTimeJump.disabled = !ready;
+    this.#asteroidCount.disabled = !ready;
+    this.#asteroidSeed.disabled = !ready;
+    this.#addAsteroids.disabled = !ready;
+    this.#removeAsteroids.disabled = !ready;
   }
 
   setSimulationTime(instant: SimulationInstant, playing: boolean): void {
@@ -216,6 +244,19 @@ export class DemoPanel {
 
   setOrbitStatus(state: string, message: string): void {
     setStatus(this.#orbitStatus, state, message);
+  }
+
+  setAsteroidStatus(state: string, message: string): void {
+    setStatus(this.#asteroidStatus, state, message);
+  }
+
+  setRuntimeStats(stats: RuntimeDemoStats): void {
+    this.#diagnosticGenerated.textContent = String(stats.generatedAsteroids);
+    this.#diagnosticTotal.textContent = String(stats.totalObjects);
+    this.#diagnosticMarkers.textContent = String(stats.markerCount);
+    this.#diagnosticQueryDuration.textContent = stats.queryDurationMs === undefined
+      ? "—"
+      : `${stats.queryDurationMs.toFixed(2)} ms`;
   }
 
   setSelectedBody(entry: SolarSystemScenario["bodies"][number], state: PropagationState, focusState: PropagationState | undefined): void {
