@@ -214,6 +214,10 @@ export class OrbitRenderer {
     return this.#entries.has(objectId);
   }
 
+  isPathVisible(objectId: ObjectId): boolean {
+    return this.#entries.get(objectId)?.group.visible === true && this.#root.visible;
+  }
+
   phaseIndexFor(objectId: ObjectId): number | undefined {
     return this.#entries.get(objectId)?.phaseIndex;
   }

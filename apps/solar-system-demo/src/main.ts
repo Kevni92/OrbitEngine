@@ -40,6 +40,7 @@ interface BrowserRenderBodyDiagnostics {
   readonly type: string;
   readonly representation: string;
   readonly submitted: boolean;
+  readonly orbitVisible: boolean;
   readonly inFront: boolean;
   readonly inViewport: boolean;
   readonly positionErrorSceneUnits?: number;
@@ -425,6 +426,7 @@ async function bootstrap(): Promise<void> {
           type: entry.definition.type,
           representation: diagnostics?.representation ?? "pending",
           submitted: diagnostics?.submitted ?? false,
+          orbitVisible: diagnostics?.orbitVisible ?? false,
           inFront: diagnostics?.inFront ?? false,
           inViewport: diagnostics?.inViewport ?? false,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
