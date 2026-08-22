@@ -97,7 +97,7 @@ async function analyzeImage(
       [4, canvas.height - 5],
       [canvas.width - 5, canvas.height - 5],
     ] as const;
-    const background = [0, 0, 0];
+    const background: [number, number, number] = [0, 0, 0];
     for (const [x, y] of cornerSamples) {
       const offset = (y * canvas.width + x) * 4;
       background[0] += pixels[offset] ?? 0;
@@ -142,8 +142,8 @@ async function analyzeImage(
     const diskRadius = bodyRadius * 0.55;
     const annulusInner = bodyRadius + 0.75;
     const annulusOuter = bodyRadius + 6;
-    const disk = [0, 0, 0];
-    const annulus = [0, 0, 0];
+    const disk: [number, number, number] = [0, 0, 0];
+    const annulus: [number, number, number] = [0, 0, 0];
     let diskCount = 0;
     let annulusCount = 0;
     const minX = Math.max(0, Math.floor(centerX - annulusOuter - 2));
@@ -168,11 +168,11 @@ async function analyzeImage(
       }
     }
     if (diskCount === 0 || annulusCount === 0) throw new Error("Insufficient screenshot samples");
-    const diskMean = disk.map((value) => value / diskCount) as [number, number, number];
-    const annulusMean = annulus.map((value) => value / annulusCount) as [number, number, number];
-    const luminance = (rgb: readonly number[]): number => rgb[0]! * 0.2126 + rgb[1]! * 0.7152 + rgb[2]! * 0.0722;
+    const diskMean: [number, number, number] = [disk[0] / diskCount, disk[1] / diskCount, disk[2] / diskCount];
+    const annulusMean: [number, number, number] = [annulus[0] / annulusCount, annulus[1] / annulusCount, annulus[2] / annulusCount];
+    const luminance = (rgb: readonly [number, number, number]): number => rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
     return {
-      background: background as [number, number, number],
+      background,
       center: [centerX, centerY] as [number, number],
       disk: diskMean,
       diskLuminance: luminance(diskMean),
