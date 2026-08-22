@@ -129,6 +129,13 @@
                 <option value="physical">True physical scale</option>
               </select>
             </label>
+            <label class="field" for="lighting-mode">Lighting mode
+              <select id="lighting-mode" disabled>
+                <option value="physical">Physical · stellar illumination only</option>
+                <option value="enhanced">Enhanced · artificial inspection fill</option>
+              </select>
+            </label>
+            <p class="field-help lighting-mode-note" id="lighting-mode-note" data-mode="physical">Physical · stellar illumination only · night sides may be dark</p>
             <details class="orbit-guide-legend" id="orbit-guide-legend">
               <summary>Orbit guide key</summary>
               <ul>
@@ -210,6 +217,7 @@
                   <div><dt>View origin</dt><dd id="focus-context">Sun · render origin</dd></div>
                   <div><dt>Engine</dt><dd id="engine-details">Waiting for WASM…</dd></div>
                   <div><dt>Renderer</dt><dd id="rendering-details">Waiting for WebGL…</dd></div>
+                  <div><dt>Lighting mode</dt><dd id="lighting-mode-diagnostics">Physical · stellar illumination only · night sides may be dark</dd></div>
                   <div><dt>Jupiter local system</dt><dd id="hierarchy-diagnostics">Europa representation: pending</dd></div>
                   <div><dt>Generated population diagnostics</dt><dd id="population-diagnostics">Generated asteroids: 0 · Registered objects: 48 · Queried objects: 0 · Hidden: 0 · Markers: 0 · Spheres: 48 · Promoted runtime spheres: 0</dd></div>
                 </dl>

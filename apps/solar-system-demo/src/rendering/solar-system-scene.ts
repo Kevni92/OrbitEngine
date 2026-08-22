@@ -35,11 +35,19 @@ import { METERS_PER_SCENE_UNIT, positionToSceneUnits, radiusToSceneUnits, type R
 import { MARKER_PIXEL_SIZE, BatchedMarkerLayer } from "./runtime-asteroid-markers.js";
 import { SelectionHalo } from "./selection-halo.js";
 import { AtmosphereShellManager, type AtmosphereDiagnostics } from "./atmosphere-rendering.js";
+import {
+  inspectionFillContribution,
+  lightingModeDiagnostics,
+  parseLightingMode,
+  type LightingMode,
+  type LightingModeDiagnostics,
+} from "./lighting-mode.js";
 
 export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 0.000001;
 export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
 export const FOCUS_DISTANCE_RADIUS_MULTIPLIER = 24;
 export const MAX_PROMOTED_RUNTIME_SPHERES = 128;
+export const INSPECTION_FILL_LAYER = 1;
 
 interface SceneBody {
   readonly objectId: ObjectId;
@@ -66,6 +74,9 @@ export interface BodyRenderDiagnostics {
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
   readonly physicalIrradianceWattsPerSquareMeter?: number;
+  readonly lightingMode: LightingMode;
+  readonly inspectionFillApplied: boolean;
+  readonly inspectionFillContribution: number;
 }
 
 function isGlobalContextEntry(entry: RegisteredScenarioBody): boolean {
@@ -96,7 +107,10 @@ export class SolarSystemScene {
   readonly #onSelect?: (objectId: ObjectId) => void;
   readonly #selectionHalo: SelectionHalo;
   readonly #atmosphereShells: AtmosphereShellManager;
+  readonly #inspectionFillLight: THREE.PointLight;
+  readonly #inspectionFillTargets = new Set<ObjectId>();
   #radiusMode: RadiusMode = "adaptive";
+  #lightingMode: LightingMode = "physical";
   #selected?: ObjectId;
   #focusId?: ObjectId;
   #queriedCount = 0;
@@ -112,6 +126,11 @@ export class SolarSystemScene {
     this.#runtimeSphereMaterial = new THREE.MeshLambertMaterial({ color: new THREE.Color(0.32, 0.32, 0.32) });
     this.#selectionHalo = new SelectionHalo(scene);
     this.#atmosphereShells = new AtmosphereShellManager(scene);
+    this.#inspectionFillLight = new THREE.PointLight(new THREE.Color(1, 1, 1), 0, 0, 0);
+    this.#inspectionFillLight.name = "Enhanced inspection fill (presentation-only)";
+    this.#inspectionFillLight.layers.set(INSPECTION_FILL_LAYER);
+    this.#inspectionFillLight.visible = false;
+    this.#scene.add(this.#inspectionFillLight);
 
     for (const entry of scenario.bodies) {
       this.#committedEntries.set(entry.definition.id, entry);
@@ -128,6 +147,16 @@ export class SolarSystemScene {
 
   radiusMode(): RadiusMode {
     return this.#radiusMode;
+  }
+
+  setLightingMode(mode: LightingMode): void {
+    this.#lightingMode = parseLightingMode(mode);
+    this.#inspectionFillLight.visible = false;
+    this.#inspectionFillLight.intensity = inspectionFillContribution(this.#lightingMode);
+  }
+
+  lightingMode(): LightingMode {
+    return this.#lightingMode;
   }
 
   setFocusId(objectId: ObjectId | undefined): void {
@@ -212,6 +241,7 @@ export class SolarSystemScene {
 
   /** Re-evaluates persistent LOD state for camera, hierarchy, focus, selection and viewport changes. */
   updatePresentation(camera: THREE.Camera, viewportHeightPixels: number): void {
+    camera.layers.enable(INSPECTION_FILL_LAYER);
     const perspective = camera instanceof THREE.PerspectiveCamera ? camera : undefined;
     const orderedEntries = [...this.#currentEntries.values()].sort((left, right) => this.#depth(left) - this.#depth(right));
     const forcedAncestors = this.#ancestorIds(new Set([this.#selected, this.#focusId].filter((id): id is ObjectId => id !== undefined)));
@@ -321,6 +351,7 @@ export class SolarSystemScene {
       new Set([this.#selected, this.#focusId].filter((id): id is ObjectId => id !== undefined)),
       this.#illuminationByBody,
     );
+    this.#updateInspectionFill(camera);
     this.#updateSelectionHalo(camera, viewportHeightPixels);
   }
 
@@ -344,6 +375,10 @@ export class SolarSystemScene {
 
   illuminationFor(objectId: ObjectId): StellarIlluminationSet | undefined {
     return this.#illuminationByBody.get(objectId);
+  }
+
+  lightingDiagnostics(): LightingModeDiagnostics {
+    return lightingModeDiagnostics(this.#lightingMode, this.#inspectionFillTargets);
   }
 
   representationFor(objectId: ObjectId): RepresentationLevel | undefined {
@@ -393,6 +428,11 @@ export class SolarSystemScene {
           : deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor).source;
       })(),
       physicalIrradianceWattsPerSquareMeter: this.#illuminationByBody.get(objectId)?.totalIrradianceWattsPerSquareMeter,
+      lightingMode: this.#lightingMode,
+      inspectionFillApplied: this.#inspectionFillTargets.has(objectId),
+      inspectionFillContribution: this.#inspectionFillTargets.has(objectId)
+        ? inspectionFillContribution(this.#lightingMode)
+        : 0,
     });
   }
 
@@ -521,6 +561,8 @@ export class SolarSystemScene {
       this.#scene.remove(light);
     }
     this.#stellarLights.clear();
+    this.#scene.remove(this.#inspectionFillLight);
+    this.#inspectionFillTargets.clear();
     this.#illuminationByBody.clear();
     this.#runtimeSphereGeometry.dispose();
     this.#runtimeSphereMaterial.dispose();
@@ -572,6 +614,28 @@ export class SolarSystemScene {
       mesh,
     });
     mesh.scale.setScalar(radiusToSceneUnits({ mode: "physical", physicalRadiusMeters }));
+  }
+
+  #updateInspectionFill(camera: THREE.Camera): void {
+    for (const body of this.#bodies.values()) body.mesh.layers.disable(INSPECTION_FILL_LAYER);
+    for (const mesh of this.#runtimeSphereMeshes.values()) mesh.layers.disable(INSPECTION_FILL_LAYER);
+    this.#inspectionFillTargets.clear();
+    if (this.#lightingMode !== "enhanced") {
+      this.#inspectionFillLight.visible = false;
+      this.#inspectionFillLight.intensity = 0;
+      return;
+    }
+
+    for (const objectId of new Set([this.#selected, this.#focusId].filter((id): id is ObjectId => id !== undefined))) {
+      if (this.#representations.get(objectId) !== Representation.sphere) continue;
+      const mesh = this.meshFor(objectId);
+      if (mesh === undefined || !mesh.visible) continue;
+      mesh.layers.enable(INSPECTION_FILL_LAYER);
+      this.#inspectionFillTargets.add(objectId);
+    }
+    this.#inspectionFillLight.position.copy(camera.position);
+    this.#inspectionFillLight.intensity = inspectionFillContribution(this.#lightingMode);
+    this.#inspectionFillLight.visible = this.#inspectionFillTargets.size > 0;
   }
 
   #ensureRuntimeSphere(objectId: ObjectId): THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial> {

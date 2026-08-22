@@ -2,6 +2,7 @@ import { objectId, type ObjectId, type OrbitEngine, type PropagationState, type 
 import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
 import type { LodDiagnostics } from "../rendering/representation-lod.js";
 import type { RepresentationLevel } from "../rendering/representation-lod.js";
+import type { LightingMode, LightingModeDiagnostics } from "../rendering/lighting-mode.js";
 import {
   formatDistance,
   formatExactInstant,
@@ -22,6 +23,7 @@ export interface DemoPanelOptions {
   readonly onSelectedChange?: (objectId: ObjectId) => void;
   readonly onCenterSelected?: () => void;
   readonly onRadiusModeChange?: (mode: "adaptive" | "physical") => void;
+  readonly onLightingModeChange?: (mode: LightingMode) => void;
   readonly onAddAsteroids?: (count: number, seed: string) => void;
   readonly onRemoveAsteroids?: () => void;
   readonly onGridChange?: (visible: boolean) => void;
@@ -61,6 +63,7 @@ export class DemoPanel {
   readonly #focusSelect = element<HTMLSelectElement>("focus-select");
   readonly #selectedSelect = element<HTMLSelectElement>("selected-select");
   readonly #radiusMode = element<HTMLSelectElement>("radius-mode");
+  readonly #lightingMode = element<HTMLSelectElement>("lighting-mode");
   readonly #populationCount = element<HTMLInputElement>("population-count");
   readonly #populationSeed = element<HTMLInputElement>("population-seed");
   readonly #addAsteroids = element<HTMLButtonElement>("add-asteroids");
@@ -101,6 +104,8 @@ export class DemoPanel {
   readonly #gridState = element<HTMLElement>("grid-state");
   readonly #orbitsState = element<HTMLElement>("orbits-state");
   readonly #axesState = element<HTMLElement>("axes-state");
+  readonly #lightingModeNote = element<HTMLElement>("lighting-mode-note");
+  readonly #lightingModeDiagnostics = element<HTMLElement>("lighting-mode-diagnostics");
   readonly #orbitGuideLegend = element<HTMLDetailsElement>("orbit-guide-legend");
   readonly #selectedBodySection = element<HTMLElement>("selected-body-section");
   readonly #options: DemoPanelOptions;
@@ -115,6 +120,10 @@ export class DemoPanel {
     this.#radiusMode.addEventListener("change", () => {
       const value = this.#radiusMode.value === "physical" ? "physical" : "adaptive";
       this.#options.onRadiusModeChange?.(value);
+    });
+    this.#lightingMode.addEventListener("change", () => {
+      const value = this.#lightingMode.value === "enhanced" ? "enhanced" : "physical";
+      this.#options.onLightingModeChange?.(value);
     });
     this.#addAsteroids.addEventListener("click", () => {
       this.#options.onAddAsteroids?.(Number(this.#populationCount.value), this.#populationSeed.value);
@@ -204,6 +213,7 @@ export class DemoPanel {
     this.#focusSelected.disabled = !ready;
     this.#warpSelect.disabled = !ready;
     this.#radiusMode.disabled = !ready;
+    this.#lightingMode.disabled = !ready;
     this.#gridToggle.disabled = !ready;
     this.#orbitsToggle.disabled = !ready;
     this.#axesToggle.disabled = !ready;
@@ -290,6 +300,26 @@ export class DemoPanel {
   setOrbitsVisible(visible: boolean): void {
     this.setToggle(this.#orbitsToggle, this.#orbitsState, visible);
     this.#setOrbitGuideVisibility(visible);
+  }
+
+  setLightingMode(mode: LightingMode): void {
+    this.#lightingMode.value = mode;
+    const message = mode === "enhanced"
+      ? "Enhanced · presentation-only artificial inspection lighting · physical stellar irradiance unchanged"
+      : "Physical · stellar illumination only · night sides may be dark";
+    this.#lightingModeNote.textContent = message;
+    this.#lightingModeDiagnostics.textContent = message;
+    this.#lightingModeNote.dataset.mode = mode;
+    this.#lightingModeDiagnostics.dataset.mode = mode;
+  }
+
+  setLightingDiagnostics(diagnostics: LightingModeDiagnostics): void {
+    this.setLightingMode(diagnostics.mode);
+    if (diagnostics.mode === "enhanced") {
+      const message = `Enhanced · artificial inspection lighting ${diagnostics.inspectionFillContribution.toFixed(2)} ≤ ${diagnostics.inspectionFillMaximum.toFixed(2)} · ${diagnostics.targetObjectIds.length} selected/focused target${diagnostics.targetObjectIds.length === 1 ? "" : "s"} · physical irradiance unchanged`;
+      this.#lightingModeNote.textContent = message;
+      this.#lightingModeDiagnostics.textContent = message;
+    }
   }
 
   #setOrbitGuideVisibility(visible: boolean): void {
