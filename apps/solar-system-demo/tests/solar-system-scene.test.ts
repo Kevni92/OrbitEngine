@@ -7,7 +7,7 @@ import {
   MIN_FOCUS_DISTANCE_SCENE_UNITS,
   SolarSystemScene,
 } from "../src/rendering/solar-system-scene.js";
-import { meters, metersPerSecond, propagationState, referenceFrameId, revisionId, simulationInstant } from "orbit-engine";
+import { meters, metersPerSecond, ObjectType, propagationState, referenceFrameId, revisionId, simulationInstant } from "orbit-engine";
 import type { OrbitPath } from "../src/simulation/path-sampling.js";
 import {
   EARTH_ID,
@@ -18,6 +18,7 @@ import {
   SCENARIO_OBJECT_IDS,
   SUN_CENTERED_FRAME,
   SUN_ID,
+  TITAN_ID,
 } from "../src/scenario/scenario-data.js";
 import type { SolarSystemScenario } from "../src/scenario/load-solar-system.js";
 
@@ -124,7 +125,7 @@ test("scene accepts paths in arbitrary declared output frames", () => {
   visual.dispose();
 });
 
-test("hierarchical LOD hides distant moons and resolves them in a focused local system", () => {
+test("hierarchical LOD preserves global context while resolving only the focused local system", () => {
   const root = new THREE.Scene();
   const visual = new SolarSystemScene(root, scenario());
   const statesById = new Map(SCENARIO_BODIES.map((body) => [body.id, body.anchor]));
@@ -148,6 +149,11 @@ test("hierarchical LOD hides distant moons and resolves them in a focused local 
     }));
   }
   const states = SCENARIO_BODIES.map((body) => statesById.get(body.id)!);
+  const globalContextIds = SCENARIO_BODIES
+    .filter((body) => body.type === ObjectType.star || body.type === ObjectType.planet)
+    .map((body) => body.id);
+  assert.equal(globalContextIds.length, 9);
+
   const jupiter = SCENARIO_BODIES.find((body) => body.id === JUPITER_ID)!;
   const jupiterPosition = positionToSceneUnits(jupiter.anchor.position);
   const camera = new THREE.PerspectiveCamera(45, 1, 0.0001, 10_000);
@@ -158,17 +164,35 @@ test("hierarchical LOD hides distant moons and resolves them in a focused local 
   visual.updatePresentation(camera, 900);
   visual.updatePresentation(camera, 900);
   assert.equal(visual.representationFor(EUROPA_ID), "hidden");
+  for (const objectId of globalContextIds) assert.notEqual(visual.representationFor(objectId), "hidden");
 
   visual.setFocusId(JUPITER_ID);
   camera.position.set(jupiterPosition.x, jupiterPosition.y - 1.6, jupiterPosition.z + 0.96);
   camera.lookAt(jupiterPosition.x, jupiterPosition.y, jupiterPosition.z);
   visual.updatePresentation(camera, 900);
   assert.notEqual(visual.representationFor(EUROPA_ID), "hidden");
+  for (const objectId of globalContextIds) assert.notEqual(visual.representationFor(objectId), "hidden");
+
+  visual.setSelected(EUROPA_ID);
+  visual.setFocusId(EUROPA_ID);
+  visual.updatePresentation(camera, 900);
+  assert.notEqual(visual.representationFor(EUROPA_ID), "hidden");
+  assert.equal(visual.representationFor(TITAN_ID), "hidden");
+  for (const objectId of globalContextIds) assert.notEqual(visual.representationFor(objectId), "hidden");
+
+  const markerContextId = globalContextIds.find((objectId) =>
+    visual.representationFor(objectId) === "marker" && (visual.positionFor(objectId)?.lengthSq() ?? 0) > 0);
+  assert.ok(markerContextId !== undefined, "expected at least one distant global-context marker");
+  const markerDiagnostics = visual.renderDiagnosticsFor(markerContextId, camera);
+  assert.ok(markerDiagnostics !== undefined);
+  assert.equal(markerDiagnostics.submitted, true);
+  assert.ok((markerDiagnostics.positionErrorSceneUnits ?? Number.POSITIVE_INFINITY) < FLOAT32_SCENE_POSITION_TOLERANCE);
 
   visual.setSelected(PHOBOS_ID);
   visual.setFocusId(PHOBOS_ID);
   visual.updatePresentation(camera, 900);
   assert.notEqual(visual.representationFor(PHOBOS_ID), "hidden");
+  for (const objectId of globalContextIds) assert.notEqual(visual.representationFor(objectId), "hidden");
   assert.ok(visual.focusDistanceFor(PHOBOS_ID) < 1.6);
   visual.dispose();
 });

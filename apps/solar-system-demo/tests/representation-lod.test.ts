@@ -40,3 +40,27 @@ test("hierarchy and focus overrides keep navigation targets represented", () => 
     physicalDiameterPixels: 0.2, hierarchyEligible: false, selected: false, focused: true,
   }), Representation.marker);
 });
+
+test("presentation-role minimum keeps contextual bodies represented without forcing spheres", () => {
+  assert.equal(transitionRepresentation(Representation.marker, {
+    physicalDiameterPixels: 0.01,
+    hierarchyEligible: true,
+    selected: false,
+    focused: false,
+    minimumRepresentation: Representation.marker,
+  }), Representation.marker);
+  assert.equal(transitionRepresentation(Representation.hidden, {
+    physicalDiameterPixels: 0.01,
+    hierarchyEligible: false,
+    selected: false,
+    focused: false,
+    minimumRepresentation: Representation.marker,
+  }), Representation.marker);
+  assert.equal(transitionRepresentation(Representation.marker, {
+    physicalDiameterPixels: 8,
+    hierarchyEligible: true,
+    selected: false,
+    focused: false,
+    minimumRepresentation: Representation.marker,
+  }), Representation.sphere);
+});

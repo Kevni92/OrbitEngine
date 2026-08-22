@@ -53,9 +53,20 @@ export class BatchedMarkerLayer {
     scene.add(this.#points);
   }
 
-  setBodies(bodies: readonly RegisteredScenarioBody[]): void {
+  setBodies(
+    bodies: readonly RegisteredScenarioBody[],
+    currentPositions: ReadonlyMap<ObjectId, THREE.Vector3> = new Map(),
+  ): void {
     this.#objectIds = Object.freeze(bodies.map((body) => body.definition.id));
     this.#positions = new Float32Array(this.#objectIds.length * 3);
+    this.#objectIds.forEach((objectId, index) => {
+      const position = currentPositions.get(objectId);
+      if (position === undefined) return;
+      const offset = index * 3;
+      this.#positions[offset] = position.x;
+      this.#positions[offset + 1] = position.y;
+      this.#positions[offset + 2] = position.z;
+    });
     this.#points.geometry.setAttribute("position", new THREE.BufferAttribute(this.#positions, 3));
     this.#points.geometry.setDrawRange(0, this.#objectIds.length);
     this.#points.userData.objectIds = this.#objectIds;
@@ -74,6 +85,18 @@ export class BatchedMarkerLayer {
       positions.setXYZ(index, position.x, position.y, position.z);
     });
     positions.needsUpdate = true;
+  }
+
+  contains(objectId: ObjectId): boolean {
+    return this.#objectIds.includes(objectId);
+  }
+
+  positionFor(objectId: ObjectId): THREE.Vector3 | undefined {
+    const index = this.#objectIds.indexOf(objectId);
+    if (index < 0) return undefined;
+    const positions = this.#points.geometry.getAttribute("position");
+    if (!(positions instanceof THREE.BufferAttribute)) return undefined;
+    return new THREE.Vector3(positions.getX(index), positions.getY(index), positions.getZ(index));
   }
 
   pick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera): ObjectId | undefined {

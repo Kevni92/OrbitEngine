@@ -33,6 +33,29 @@ interface PendingNavigation {
   readonly previousFocusId: ObjectId;
 }
 
+interface BrowserRenderBodyDiagnostics {
+  readonly objectId: string;
+  readonly name: string;
+  readonly type: string;
+  readonly representation: string;
+  readonly submitted: boolean;
+  readonly inFront: boolean;
+  readonly inViewport: boolean;
+  readonly positionErrorSceneUnits?: number;
+}
+
+interface BrowserRenderDiagnostics {
+  readonly focusId: string;
+  readonly selectedId: string;
+  readonly bodies: readonly BrowserRenderBodyDiagnostics[];
+}
+
+declare global {
+  interface Window {
+    __orbitDemoRenderDiagnostics?: () => BrowserRenderDiagnostics;
+  }
+}
+
 const canvas = document.querySelector<HTMLCanvasElement>("#scene");
 const clock = new SimulationClock();
 
@@ -389,6 +412,23 @@ async function bootstrap(): Promise<void> {
     scene.setCurrentBodies(stateSource.currentBodies());
     scene.setFocusId(focusId);
     scene.setSelected(selectedId);
+    window.__orbitDemoRenderDiagnostics = () => ({
+      focusId,
+      selectedId,
+      bodies: (stateSource?.currentBodies() ?? []).map((entry) => {
+        const diagnostics = scene?.renderDiagnosticsFor(entry.definition.id, renderShell!.camera);
+        return {
+          objectId: entry.definition.id,
+          name: entry.definition.name,
+          type: entry.definition.type,
+          representation: diagnostics?.representation ?? "pending",
+          submitted: diagnostics?.submitted ?? false,
+          inFront: diagnostics?.inFront ?? false,
+          inViewport: diagnostics?.inViewport ?? false,
+          positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
+        };
+      }),
+    });
     sampleReferenceOrbits();
   } catch (error) {
     if (error instanceof WebGL2UnavailableError) {
@@ -438,6 +478,7 @@ async function bootstrap(): Promise<void> {
   window.addEventListener("beforeunload", () => {
     loop.stop();
     window.removeEventListener("resize", resize);
+    delete window.__orbitDemoRenderDiagnostics;
     guides?.dispose();
     scene?.dispose();
     renderShell?.dispose();
