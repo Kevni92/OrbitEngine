@@ -76,10 +76,6 @@ interface OrbitEntry {
   phaseIndex: number;
 }
 
-function mutedColor(value: number): THREE.Color {
-  return new THREE.Color(value).lerp(new THREE.Color(0x8da1bf), 0.62);
-}
-
 function createHighlightMaterial(color: number): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -102,7 +98,7 @@ function createHighlightMaterial(color: number): THREE.ShaderMaterial {
     `,
     transparent: true,
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
     blending: THREE.AdditiveBlending,
   });
 }
@@ -185,10 +181,11 @@ export class OrbitRenderer {
     const geometry = new THREE.BufferGeometry().setFromPoints([...points]);
     geometry.setAttribute("trailAlpha", new THREE.Float32BufferAttribute(new Array(points.length).fill(0), 1));
     const baseMaterial = new THREE.LineBasicMaterial({
-      color: mutedColor(bodyColor),
+      color: bodyColor,
       transparent: true,
       opacity: ORBIT_BACKGROUND_OPACITY,
       depthWrite: false,
+      depthTest: true,
     });
     const highlightMaterial = createHighlightMaterial(bodyColor);
     const baseLine = new THREE.LineLoop(geometry, baseMaterial);
