@@ -9,6 +9,7 @@ export const MARKER_PICK_TOLERANCE_PIXELS = 2;
 export const MARKER_PICK_RADIUS_PIXELS = MARKER_PIXEL_SIZE / 2 + MARKER_PICK_TOLERANCE_PIXELS;
 
 const PICK_DEPTH_EPSILON = 1e-7;
+const FALLBACK_MARKER_COLOR = 0x9aa7b5;
 
 const MARKER_VERTEX_SHADER = `
 uniform float uSize;
@@ -104,7 +105,9 @@ export class BatchedMarkerLayer {
         this.#positions[offset + 1] = position.y;
         this.#positions[offset + 2] = position.z;
       }
-      const color = new THREE.Color(body.definition.display.color);
+      // Committed/runtime catalog bodies carry display colors. The fallback is
+      // only for intentionally incomplete synthetic fixtures used by low-level tests.
+      const color = new THREE.Color(body.definition.display?.color ?? FALLBACK_MARKER_COLOR);
       this.#colors[offset] = color.r;
       this.#colors[offset + 1] = color.g;
       this.#colors[offset + 2] = color.b;
