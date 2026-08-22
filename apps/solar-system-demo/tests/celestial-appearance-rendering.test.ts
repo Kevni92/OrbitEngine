@@ -3,8 +3,10 @@ import test from "node:test";
 import {
   blackbodyTemperatureToLinearRgb,
   deriveSurfaceReflectance,
+  LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION,
   LINEAR_SRGB_LUMINANCE,
   mapIrradianceToSceneIntensity,
+  mapSceneDiffuseContributionToLambertLightIntensity,
   normalizeLinearReflectanceToAlbedo,
   resolveStellarIllumination,
 } from "../src/rendering/celestial-appearance-rendering.js";
@@ -82,6 +84,14 @@ test("stellar illumination uses authoritative SI distance and inverse-square fal
   }]), /finite guard/);
 });
 
+test("Lambert renderer conversion compensates reciprocal PI exactly once", () => {
+  assert.equal(LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION, Math.PI);
+  assert.ok(Math.abs(mapSceneDiffuseContributionToLambertLightIntensity(1) / Math.PI - 1) < 1e-15);
+  assert.ok(Math.abs(mapSceneDiffuseContributionToLambertLightIntensity(0.18) / Math.PI - 0.18) < 1e-15);
+  assert.ok(Math.abs(mapSceneDiffuseContributionToLambertLightIntensity(0.25) / Math.PI - 0.25) < 1e-15);
+  assert.throws(() => mapSceneDiffuseContributionToLambertLightIntensity(-0.01), /non-negative/);
+});
+
 test("multiple emitters add linearly and do not depend on rendered radius", () => {
   const emitter = (objectId: typeof SUN_ID, position: { x: number; y: number; z: number }) => ({
     objectId,
@@ -100,4 +110,3 @@ test("multiple emitters add linearly and do not depend on rendered radius", () =
   // radii cannot enter the physical illumination calculation.
   assert.equal(Object.keys(one).includes("radius"), false);
 });
-
