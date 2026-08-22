@@ -9,6 +9,7 @@ import {
   type PropagationState,
   type ReferenceFrameId,
 } from "orbit-engine";
+import { createCelestialAppearance, validateCelestialAppearance, type CelestialAppearance } from "./celestial-appearance.js";
 
 export type CelestialCatalogCategory = "star" | "planet" | "moon" | "dwarfPlanet" | "asteroid";
 
@@ -27,6 +28,9 @@ export interface CelestialPropagationDefinition {
 }
 
 export interface CelestialDisplayMetadata {
+  /** Canonical UI/marker/orbit-guide accent and fallback color; never sphere truth. */
+  readonly accentColor: number;
+  /** @deprecated Use accentColor. Kept as a compatibility alias for existing consumers. */
   readonly color: number;
   readonly category: CelestialCatalogCategory;
   readonly aliases: readonly string[];
@@ -55,6 +59,8 @@ export interface CelestialBodyDefinition {
   readonly anchor: PropagationState;
   readonly propagation: CelestialPropagationDefinition;
   readonly display: CelestialDisplayMetadata;
+  /** Optional application-owned appearance metadata; never passed to OrbitEngine. */
+  readonly appearance?: CelestialAppearance;
   readonly provenance: CelestialSourceProvenance;
 }
 
@@ -94,6 +100,12 @@ function fail(message: string): never {
 }
 
 function validateDisplay(body: CelestialBodyDefinition): void {
+  if (body.display.accentColor !== body.display.color) {
+    fail(`Catalog body ${body.id} must keep display accentColor and legacy color alias identical`);
+  }
+  if (!Number.isSafeInteger(body.display.accentColor) || body.display.accentColor < 0 || body.display.accentColor > 0xffffff) {
+    fail(`Catalog body ${body.id} has an invalid display accent color`);
+  }
   if (!Number.isSafeInteger(body.display.color) || body.display.color < 0 || body.display.color > 0xffffff) {
     fail(`Catalog body ${body.id} has an invalid display color`);
   }
@@ -122,6 +134,7 @@ function validateBodyGraph(
   for (const body of bodyById.values()) {
     objectId(body.id);
     validateDisplay(body);
+    validateCelestialAppearance(body.appearance, body.id);
     validateProvenance(body);
     if (body.centralBody === undefined) {
       roots.push(body.id);
@@ -240,6 +253,7 @@ export function createCelestialCatalog(
       ...(definition.centralBody === undefined ? {} : { centralBody: objectId(definition.centralBody) }),
       propagation: Object.freeze({ ...definition.propagation }),
       display: Object.freeze({ ...definition.display, aliases: Object.freeze([...definition.display.aliases]) }),
+      ...(definition.appearance === undefined ? {} : { appearance: createCelestialAppearance(definition.appearance) }),
       provenance: Object.freeze({ ...definition.provenance }),
     }));
   }

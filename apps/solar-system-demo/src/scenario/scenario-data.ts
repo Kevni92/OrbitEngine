@@ -24,6 +24,7 @@ import type {
   CelestialSourceProvenance,
   OrbitVisualizationDefinition,
 } from "./celestial-catalog.js";
+import { createCelestialAppearance, type CelestialAppearance } from "./celestial-appearance.js";
 
 export const SCENARIO_EPOCH = simulationInstant(0);
 export const SCENARIO_END = simulationInstant(31_557_600_000);
@@ -205,10 +206,284 @@ function provenance(sourceIdentifier: string, limitations: string = SCENARIO_PRO
   });
 }
 
+function appearanceSource(
+  sourceIdentifier: string,
+  fields: readonly string[],
+  limitations = "Offline demo approximation; not a wavelength-resolved scientific radiative-transfer dataset.",
+): {
+  readonly source: string;
+  readonly sourceIdentifier: string;
+  readonly sourceUrl: string;
+  readonly retrievalDate: string;
+  readonly fields: readonly string[];
+  readonly normalization: string;
+  readonly limitations: string;
+} {
+  return {
+    source: "NASA planetary fact sheets and documented demo optical approximations",
+    sourceIdentifier,
+    sourceUrl: "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+    retrievalDate: SCENARIO_PROVENANCE.retrievalDate,
+    fields,
+    normalization: "Appearance-only metadata normalized to SI bulk units and linear-RGB renderer inputs; independent from ephemeris provenance.",
+    limitations,
+  };
+}
+
+const SUN_APPEARANCE = createCelestialAppearance({
+  schemaVersion: "1.0",
+  visibleLayer: {
+    kind: "cloudDeck",
+    composition: [{ materialId: "neutral-gas-giant-cloud", fraction: 1 }],
+    calibratedReflectance: { r: 1, g: 0.88, b: 0.62 },
+  },
+  stellarEmission: {
+    effectiveTemperatureKelvin: 5_772,
+    luminosityWatts: 3.828e26,
+    spectralClass: "G2V",
+  },
+  provenance: [appearanceSource("sun-visible-and-emission-fixture", ["visibleLayer", "stellarEmission"])],
+});
+
+const VENUS_APPEARANCE = createCelestialAppearance({
+  schemaVersion: "1.0",
+  visibleLayer: {
+    kind: "cloudDeck",
+    composition: [{ materialId: "sulfuric-acid-cloud", fraction: 1 }],
+    calibratedReflectance: { r: 0.72, g: 0.53, b: 0.25 },
+    visualAlbedo: 0.76,
+  },
+  atmosphere: {
+    referencePressurePa: 9.2e6,
+    scaleHeightMeters: 15_900,
+    gases: [
+      { gasId: "CO2", mixingRatio: 0.965 },
+      { gasId: "N2", mixingRatio: 0.034 },
+      { gasId: "SO2", mixingRatio: 0.001 },
+    ],
+    optics: {
+      rayleighScattering: { r: 0.08, g: 0.16, b: 0.28 },
+      mieScattering: { r: 0.78, g: 0.58, b: 0.28 },
+      absorption: { r: 0.18, g: 0.12, b: 0.08 },
+      referenceVerticalOpticalDepth: 6.5,
+      mieAnisotropy: 0.72,
+    },
+    haze: {
+      hazeId: "venus-sulfuric-aerosol",
+      opticalDepthContribution: 5.2,
+      calibratedScattering: { r: 0.80, g: 0.58, b: 0.26 },
+      mieAnisotropy: 0.76,
+    },
+    cloudLayers: [{
+      lowerAltitudeMeters: 45_000,
+      upperAltitudeMeters: 75_000,
+      materialId: "sulfuric-acid-cloud",
+      coverageFraction: 1,
+      opticalDepth: 7,
+      calibratedReflectance: { r: 0.75, g: 0.55, b: 0.27 },
+      visualAlbedo: 0.76,
+    }],
+  },
+  provenance: [appearanceSource("venus-cloud-and-atmosphere-fixture", ["visibleLayer", "atmosphere"]),],
+});
+
+const EARTH_APPEARANCE = createCelestialAppearance({
+  schemaVersion: "1.0",
+  visibleLayer: {
+    kind: "solidSurface",
+    composition: [
+      { materialId: "silicate-regolith", fraction: 0.45 },
+      { materialId: "basaltic-rock", fraction: 0.25 },
+      { materialId: "water-ice", fraction: 0.30 },
+    ],
+    calibratedReflectance: { r: 0.20, g: 0.29, b: 0.43 },
+    visualAlbedo: 0.30,
+  },
+  atmosphere: {
+    referencePressurePa: 101_325,
+    scaleHeightMeters: 8_434,
+    gases: [
+      { gasId: "N2", mixingRatio: 0.78084 },
+      { gasId: "O2", mixingRatio: 0.20946 },
+      { gasId: "Ar", mixingRatio: 0.00934 },
+      { gasId: "CO2", mixingRatio: 0.00036 },
+    ],
+    optics: {
+      rayleighScattering: { r: 0.06, g: 0.34, b: 1.00 },
+      mieScattering: { r: 0.34, g: 0.36, b: 0.38 },
+      absorption: { r: 0.02, g: 0.04, b: 0.08 },
+      referenceVerticalOpticalDepth: 0.32,
+      mieAnisotropy: 0.62,
+    },
+    cloudLayers: [{
+      lowerAltitudeMeters: 1_000,
+      upperAltitudeMeters: 12_000,
+      materialId: "water-ice",
+      coverageFraction: 0.65,
+      opticalDepth: 0.25,
+      calibratedReflectance: { r: 0.78, g: 0.82, b: 0.90 },
+      visualAlbedo: 0.70,
+    }],
+  },
+  provenance: [appearanceSource("earth-reflectance-and-atmosphere-fixture", ["visibleLayer", "atmosphere"])],
+});
+
+const MARS_APPEARANCE = createCelestialAppearance({
+  schemaVersion: "1.0",
+  visibleLayer: {
+    kind: "solidSurface",
+    composition: [
+      { materialId: "iron-oxide-dust", fraction: 0.55 },
+      { materialId: "silicate-regolith", fraction: 0.45 },
+    ],
+    calibratedReflectance: { r: 0.40, g: 0.16, b: 0.08 },
+    visualAlbedo: 0.25,
+  },
+  atmosphere: {
+    referencePressurePa: 610,
+    scaleHeightMeters: 11_100,
+    gases: [
+      { gasId: "CO2", mixingRatio: 0.953 },
+      { gasId: "N2", mixingRatio: 0.027 },
+      { gasId: "Ar", mixingRatio: 0.020 },
+    ],
+    optics: {
+      rayleighScattering: { r: 0.04, g: 0.12, b: 0.30 },
+      mieScattering: { r: 0.42, g: 0.18, b: 0.08 },
+      absorption: { r: 0.06, g: 0.03, b: 0.02 },
+      referenceVerticalOpticalDepth: 0.08,
+      mieAnisotropy: 0.58,
+    },
+    haze: {
+      hazeId: "mars-dust",
+      opticalDepthContribution: 0.12,
+      calibratedScattering: { r: 0.48, g: 0.20, b: 0.09 },
+      mieAnisotropy: 0.58,
+    },
+    cloudLayers: [],
+  },
+  provenance: [appearanceSource("mars-dust-and-thin-atmosphere-fixture", ["visibleLayer", "atmosphere"])],
+});
+
+function gasGiantAppearance(
+  sourceIdentifier: string,
+  gases: readonly { readonly gasId: string; readonly mixingRatio: number }[],
+  layerMaterial: string,
+  reflectance: { readonly r: number; readonly g: number; readonly b: number },
+): CelestialAppearance {
+  return createCelestialAppearance({
+    schemaVersion: "1.0",
+    visibleLayer: {
+      kind: "cloudDeck",
+      composition: [{ materialId: layerMaterial, fraction: 1 }],
+      calibratedReflectance: reflectance,
+    },
+    atmosphere: {
+      referencePressurePa: 100_000,
+      scaleHeightMeters: 25_000,
+      gases,
+      optics: {
+        rayleighScattering: { r: 0.05, g: 0.12, b: 0.26 },
+        mieScattering: { r: reflectance.r, g: reflectance.g, b: reflectance.b },
+        absorption: { r: 0.04, g: 0.05, b: 0.08 },
+        referenceVerticalOpticalDepth: 1.8,
+        mieAnisotropy: 0.64,
+      },
+      cloudLayers: [{
+        lowerAltitudeMeters: 0,
+        upperAltitudeMeters: 35_000,
+        materialId: layerMaterial,
+        coverageFraction: 1,
+        opticalDepth: 2.5,
+        calibratedReflectance: reflectance,
+      }],
+    },
+    provenance: [appearanceSource(sourceIdentifier, ["visibleLayer", "atmosphere"])],
+  });
+}
+
+const JUPITER_APPEARANCE = gasGiantAppearance(
+  "jupiter-cloud-deck-fixture",
+  [{ gasId: "H2", mixingRatio: 0.89 }, { gasId: "He", mixingRatio: 0.10 }, { gasId: "NH3", mixingRatio: 0.01 }],
+  "ammonia-water-cloud",
+  { r: 0.58, g: 0.42, b: 0.27 },
+);
+const SATURN_APPEARANCE = gasGiantAppearance(
+  "saturn-cloud-deck-fixture",
+  [{ gasId: "H2", mixingRatio: 0.89 }, { gasId: "He", mixingRatio: 0.10 }, { gasId: "NH3", mixingRatio: 0.01 }],
+  "ammonia-water-cloud",
+  { r: 0.67, g: 0.57, b: 0.36 },
+);
+const URANUS_APPEARANCE = gasGiantAppearance(
+  "uranus-methane-cloud-fixture",
+  [{ gasId: "H2", mixingRatio: 0.83 }, { gasId: "He", mixingRatio: 0.15 }, { gasId: "CH4", mixingRatio: 0.02 }],
+  "neutral-gas-giant-cloud",
+  { r: 0.24, g: 0.55, b: 0.64 },
+);
+const NEPTUNE_APPEARANCE = gasGiantAppearance(
+  "neptune-methane-cloud-fixture",
+  [{ gasId: "H2", mixingRatio: 0.80 }, { gasId: "He", mixingRatio: 0.18 }, { gasId: "CH4", mixingRatio: 0.02 }],
+  "neutral-gas-giant-cloud",
+  { r: 0.16, g: 0.28, b: 0.62 },
+);
+
+const TITAN_APPEARANCE = createCelestialAppearance({
+  schemaVersion: "1.0",
+  visibleLayer: {
+    kind: "cloudDeck",
+    composition: [
+      { materialId: "tholin-organic", fraction: 0.80 },
+      { materialId: "methane-nitrogen-ice", fraction: 0.20 },
+    ],
+    calibratedReflectance: { r: 0.34, g: 0.19, b: 0.08 },
+    visualAlbedo: 0.22,
+  },
+  atmosphere: {
+    referencePressurePa: 146_700,
+    scaleHeightMeters: 21_000,
+    gases: [
+      { gasId: "N2", mixingRatio: 0.984 },
+      { gasId: "CH4", mixingRatio: 0.014 },
+      { gasId: "Ar", mixingRatio: 0.002 },
+    ],
+    optics: {
+      rayleighScattering: { r: 0.05, g: 0.20, b: 0.48 },
+      mieScattering: { r: 0.62, g: 0.25, b: 0.08 },
+      absorption: { r: 0.18, g: 0.08, b: 0.03 },
+      referenceVerticalOpticalDepth: 2.4,
+      mieAnisotropy: 0.84,
+    },
+    haze: {
+      hazeId: "titan-organic-haze",
+      opticalDepthContribution: 2.1,
+      calibratedScattering: { r: 0.68, g: 0.28, b: 0.08 },
+      calibratedAbsorption: { r: 0.20, g: 0.08, b: 0.02 },
+      mieAnisotropy: 0.86,
+    },
+    cloudLayers: [],
+  },
+  provenance: [appearanceSource("titan-organic-haze-fixture", ["visibleLayer", "atmosphere"])],
+});
+
+const VESTA_APPEARANCE = createCelestialAppearance({
+  schemaVersion: "1.0",
+  visibleLayer: {
+    kind: "solidSurface",
+    composition: [
+      { materialId: "basaltic-rock", fraction: 0.70 },
+      { materialId: "carbonaceous-regolith", fraction: 0.30 },
+    ],
+    calibratedReflectance: { r: 0.22, g: 0.19, b: 0.15 },
+    visualAlbedo: 0.42,
+  },
+  provenance: [appearanceSource("vesta-airless-rocky-fixture", ["visibleLayer"], "Airless-body surface approximation; no atmosphere is implied.")],
+});
+
 interface BodyMetadata {
   readonly aliases?: readonly string[];
   readonly sourceIdentifier?: string;
   readonly limitations?: string;
+  readonly appearance?: CelestialAppearance;
 }
 
 function horizonsBody(
@@ -226,6 +501,7 @@ function horizonsBody(
   sourceIdentifier: string,
   aliases: readonly string[] = [],
   orbitVisualizationDefinition?: OrbitVisualizationDefinition,
+  metadata: BodyMetadata = {},
 ): ScenarioBodyDefinition {
   return body(
     id,
@@ -239,6 +515,7 @@ function horizonsBody(
     centralBody,
     orbitVisualizationDefinition,
     {
+      ...metadata,
       aliases,
       sourceIdentifier,
       limitations: "One authoritative JPL Horizons J2000 TDB state vector is propagated by the demo's educational two-body model; this is not a precision long-term ephemeris.",
@@ -275,11 +552,13 @@ function body(
       ...(orbitVisualizationDefinition === undefined ? {} : { orbitVisualization: orbitVisualizationDefinition }),
     }),
     display: Object.freeze({
+      accentColor: color,
       color,
       category: categoryForType(type),
       aliases: Object.freeze([...(metadata.aliases ?? [])]),
       defaultVisible: true,
     }),
+    ...(metadata.appearance === undefined ? {} : { appearance: metadata.appearance }),
     provenance: provenance(metadata.sourceIdentifier ?? `fixture:${name}`, metadata.limitations),
   });
 }
@@ -294,6 +573,9 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     "1",
     { mass: 1.98847e30, mu: 1.32712440018e20, physicalRadius: 695_700_000 },
     anchor(0, 0, 0, 0, 0, 0, SCENARIO_ROOT_FRAME),
+    undefined,
+    undefined,
+    { appearance: SUN_APPEARANCE },
   ),
   body(
     MERCURY_ID,
@@ -318,6 +600,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     eclipticFixtureAnchor(58_465_828_859.28082, 91_055_133_493.79546, 0, -29_468.79092110239, 18_921.69305095249, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(19_400_000),
+    { appearance: VENUS_APPEARANCE },
   ),
   body(
     EARTH_ID,
@@ -332,6 +615,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     orbitVisualization(31_557_600),
     {
       sourceIdentifier: "399 Earth",
+      appearance: EARTH_APPEARANCE,
       limitations: "One authoritative JPL Horizons J2000 TDB state vector is propagated by the demo's educational two-body model; this is not a precision long-term ephemeris.",
     },
   ),
@@ -346,6 +630,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     eclipticFixtureAnchor(-214_769_406_554.1414, 76_356_930_956.01689, 0, -8_083.059055501473, -22_735.248454290246, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(59_400_000),
+    { appearance: MARS_APPEARANCE },
   ),
   body(
     JUPITER_ID,
@@ -358,6 +643,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     eclipticFixtureAnchor(-508_757_512_504.3964, -589_050_275_532.8215, 0, 9_882.196114454531, -8_535.165370600633, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(374_000_000),
+    { appearance: JUPITER_APPEARANCE },
   ),
   body(
     SATURN_ID,
@@ -370,6 +656,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     eclipticFixtureAnchor(124_831_861_632.19225, -1_421_194_598_210.8584, 0, 9_607.838746010182, 843.912859249703, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(929_000_000),
+    { appearance: SATURN_APPEARANCE },
   ),
   body(
     URANUS_ID,
@@ -382,6 +669,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     eclipticFixtureAnchor(1_591_419_226_261.024, -2_389_155_345_961.324, 0, 5_658.8473782743295, 3_769.364989801019, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(2_650_000_000),
+    { appearance: URANUS_APPEARANCE },
   ),
   body(
     NEPTUNE_ID,
@@ -394,6 +682,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     eclipticFixtureAnchor(3_983_417_843_444.868, -2_089_964_790_355.6897, 0, 2_523.5283977712284, 4_809.778659673478, 0, SUN_CENTERED_FRAME),
     SUN_ID,
     orbitVisualization(5_200_000_000),
+    { appearance: NEPTUNE_APPEARANCE },
   ),
   body(
     MOON_ID,
@@ -484,6 +773,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     1.3452e23, 8.9781e12, 2_574_700,
     horizonsAnchor(-946_802.9384488795, 824_098.2253187533, 27_082.23040694325, -3.561343519356833, -4.04524701612976, 0.5842850270130896, SATURN_CENTERED_FRAME),
     SATURN_ID, "606 Titan",
+    [], undefined, { appearance: TITAN_APPEARANCE },
   ),
   horizonsBody(
     HYPERION_ID, "Hyperion", ObjectType.moon, 0x9b8d7e, SATURN_CENTERED_FRAME, "24",
@@ -599,7 +889,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     // Corrected heliocentric fixture: the previous values were accidentally
     // in the solar interior instead of the intended asteroid-belt orbit.
     horizonsAnchor(353_000_000, 40_000_000, -5_000_000, -2.0, 18.8, 0.5, SUN_CENTERED_FRAME),
-    SUN_ID, "4 Vesta", ["(4) Vesta"],
+    SUN_ID, "4 Vesta", ["(4) Vesta"], undefined, { appearance: VESTA_APPEARANCE },
   ),
   horizonsBody(
     PALLAS_ID, "Pallas", ObjectType.asteroid, 0xb9a98d, SUN_CENTERED_FRAME, "43",
