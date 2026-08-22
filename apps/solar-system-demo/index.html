@@ -96,10 +96,39 @@
             </div>
             <label class="field" for="radius-mode">Body size
               <select id="radius-mode">
-                <option value="visible">Enhanced visibility</option>
+                <option value="adaptive">Adaptive visibility</option>
                 <option value="physical">True physical scale</option>
               </select>
             </label>
+            <p class="field-help">Adaptive visibility uses projected screen size and local spacing rather than a fixed world-space multiplier.</p>
+          </section>
+
+          <section class="panel-section" aria-labelledby="asteroid-heading">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Stress population</p>
+                <h2 id="asteroid-heading">Synthetic asteroids</h2>
+              </div>
+              <span class="scenario-badge">Generated</span>
+            </div>
+            <div class="asteroid-controls">
+              <label class="field" for="asteroid-count">Batch size
+                <select id="asteroid-count" disabled>
+                  <option value="100">100</option>
+                  <option value="1000" selected>1,000</option>
+                  <option value="10000">10,000</option>
+                </select>
+              </label>
+              <label class="field" for="asteroid-seed">Deterministic seed
+                <input id="asteroid-seed" type="number" step="1" value="42" disabled />
+              </label>
+            </div>
+            <div class="asteroid-actions">
+              <button class="primary-button" id="add-asteroids" type="button" disabled>Add asteroids</button>
+              <button class="secondary-button" id="remove-asteroids" type="button" disabled>Remove generated</button>
+            </div>
+            <p class="field-help">Synthetic main-belt-like initial conditions are for demo/performance testing only. After registration their motion is propagated by OrbitEngine.</p>
+            <p class="scenario-note" id="asteroid-status" data-state="ready" aria-live="polite">0 generated asteroids</p>
           </section>
 
           <section class="panel-section body-summary" aria-labelledby="body-heading">
@@ -143,13 +172,17 @@
                   <div><dt>View origin</dt><dd id="focus-context">Sun · render origin</dd></div>
                   <div><dt>Engine</dt><dd id="engine-details">Waiting for WASM…</dd></div>
                   <div><dt>Renderer</dt><dd id="rendering-details">Waiting for WebGL…</dd></div>
+                  <div><dt>Generated asteroids</dt><dd id="diagnostic-generated">0</dd></div>
+                  <div><dt>Total queried objects</dt><dd id="diagnostic-total">0</dd></div>
+                  <div><dt>Batched asteroid markers</dt><dd id="diagnostic-markers">0</dd></div>
+                  <div><dt>Latest state query</dt><dd id="diagnostic-query-duration">—</dd></div>
                 </dl>
                 <pre class="technical-details" id="technical-details">No state snapshot yet.</pre>
               </section>
             </div>
           </details>
 
-          <p class="panel-footnote">Click a body in the scene to select it. Positions and orbit curves come from public OrbitEngine state queries.</p>
+          <p class="panel-footnote">Click a catalog body in the scene to select it. Positions, generated asteroid markers, and orbit curves consume public OrbitEngine state queries.</p>
         </div>
       </section>
       <canvas id="scene" aria-label="Interactive OrbitEngine Solar System scene"></canvas>
