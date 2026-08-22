@@ -23,11 +23,12 @@ import {
   type RepresentationLevel,
 } from "./representation-lod.js";
 import { positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
-import { BatchedMarkerLayer } from "./runtime-asteroid-markers.js";
+import { MARKER_PIXEL_SIZE, BatchedMarkerLayer } from "./runtime-asteroid-markers.js";
+import { SelectionHalo } from "./selection-halo.js";
 
-export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 0.02;
+export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 0.000001;
 export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
-export const FOCUS_DISTANCE_RADIUS_MULTIPLIER = 8;
+export const FOCUS_DISTANCE_RADIUS_MULTIPLIER = 24;
 export const MAX_PROMOTED_RUNTIME_SPHERES = 128;
 
 interface SceneBody {
@@ -79,7 +80,7 @@ export class SolarSystemScene {
   readonly #states = new Map<ObjectId, PropagationState>();
   readonly #positions = new Map<ObjectId, THREE.Vector3>();
   readonly #onSelect?: (objectId: ObjectId) => void;
-  readonly #selectionHalo: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
+  readonly #selectionHalo: SelectionHalo;
   #radiusMode: RadiusMode = "adaptive";
   #selected?: ObjectId;
   #focusId?: ObjectId;
@@ -94,13 +95,7 @@ export class SolarSystemScene {
     this.#markerLayer = new BatchedMarkerLayer(scene);
     this.#runtimeSphereGeometry = new THREE.SphereGeometry(1, 20, 12);
     this.#runtimeSphereMaterial = new THREE.MeshBasicMaterial({ color: 0x9aa7b5 });
-    this.#selectionHalo = new THREE.Mesh(
-      new THREE.TorusGeometry(1, 0.08, 8, 32),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }),
-    );
-    this.#selectionHalo.name = "Selected body halo";
-    this.#selectionHalo.visible = false;
-    this.#scene.add(this.#selectionHalo);
+    this.#selectionHalo = new SelectionHalo(scene);
 
     for (const entry of scenario.bodies) {
       this.#committedEntries.set(entry.definition.id, entry);
@@ -284,7 +279,7 @@ export class SolarSystemScene {
         || objectId === this.#focusId;
       this.#orbitRenderer.setBodyRepresentation(objectId, pathVisible);
     }
-    this.#updateSelectionHalo(camera);
+    this.#updateSelectionHalo(camera, viewportHeightPixels);
   }
 
   pick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera): ObjectId | undefined {
@@ -417,7 +412,7 @@ export class SolarSystemScene {
     });
   }
 
-  /** Local-system-aware framing avoids the old 1.6-unit minimum for compact moons. */
+  /** Non-star focus framing is body-size driven; local hierarchy is revealed by zooming back out. */
   focusDistanceFor(objectId: ObjectId): number {
     const entry = this.#currentEntries.get(objectId);
     if (entry === undefined) throw new RangeError(`Unknown scenario body: ${objectId}`);
@@ -425,35 +420,29 @@ export class SolarSystemScene {
       mode: "physical",
       physicalRadiusMeters: meters(entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius ?? 0),
     });
+    if (entry.definition.type !== ObjectType.star) {
+      return Math.min(
+        MAX_FOCUS_DISTANCE_SCENE_UNITS,
+        Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, physicalRadius * FOCUS_DISTANCE_RADIUS_MULTIPLIER),
+      );
+    }
+
     const position = this.#positions.get(objectId);
-    if (position === undefined) return Math.min(MAX_FOCUS_DISTANCE_SCENE_UNITS, Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, physicalRadius * FOCUS_DISTANCE_RADIUS_MULTIPLIER));
+    if (position === undefined) return MAX_FOCUS_DISTANCE_SCENE_UNITS;
     const localDistances: number[] = [];
     for (const candidate of this.#currentEntries.values()) {
-      if (candidate.definition.id === objectId) continue;
-      const isChild = candidate.definition.centralBody === objectId;
-      const isMoonSibling = entry.definition.type === ObjectType.moon
-        && candidate.definition.centralBody === entry.definition.centralBody;
-      if (!isChild && !isMoonSibling && candidate.definition.id !== entry.definition.centralBody) continue;
+      if (candidate.definition.id === objectId || candidate.definition.centralBody !== objectId) continue;
       const candidatePosition = this.#positions.get(candidate.definition.id);
       if (candidatePosition !== undefined) localDistances.push(position.distanceTo(candidatePosition));
     }
-    if (entry.definition.type === ObjectType.star) {
-      const extent = Math.max(...localDistances, 6);
-      return Math.min(MAX_FOCUS_DISTANCE_SCENE_UNITS, Math.max(1.6, extent * 0.25));
-    }
-    const localExtent = Math.max(...localDistances, 0);
-    return Math.min(
-      MAX_FOCUS_DISTANCE_SCENE_UNITS,
-      Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, localExtent * 4, physicalRadius * FOCUS_DISTANCE_RADIUS_MULTIPLIER * 3),
-    );
+    const extent = Math.max(...localDistances, 6);
+    return Math.min(MAX_FOCUS_DISTANCE_SCENE_UNITS, Math.max(1.6, extent * 0.25));
   }
 
   dispose(): void {
     this.#orbitRenderer.dispose();
     this.#markerLayer.dispose();
-    this.#scene.remove(this.#selectionHalo);
-    this.#selectionHalo.geometry.dispose();
-    this.#selectionHalo.material.dispose();
+    this.#selectionHalo.dispose();
     for (const body of this.#bodies.values()) {
       this.#scene.remove(body.mesh);
       body.mesh.geometry.dispose();
@@ -588,18 +577,31 @@ export class SolarSystemScene {
     return result;
   }
 
-  #updateSelectionHalo(camera: THREE.Camera | undefined): void {
+  #updateSelectionHalo(camera: THREE.Camera | undefined, viewportHeightPixels?: number): void {
     const selected = this.#selected;
     const position = selected === undefined ? undefined : this.#positions.get(selected);
     if (position === undefined) {
-      this.#selectionHalo.visible = false;
+      this.#selectionHalo.hide();
       return;
     }
-    this.#selectionHalo.visible = true;
-    this.#selectionHalo.position.copy(position);
-    const mesh = selected === undefined ? undefined : this.meshFor(selected);
-    const radius = mesh?.scale.x ?? 0.002;
-    this.#selectionHalo.scale.setScalar(Math.max(radius * 1.3, 0.002));
-    if (camera !== undefined) this.#selectionHalo.lookAt(camera.position);
+    this.#selectionHalo.setPosition(position);
+    if (!(camera instanceof THREE.PerspectiveCamera)
+        || viewportHeightPixels === undefined
+        || !Number.isFinite(viewportHeightPixels)
+        || viewportHeightPixels <= 0) {
+      return;
+    }
+
+    const representation = this.#representations.get(selected) ?? Representation.marker;
+    let bodyRadiusPixels = MARKER_PIXEL_SIZE / 2;
+    if (representation === Representation.sphere) {
+      const mesh = this.meshFor(selected);
+      if (mesh !== undefined) {
+        const distance = Math.max(camera.position.distanceTo(position), mesh.scale.x * 2, Number.EPSILON);
+        const fieldOfView = camera.fov * Math.PI / 180;
+        bodyRadiusPixels = projectedRadiusPixels(mesh.scale.x, distance, fieldOfView, viewportHeightPixels);
+      }
+    }
+    this.#selectionHalo.update(position, bodyRadiusPixels, camera, viewportHeightPixels);
   }
 }
