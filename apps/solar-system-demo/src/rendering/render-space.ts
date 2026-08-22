@@ -10,6 +10,7 @@ export {
 export const ASTRONOMICAL_UNIT_METERS = 149_597_870_700;
 export const SCENE_UNITS_PER_ASTRONOMICAL_UNIT = 100;
 export const METERS_TO_SCENE_UNITS = SCENE_UNITS_PER_ASTRONOMICAL_UNIT / ASTRONOMICAL_UNIT_METERS;
+export const METERS_PER_SCENE_UNIT = ASTRONOMICAL_UNIT_METERS / SCENE_UNITS_PER_ASTRONOMICAL_UNIT;
 /** Retained as a named policy bound for compatibility; adaptive sizing is camera/pixel based. */
 export const MIN_ADAPTIVE_RADIUS_SCENE_UNITS = 0;
 export const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });

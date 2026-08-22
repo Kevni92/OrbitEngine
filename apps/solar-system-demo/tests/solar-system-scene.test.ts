@@ -125,6 +125,23 @@ test("scene accepts paths in arbitrary declared output frames", () => {
   visual.dispose();
 });
 
+test("resolved surfaces use lit materials while stellar illumination survives star LOD", () => {
+  const root = new THREE.Scene();
+  const visual = new SolarSystemScene(root, scenario());
+  visual.update(SCENARIO_BODIES.map((body) => body.anchor));
+  assert.ok(visual.meshFor(EARTH_ID)?.material instanceof THREE.MeshLambertMaterial);
+  assert.ok(visual.meshFor(SUN_ID)?.material instanceof THREE.MeshStandardMaterial);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10_000);
+  camera.position.set(0, -1_000, 600);
+  camera.lookAt(0, 0, 0);
+  visual.setFocusId(SUN_ID);
+  visual.updatePresentation(camera, 900);
+  assert.ok(visual.illuminationFor(EARTH_ID)?.totalIrradianceWattsPerSquareMeter! > 0);
+  assert.notEqual(visual.representationFor(SUN_ID), "sphere");
+  assert.ok(visual.illuminationFor(EARTH_ID)?.contributions.some((contribution) => contribution.emitterId === SUN_ID));
+  visual.dispose();
+});
+
 test("hierarchical LOD preserves global context while resolving only the focused local system", () => {
   const root = new THREE.Scene();
   const visual = new SolarSystemScene(root, scenario());
