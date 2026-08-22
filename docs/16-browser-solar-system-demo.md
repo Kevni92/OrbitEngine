@@ -8,7 +8,7 @@ The demo is a private in-repository reference application. It is deliberately **
 
 The initial visual stack is TypeScript + Vite + Three.js. Browser execution uses the real OrbitEngine WebAssembly backend compiled from the same portable C++ core as the Node native backend.
 
-This document defines application boundaries, browser/WASM loading, render-space precision, simulation-time animation, scenario data, UI scope, tests, and staging. It does not define new orbital physics.
+This document defines application boundaries, browser/WASM loading, render-space precision, simulation-time animation, scenario data, UI scope, tests, and staging. It does not define new orbital physics. The later celestial-appearance, atmosphere, and stellar-lighting extension is defined by [19 — Celestial Appearance, Atmospheres, and Stellar Lighting](19-celestial-appearance-atmospheres-and-lighting.md) and preserves all boundaries in this document.
 
 ## Decisions at a glance
 
@@ -31,6 +31,7 @@ This document defines application boundaries, browser/WASM loading, render-space
 - The first useful Solar-System motion demo depends on #20 and #23. Browser-WASM packaging/smoke work may be implemented earlier.
 - Initial CI includes unit/build tests plus a real headless-browser WASM smoke test. WebGL availability is capability-checked and produces a clear unsupported message rather than a crash.
 - The production demo build is static-hosting compatible. Deployment to GitHub Pages or another host is a separate operational task.
+- Celestial appearance, atmosphere shaders, optical derivation, stellar illumination, and inspection lighting are application/rendering concerns governed by document 19; they never become OrbitEngine physical authority merely because they describe physical bodies.
 
 ## Architectural boundary
 
@@ -273,12 +274,13 @@ Owns public OrbitEngine initialization only. It may normalize demo error present
 Owns deterministic application metadata and registration orchestration:
 
 - human-readable names;
-- visual colors/material choices;
+- display accent/fallback colors;
 - initial camera/focus preference;
 - committed normalized physical/state/frame records;
-- source/provenance metadata.
+- application-owned celestial appearance records defined by document 19;
+- source/provenance metadata, with appearance provenance independent from orbital provenance.
 
-Names/colors are demo metadata keyed by `ObjectId`; they do not become physical engine properties.
+Names, accent colors, composition, atmosphere appearance, and stellar emission metadata are demo/scenario data keyed by `ObjectId`; they do not become OrbitEngine physical properties.
 
 ### `simulation/`
 
@@ -288,9 +290,11 @@ Owns wall-clock-to-requested-time mapping and bounded query scheduling. It does 
 
 Owns metres→scene-unit conversion, camera-relative origin, presentation-frame conversion, meshes, labels, selection raycasting, visual trails, and Three.js resources.
 
+For celestial appearance it additionally owns the renderer-side derivation and resources defined by document 19: optical-library lookup, linear-RGB reflectance derivation, stellar-illumination resolution from authoritative same-epoch positions, lit body materials, atmosphere shell shaders, tone/exposure mapping, and presentation-only Enhanced lighting. None of those resources are authoritative simulation state.
+
 ### `ui/`
 
-Owns buttons, sliders/selects, debug panels, and user-visible formatting. Civil/calendar display conversion is presentation logic and must not replace canonical TDB `SimulationInstant` state.
+Owns buttons, sliders/selects, debug panels, and user-visible formatting. Civil/calendar display conversion is presentation logic and must not replace canonical TDB `SimulationInstant` state. Physical/Enhanced lighting selection and any indication that Enhanced mode uses artificial fill also belong here.
 
 ## Authoritative data flow
 
@@ -328,6 +332,20 @@ pretend this is authoritative physics
 ```
 
 The demo may interpolate **purely visual camera motion or UI transitions**, but it must not interpolate/extrapolate object physical state and then present that result as an OrbitEngine state. If a future optimization visually interpolates between authoritative snapshots, it must be explicitly marked as render interpolation and periodically re-anchor to engine results; that optimization is outside v1.
+
+Celestial appearance extends the downstream presentation flow only:
+
+```text
+same-epoch authoritative body/star state + application appearance metadata
+                             |
+                             v
+             physical stellar irradiance resolution
+                             |
+                             v
+          surface + atmosphere presentation shaders
+```
+
+Adaptive visual radii, atmosphere-rim exaggeration, tone mapping, and Enhanced fill must never feed back into the authoritative state or SI-space irradiance inputs.
 
 ## Simulation time controller
 
@@ -481,6 +499,8 @@ visualRadiusSceneUnits
 
 but only the first originates from OrbitEngine.
 
+Document 17 supersedes the legacy fixed visible/exaggerated radius implementation with the canonical `physical` and camera-aware `adaptive` modes. Document 19 further requires atmosphere presentation thickness to remain separate from both physical atmosphere scale height and adaptive body radius.
+
 ### Camera depth
 
 Because the scene uses a focus-relative origin and a bounded metres→scene conversion, v1 should use ordinary perspective depth rather than enabling logarithmic/reversed depth by default.
@@ -520,6 +540,8 @@ The scenario is committed as normalized data compatible with the public OrbitEng
 - propagation configuration;
 - source/provenance notes.
 
+Application-owned appearance records defined by document 19 may additionally describe visible-layer composition/reflectance, atmosphere structure/optics/clouds, and stellar temperature/luminosity. Those records use the same stable `ObjectId` association but are not OrbitEngine registration properties.
+
 The first motion scenario uses the production engine model implemented by #23 rather than a JavaScript ellipse approximation.
 
 Expected initial model use:
@@ -541,15 +563,17 @@ The committed fixture must state:
 - normalization steps;
 - known accuracy/validity limitations.
 
+Appearance sources are recorded independently where they differ from state-vector/physical-constant sources. In particular, an ephemeris source must not be presented as authority for atmosphere composition, optical depth, surface reflectance, or stellar temperature unless it actually provides those values.
+
 The demo must not imply the small fixture is the future production ephemeris database.
 
 Runtime demo execution never calls NASA/JPL over the network.
 
 ### Replaceability
 
-The application scenario loader consumes a normalized demo-scenario shape. Later importer output should be able to produce equivalent registration inputs without changing rendering code.
+The application scenario loader consumes a normalized demo-scenario shape. Later importer output should be able to produce equivalent registration and appearance inputs without changing rendering architecture.
 
-## Visual/UI v1
+## Visual/UI v1 and appearance extension
 
 The first complete engine-driven demo provides:
 
@@ -569,7 +593,7 @@ The first complete engine-driven demo provides:
 - selected object's current position/velocity snapshot and propagation metadata exposed by the public API;
 - a clear indicator when body radii are visually exaggerated.
 
-The demo should remain useful with procedural spheres; photorealistic textures are deferred so rendering assets/licensing do not block the engine reference application.
+Document 19 defines the later appearance extension without replacing this application boundary. Resolved non-stellar spheres become lit presentation surfaces whose reflectance derives from appearance metadata when available. Atmospheres use LOD-gated shader shells. The UI exposes `Physical` and `Enhanced` lighting modes, with Enhanced clearly marked as artificial inspection fill. External photorealistic textures remain optional/deferred.
 
 ## Orbit/path visualization
 
@@ -623,10 +647,12 @@ Unit tests cover pure application logic, including:
 - metres→scene-unit conversion;
 - reversible ICRS/ICRF → J2000-ecliptic presentation rotation and sign convention;
 - focus-relative coordinate mapping;
-- physical vs exaggerated radius policy;
+- physical vs exaggerated/adaptive radius policy;
 - demo metadata keyed by `ObjectId` without mutating engine objects.
 
 Mocked engine tests verify that body mesh updates consume returned public state snapshots and do not calculate orbital motion locally. Rendering tests also verify that body meshes, sampled paths, and camera centering use the same transformed presentation coordinates while raw scenario/engine states remain unchanged.
+
+Appearance implementation adds deterministic tests required by document 19 for optical derivation, blackbody chromaticity, inverse-square/multi-star illumination, Physical/Enhanced semantics, atmosphere LOD/resource lifecycle, and separation between physical SI inputs and adaptive presentation values.
 
 ### Engine/package browser smoke
 
@@ -653,7 +679,7 @@ The browser smoke should assert one of:
 - WebGL 2 is available and the demo reaches a rendered/ready state; or
 - the application shows the explicit unsupported-renderer message.
 
-CI correctness of the OrbitEngine WASM query must not depend on GPU-driver-specific pixel snapshots. Pixel-perfect screenshot regression testing is not part of v1.
+CI correctness of the OrbitEngine WASM query must not depend on GPU-driver-specific pixel snapshots. Pixel-perfect screenshot regression testing is not part of v1. Later appearance tests may add a small number of tolerance-based Playwright visual checks, but numerical/diagnostic invariants remain the primary correctness oracle as specified by document 19.
 
 ### Production build
 
@@ -744,6 +770,12 @@ Scope:
 
 Later numerical/N-body/encounter/trajectory features extend the demo through additional issues; they do not modify this boundary.
 
+### Stage E — composition-driven appearance and stellar lighting
+
+Governed by document 19 and the Implementation issues created from Architecture #90.
+
+Scope is intentionally decomposed into catalog/appearance data, lit surface and stellar-illumination derivation, atmosphere shaders/LOD, UI lighting controls, and regression/quality coverage. These tasks extend only the application presentation path and do not change OrbitEngine physics ownership.
+
 ## Explicit non-goals
 
 This architecture does not add:
@@ -761,8 +793,10 @@ This architecture does not add:
 - WASM threads/SharedArrayBuffer;
 - server-side rendering;
 - a frontend framework;
-- photorealistic texture pipeline;
+- mandatory photorealistic texture pipeline;
 - deployment credentials/workflow.
+
+Atmospheric aerodynamics, dynamic weather, scientific spectral radiative transfer, and global high-cost volumetric raymarching are additionally excluded by document 19 unless later architecture explicitly introduces them.
 
 ## Acceptance contract
 
@@ -777,4 +811,6 @@ A conforming demo implementation satisfies all of the following:
 7. render scale/body exaggeration are presentation-only and explicitly distinguishable from physical values;
 8. the committed scenario is offline, deterministic, normalized, and provenance-documented;
 9. browser/WASM asset resolution is tested through a real consumer build;
-10. later numerical/N-body features can be visualized through the same state-at-time boundary without redesigning the app/engine separation.
+10. later numerical/N-body features can be visualized through the same state-at-time boundary without redesigning the app/engine separation;
+11. celestial appearance, atmosphere rendering and stellar lighting remain downstream presentation/data concerns and obey document 19 rather than extending OrbitEngine physical records;
+12. physical stellar irradiance is resolved from authoritative same-epoch SI-space body/star state and is never changed by adaptive rendering or Enhanced inspection lighting.
