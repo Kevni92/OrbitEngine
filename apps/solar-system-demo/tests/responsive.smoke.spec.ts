@@ -18,6 +18,10 @@ test("portrait surfaces switch independently and expose direct control navigatio
   await page.locator('#control-nav button[data-target="advanced-details"]').click();
   await expect(page.locator("#advanced-details")).toHaveAttribute("open", "");
   await expect(page.locator("#advanced-details")).toBeInViewport();
+  await page.locator('#control-nav button[data-target="view-section"]').click();
+  await expect(page.locator("#orbit-guide-legend")).toBeInViewport();
+  const legendBox = await page.locator("#orbit-guide-legend").boundingBox();
+  expect(legendBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(390);
 
   await page.selectOption("#selected-select", "1003");
   await expect(page.locator("#compact-selected-body")).toHaveText("Earth");
@@ -77,4 +81,8 @@ test("constrained desktop navigation keeps selection and summary visible", async
   await expect(page.locator("#population-section")).toBeInViewport();
   await expect(page.locator("#panel-summary")).toContainText("Earth");
   await expect(page.locator("#compact-simulation-time")).toContainText("Uhr");
+  await page.locator('#control-nav button[data-target="view-section"]').click();
+  await expect(page.locator("#orbit-guide-legend")).toBeInViewport();
+  const legendBox = await page.locator("#orbit-guide-legend").boundingBox();
+  expect(legendBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(1024);
 });

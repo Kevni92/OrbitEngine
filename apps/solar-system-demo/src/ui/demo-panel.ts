@@ -101,6 +101,7 @@ export class DemoPanel {
   readonly #gridState = element<HTMLElement>("grid-state");
   readonly #orbitsState = element<HTMLElement>("orbits-state");
   readonly #axesState = element<HTMLElement>("axes-state");
+  readonly #orbitGuideLegend = element<HTMLDetailsElement>("orbit-guide-legend");
   readonly #selectedBodySection = element<HTMLElement>("selected-body-section");
   readonly #options: DemoPanelOptions;
 
@@ -127,6 +128,7 @@ export class DemoPanel {
     this.#orbitsToggle.addEventListener("click", () => {
       const visible = !this.isPressed(this.#orbitsToggle);
       this.setToggle(this.#orbitsToggle, this.#orbitsState, visible);
+      this.#setOrbitGuideVisibility(visible);
       this.#options.onOrbitsChange?.(visible);
     });
     this.#axesToggle.addEventListener("click", () => {
@@ -287,6 +289,12 @@ export class DemoPanel {
 
   setOrbitsVisible(visible: boolean): void {
     this.setToggle(this.#orbitsToggle, this.#orbitsState, visible);
+    this.#setOrbitGuideVisibility(visible);
+  }
+
+  #setOrbitGuideVisibility(visible: boolean): void {
+    this.#orbitGuideLegend.hidden = !visible;
+    this.#orbitGuideLegend.setAttribute("aria-hidden", String(!visible));
   }
 
   setOrbitStatus(state: string, message: string): void {

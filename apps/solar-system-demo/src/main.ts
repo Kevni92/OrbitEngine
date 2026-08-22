@@ -46,9 +46,17 @@ interface BrowserRenderBodyDiagnostics {
   readonly positionErrorSceneUnits?: number;
 }
 
+interface BrowserOrbitDiagnostics {
+  readonly objectId: string;
+  readonly role: string;
+  readonly opacity: number;
+  readonly visible: boolean;
+}
+
 interface BrowserRenderDiagnostics {
   readonly focusId: string;
   readonly selectedId: string;
+  readonly orbits: readonly BrowserOrbitDiagnostics[];
   readonly bodies: readonly BrowserRenderBodyDiagnostics[];
 }
 
@@ -440,6 +448,12 @@ async function bootstrap(): Promise<void> {
     window.__orbitDemoRenderDiagnostics = () => ({
       focusId,
       selectedId,
+      orbits: (scene?.orbitGuideDiagnostics() ?? []).map((orbit) => ({
+        objectId: orbit.objectId,
+        role: orbit.role,
+        opacity: orbit.opacity,
+        visible: orbit.visible,
+      })),
       bodies: (stateSource?.currentBodies() ?? []).map((entry) => {
         const diagnostics = scene?.renderDiagnosticsFor(entry.definition.id, renderShell!.camera);
         return {
