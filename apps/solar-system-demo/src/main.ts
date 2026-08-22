@@ -18,6 +18,7 @@ import { SimulationClock } from "./simulation/simulation-clock.js";
 import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
 import { CelestialBrowser } from "./ui/celestial-browser.js";
 import { DemoPanel } from "./ui/demo-panel.js";
+import { ResponsiveSurfaceManager } from "./ui/responsive-surfaces.js";
 import { simulationInstantFromLocalDateTimeInput } from "./ui/civil-time.js";
 import {
   compareSimulationInstants,
@@ -59,6 +60,7 @@ declare global {
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene");
 const clock = new SimulationClock();
+const surfaceManager = new ResponsiveSurfaceManager();
 
 async function bootstrap(): Promise<void> {
   let panel!: DemoPanel;
@@ -479,6 +481,7 @@ async function bootstrap(): Promise<void> {
   loop.start();
   window.addEventListener("beforeunload", () => {
     loop.stop();
+    surfaceManager.dispose();
     window.removeEventListener("resize", resize);
     delete window.__orbitDemoRenderDiagnostics;
     guides?.dispose();
