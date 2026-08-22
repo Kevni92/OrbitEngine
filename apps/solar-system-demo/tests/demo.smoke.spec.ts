@@ -135,9 +135,12 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await page.selectOption("#radius-mode", "physical");
   await page.selectOption("#radius-mode", "adaptive");
   await page.locator("#population-count").fill("300");
+  await page.locator("#population-advanced-details summary").click();
   await page.locator("#population-seed").fill("smoke-62");
   await page.click("#add-asteroids");
-  await expect(page.locator("#population-status")).toContainText("300 generated asteroids");
+  await expect(page.locator("#population-heading")).toHaveText("Generated asteroids");
+  await expect(page.locator("#population-live-status")).toHaveText("Live total: 300 generated asteroids");
+  await expect(page.locator("#population-status")).toContainText("Added 300 generated asteroids");
   await expect(page.locator("#population-diagnostics")).toContainText("Generated asteroids: 300");
   await expect(page.locator("#population-diagnostics")).toContainText("Registered objects: 348");
   await expect(page.locator("#population-diagnostics")).toContainText("Queried objects: 348");
@@ -154,6 +157,7 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await page.waitForTimeout(120);
   await page.click("#play-pause");
   await page.click("#remove-asteroids");
+  await expect(page.locator("#population-live-status")).toHaveText("Live total: 0 generated asteroids");
   await expect(page.locator("#population-status")).toContainText("Removed 300 generated asteroids");
   await expect(page.locator("#population-diagnostics")).toContainText("Generated asteroids: 0");
   await expect(page.locator("#population-diagnostics")).toContainText("Registered objects: 48");

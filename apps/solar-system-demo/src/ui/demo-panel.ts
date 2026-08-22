@@ -65,6 +65,7 @@ export class DemoPanel {
   readonly #populationSeed = element<HTMLInputElement>("population-seed");
   readonly #addAsteroids = element<HTMLButtonElement>("add-asteroids");
   readonly #removeAsteroids = element<HTMLButtonElement>("remove-asteroids");
+  readonly #populationLiveStatus = element<HTMLElement>("population-live-status");
   readonly #populationStatus = element<HTMLElement>("population-status");
   readonly #populationDiagnostics = element<HTMLElement>("population-diagnostics");
   readonly #hierarchyDiagnostics = element<HTMLElement>("hierarchy-diagnostics");
@@ -357,6 +358,11 @@ export class DemoPanel {
 
   setPopulationStatus(state: string, message: string): void {
     setStatus(this.#populationStatus, state, message);
+  }
+
+  setPopulationLiveCount(count: number): void {
+    this.#populationLiveStatus.textContent = `Live total: ${count} generated asteroid${count === 1 ? "" : "s"}`;
+    this.#populationLiveStatus.dataset.state = count > 0 ? "ready" : "pending";
   }
 
   setPopulationDiagnostics(generatedCount: number, diagnostics: LodDiagnostics): void {

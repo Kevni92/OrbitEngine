@@ -134,24 +134,31 @@
           <section class="panel-section" id="population-section" tabindex="-1" aria-labelledby="population-heading">
             <div class="section-heading">
               <div>
-                <p class="section-kicker">Runtime population</p>
-                <h2 id="population-heading">Asteroid stress test</h2>
+                <p class="section-kicker">Demo feature</p>
+                <h2 id="population-heading">Generated asteroids</h2>
               </div>
             </div>
+            <p class="field-help">Add a deterministic synthetic population to explore how the demo represents many registered bodies.</p>
             <div class="exact-time-grid">
               <label class="field" for="population-count">Count
                 <input id="population-count" type="number" min="1" max="10000" step="1" value="100" disabled />
               </label>
-              <label class="field" for="population-seed">Seed
-                <input id="population-seed" type="text" value="42" disabled />
-              </label>
             </div>
             <div class="simulation-controls">
               <button class="secondary-button" id="add-asteroids" type="button" disabled>Add asteroids</button>
-              <button class="secondary-button" id="remove-asteroids" type="button" disabled>Remove generated</button>
+              <button class="secondary-button" id="remove-asteroids" type="button" disabled>Remove all</button>
             </div>
-            <p class="field-help">Synthetic initial conditions are registered in OrbitEngine and propagated by its analytical model.</p>
-            <p class="scenario-note" id="population-status" data-state="pending">No runtime asteroids</p>
+            <p class="population-live-status" id="population-live-status" data-state="pending" aria-live="polite">Live total: 0 generated asteroids</p>
+            <p class="scenario-note" id="population-status" data-state="pending" aria-live="polite">Ready to add a generated population.</p>
+            <details class="population-advanced-details" id="population-advanced-details">
+              <summary>Reproducibility options</summary>
+              <div class="population-advanced-content">
+                <label class="field" for="population-seed">Seed
+                  <input id="population-seed" type="text" value="42" disabled />
+                </label>
+                <p class="field-help">The same count and seed produce the same deterministic initial conditions. Generated bodies remain registered in OrbitEngine and can be selected from the body browser.</p>
+              </div>
+            </details>
           </section>
 
           <section class="panel-section body-summary" aria-labelledby="body-heading">
@@ -196,7 +203,7 @@
                   <div><dt>Engine</dt><dd id="engine-details">Waiting for WASM…</dd></div>
                   <div><dt>Renderer</dt><dd id="rendering-details">Waiting for WebGL…</dd></div>
                   <div><dt>Jupiter local system</dt><dd id="hierarchy-diagnostics">Europa representation: pending</dd></div>
-                  <div><dt>Runtime population / LOD</dt><dd id="population-diagnostics">Generated asteroids: 0 · Registered objects: 48 · Queried objects: 0 · Hidden: 0 · Markers: 0 · Spheres: 48 · Promoted runtime spheres: 0</dd></div>
+                  <div><dt>Generated population diagnostics</dt><dd id="population-diagnostics">Generated asteroids: 0 · Registered objects: 48 · Queried objects: 0 · Hidden: 0 · Markers: 0 · Spheres: 48 · Promoted runtime spheres: 0</dd></div>
                 </dl>
                 <pre class="technical-details" id="technical-details">No state snapshot yet.</pre>
               </section>

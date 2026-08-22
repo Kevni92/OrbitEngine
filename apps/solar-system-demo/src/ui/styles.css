@@ -136,6 +136,11 @@ select, input { min-width: 0; width: 100%; }
 .simulation-time { color: var(--text-primary); font-variant-numeric: tabular-nums; font-size: 1.3rem; font-weight: 650; letter-spacing: .01em; }
 .local-time-editor { border-top: 1px solid var(--section-separator); display: grid; gap: .55rem; margin-top: .8rem; padding-top: .8rem; }
 .field-help, .panel-footnote, .scenario-note, .orbit-status { color: var(--text-subtle); font-size: .69rem; line-height: 1.45; }
+.population-live-status { background: rgba(141, 227, 176, .08); border: 1px solid rgba(141, 227, 176, .28); border-radius: 8px; color: var(--success); font-size: .72rem; font-weight: 700; line-height: 1.35; padding: .55rem .65rem; }
+.population-live-status[data-state="pending"] { background: rgba(128, 184, 255, .07); border-color: rgba(128, 184, 255, .22); color: var(--text-muted); }
+.population-advanced-details { border-top: 1px solid var(--section-separator); color: var(--text-muted); font-size: .7rem; padding-top: .7rem; }
+.population-advanced-details summary { cursor: pointer; font-weight: 650; }
+.population-advanced-content { display: grid; gap: .6rem; padding-top: .65rem; }
 .toggle-grid { display: grid; gap: .45rem; grid-template-columns: repeat(3, 1fr); }
 .toggle-button { align-items: center; display: flex; flex-direction: column; gap: .22rem; justify-content: center; min-height: 3rem; padding: .45rem .25rem; }
 .toggle-button[aria-pressed="true"] { background: rgba(128, 184, 255, .15); border-color: rgba(128, 184, 255, .6); }
