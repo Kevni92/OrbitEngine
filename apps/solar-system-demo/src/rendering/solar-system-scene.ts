@@ -355,7 +355,7 @@ export class SolarSystemScene {
     const body = this.#bodies.get(path.objectId);
     const entry = this.#currentEntries.get(path.objectId);
     if (body === undefined && entry === undefined) throw new RangeError(`Unknown scenario body: ${path.objectId}`);
-    const color = body?.mesh.material.color.getHex() ?? 0x9aa7b5;
+    const color = body?.mesh.material.color.getHex() ?? this.#currentEntries.get(path.objectId)?.definition.display.accentColor ?? 0x9aa7b5;
     this.#orbitRenderer.setPath(path, color);
   }
 

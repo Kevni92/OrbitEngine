@@ -230,7 +230,7 @@ export class CelestialBrowser {
     const icon = document.createElement("span");
     icon.className = "celestial-body-icon";
     icon.dataset.type = node.definition.display.category;
-    icon.style.setProperty("--body-color", `#${node.definition.display.color.toString(16).padStart(6, "0")}`);
+    icon.style.setProperty("--body-color", `#${node.definition.display.accentColor.toString(16).padStart(6, "0")}`);
     icon.setAttribute("aria-hidden", "true");
     const name = document.createElement("span");
     name.className = "celestial-body-name";

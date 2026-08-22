@@ -107,7 +107,7 @@ export class BatchedMarkerLayer {
       }
       // Committed/runtime catalog bodies carry display colors. The fallback is
       // only for intentionally incomplete synthetic fixtures used by low-level tests.
-      const color = new THREE.Color(body.definition.display?.color ?? FALLBACK_MARKER_COLOR);
+      const color = new THREE.Color(body.definition.display?.accentColor ?? FALLBACK_MARKER_COLOR);
       this.#colors[offset] = color.r;
       this.#colors[offset + 1] = color.g;
       this.#colors[offset + 2] = color.b;

@@ -113,6 +113,7 @@ function syntheticDefinition(
       configurationRevision: configRevision(seed, sequence),
     }),
     display: Object.freeze({
+      accentColor: 0x9aa7b5,
       color: 0x9aa7b5,
       category: "asteroid",
       aliases: Object.freeze(["synthetic", "runtime", "asteroid"]),
