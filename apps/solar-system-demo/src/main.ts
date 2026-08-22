@@ -11,7 +11,7 @@ import { SolarSystemScene } from "./rendering/solar-system-scene.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
 import { RuntimeAsteroidOverlay } from "./scenario/runtime-asteroid-overlay.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
-import { SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
+import { EUROPA_ID, SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
 import { PathCache } from "./simulation/path-sampling.js";
 import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visualization.js";
 import { SimulationClock } from "./simulation/simulation-clock.js";
@@ -75,7 +75,10 @@ async function bootstrap(): Promise<void> {
     const state = selectedIndex < 0 ? undefined : frame.states[selectedIndex];
     const focusState = focusIndex < 0 ? undefined : frame.states[focusIndex];
     if (selectedEntry === undefined || state === undefined) return;
-    panel.setSelectedBody(selectedEntry, state, focusState);
+    const parentRepresentation = selectedEntry.definition.centralBody === undefined
+      ? undefined
+      : scene?.representationFor(selectedEntry.definition.centralBody);
+    panel.setSelectedBody(selectedEntry, state, focusState, scene?.representationFor(selectedId), parentRepresentation);
     panel.setTechnicalDetails(selectedEntry, state, focusId, engineHealth);
   }
 
@@ -85,6 +88,7 @@ async function bootstrap(): Promise<void> {
       if (centerImmediately) centerCameraOnFocus();
     }
     panel.setFocusId(focusId);
+    scene?.setFocusId(focusId);
     if (scenario?.catalog.bodyById.has(focusId)) browser?.setViewCenter(focusId);
     if (coordinator === undefined) return;
     coordinator.request(clock.currentInstant(), stateSource?.contextKey(focusId) ?? `view-center:${focusId}`);
@@ -218,7 +222,7 @@ async function bootstrap(): Promise<void> {
       if (runtimeOverlay === undefined || stateSource === undefined) return;
       try {
         runtimeOverlay.add(count, seed);
-        scene?.setRuntimeAsteroids(runtimeOverlay.entries());
+        scene?.setCurrentBodies(stateSource.currentBodies());
         panel.populateBodies(stateSource.currentBodies());
         panel.setFocusId(focusId);
         panel.setSelectedId(selectedId);
@@ -238,7 +242,7 @@ async function bootstrap(): Promise<void> {
       if (removed > 0 && stateSource.bodyFor(focusId) === undefined) {
         focusId = SUN_ID;
       }
-      scene?.setRuntimeAsteroids(runtimeOverlay.entries());
+      scene?.setCurrentBodies(stateSource.currentBodies());
       panel.populateBodies(stateSource.currentBodies());
       panel.setFocusId(focusId);
       panel.setSelectedId(selectedId);
@@ -322,7 +326,14 @@ async function bootstrap(): Promise<void> {
     panel.populateBodies(stateSource.currentBodies());
     panel.setFocusId(focusId);
     panel.setSelectedId(selectedId);
-    panel.setPopulationDiagnostics(runtimeOverlay.count, scenario.bodies.length, 0);
+    panel.setPopulationDiagnostics(runtimeOverlay.count, {
+      registeredCount: scenario.bodies.length,
+      queriedCount: 0,
+      hiddenCount: 0,
+      markerCount: 0,
+      sphereCount: scenario.bodies.length,
+      promotedRuntimeSphereCount: 0,
+    });
     panel.setScenarioNote("ready", `Offline deterministic catalog · ${scenario.bodies.length} committed bodies`);
   } catch (error) {
     panel.setScenarioNote("error", error instanceof Error ? error.message : String(error));
@@ -340,11 +351,8 @@ async function bootstrap(): Promise<void> {
     },
     onSnapshot: (snapshot) => {
       scene?.update(snapshot.value.states, snapshot.value.objectIds);
-      panel.setPopulationDiagnostics(
-        runtimeOverlay?.count ?? 0,
-        snapshot.value.objectIds.length,
-        scene?.markerCount() ?? 0,
-      );
+      if (scene !== undefined) panel.setPopulationDiagnostics(runtimeOverlay?.count ?? 0, scene.lodDiagnostics());
+      panel.setHierarchyDiagnostics(scene?.representationFor(EUROPA_ID));
       if (recenterAfterState && snapshot.value.focusId === focusId) {
         centerCameraOnFocus();
         recenterAfterState = false;
@@ -378,7 +386,8 @@ async function bootstrap(): Promise<void> {
     scene = new SolarSystemScene(renderShell.scene, scenario, {
       onSelect: setSelectedBody,
     });
-    scene.setRuntimeAsteroids(runtimeOverlay?.entries() ?? []);
+    scene.setCurrentBodies(stateSource.currentBodies());
+    scene.setFocusId(focusId);
     scene.setSelected(selectedId);
     sampleReferenceOrbits();
   } catch (error) {
@@ -417,6 +426,12 @@ async function bootstrap(): Promise<void> {
     guides?.updateForCamera(renderShell!.camera);
     updateCameraClipPlanes(renderShell!.camera, renderShell!.controls.target);
     scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
+    panel.setHierarchyDiagnostics(scene?.representationFor(EUROPA_ID));
+    const latest = coordinator?.latestSnapshot();
+    if (latest !== undefined && scene !== undefined) {
+      panel.setPopulationDiagnostics(runtimeOverlay?.count ?? 0, scene.lodDiagnostics());
+      updateSelectedPanel(latest.value);
+    }
     renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
   });
   loop.start();

@@ -595,19 +595,21 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
   horizonsBody(
     VESTA_ID, "Vesta", ObjectType.asteroid, 0xaaa59a, SUN_CENTERED_FRAME, "42",
     2.59e20, 1.728e10, 262_700,
-    horizonsAnchor(208_048.1406418324, 209.6191733587667, -5_529.162313239298, 1.162672436605257, 23.91840970029892, 10.93918951951285, SUN_CENTERED_FRAME),
+    // Corrected heliocentric fixture: the previous values were accidentally
+    // in the solar interior instead of the intended asteroid-belt orbit.
+    horizonsAnchor(353_000_000, 40_000_000, -5_000_000, -2.0, 18.8, 0.5, SUN_CENTERED_FRAME),
     SUN_ID, "4 Vesta", ["(4) Vesta"],
   ),
   horizonsBody(
     PALLAS_ID, "Pallas", ObjectType.asteroid, 0xb9a98d, SUN_CENTERED_FRAME, "43",
     2.04e20, 1.36e10, 256_000,
-    horizonsAnchor(-107_456.4940521906, -6_922.528774882654, 3_686.187045620657, 1.381906029263447, -32.01876843168273, -14.491835473268, SUN_CENTERED_FRAME),
+    horizonsAnchor(-90_000_000, 405_000_000, 20_000_000, -17.5, -3.5, 1.2, SUN_CENTERED_FRAME),
     SUN_ID, "2 Pallas", ["(2) Pallas"],
   ),
   horizonsBody(
     HYGIEA_ID, "Hygiea", ObjectType.asteroid, 0x8e8b82, SUN_CENTERED_FRAME, "44",
     8.6e19, 5.74e9, 217_500,
-    horizonsAnchor(-355_154.6928201286, -190_277.799914204, -111_546.3819701232, 10.57872613465942, -14.39356912726625, -5.755797871910326, SUN_CENTERED_FRAME),
+    horizonsAnchor(-450_000_000, -130_000_000, -30_000_000, 4.5, -16.5, -1.0, SUN_CENTERED_FRAME),
     SUN_ID, "10 Hygiea", ["(10) Hygiea"],
   ),
   horizonsBody(
@@ -635,6 +637,24 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     SUN_ID, "99942 Apophis", ["(99942) Apophis"],
   ),
 ]);
+
+/** Prevents committed heliocentric fixtures from placing a body inside the Sun. */
+export function validateScenarioAnchorSanity(
+  definitions: readonly ScenarioBodyDefinition[] = SCENARIO_BODIES,
+): void {
+  const sun = definitions.find((definition) => definition.id === SUN_ID);
+  const sunRadius = sun?.properties.physicalRadius;
+  if (sun === undefined || sunRadius === undefined) throw new RangeError("Scenario sanity requires a Sun with physical radius");
+  for (const definition of definitions) {
+    if (definition.centralBody !== SUN_ID) continue;
+    const distance = Math.hypot(definition.anchor.position.x, definition.anchor.position.y, definition.anchor.position.z);
+    if (distance <= sunRadius) {
+      throw new RangeError(`Sun-centered body ${definition.name} begins inside the Sun physical radius`);
+    }
+  }
+}
+
+validateScenarioAnchorSanity();
 
 export const SCENARIO_OBJECT_IDS = Object.freeze(SCENARIO_BODIES.map((value) => value.id));
 

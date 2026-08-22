@@ -7,10 +7,13 @@ import {
   MIN_FOCUS_DISTANCE_SCENE_UNITS,
   SolarSystemScene,
 } from "../src/rendering/solar-system-scene.js";
-import { referenceFrameId, revisionId, simulationInstant } from "orbit-engine";
+import { meters, metersPerSecond, propagationState, referenceFrameId, revisionId, simulationInstant } from "orbit-engine";
 import type { OrbitPath } from "../src/simulation/path-sampling.js";
 import {
   EARTH_ID,
+  EUROPA_ID,
+  JUPITER_ID,
+  PHOBOS_ID,
   SCENARIO_BODIES,
   SCENARIO_OBJECT_IDS,
   SUN_CENTERED_FRAME,
@@ -118,5 +121,54 @@ test("scene accepts paths in arbitrary declared output frames", () => {
   };
   visual.setPath(path);
   assert.equal(visual.pathCount(), 1);
+  visual.dispose();
+});
+
+test("hierarchical LOD hides distant moons and resolves them in a focused local system", () => {
+  const root = new THREE.Scene();
+  const visual = new SolarSystemScene(root, scenario());
+  const statesById = new Map(SCENARIO_BODIES.map((body) => [body.id, body.anchor]));
+  for (const body of SCENARIO_BODIES) {
+    const parentId = body.centralBody;
+    const parent = parentId === undefined ? undefined : statesById.get(parentId);
+    if (parent === undefined) continue;
+    statesById.set(body.id, propagationState({
+      position: {
+        x: meters(parent.position.x + body.anchor.position.x),
+        y: meters(parent.position.y + body.anchor.position.y),
+        z: meters(parent.position.z + body.anchor.position.z),
+      },
+      velocity: {
+        x: metersPerSecond(parent.velocity.x + body.anchor.velocity.x),
+        y: metersPerSecond(parent.velocity.y + body.anchor.velocity.y),
+        z: metersPerSecond(parent.velocity.z + body.anchor.velocity.z),
+      },
+      epoch: body.anchor.epoch,
+      referenceFrame: SUN_CENTERED_FRAME,
+    }));
+  }
+  const states = SCENARIO_BODIES.map((body) => statesById.get(body.id)!);
+  const jupiter = SCENARIO_BODIES.find((body) => body.id === JUPITER_ID)!;
+  const jupiterPosition = positionToSceneUnits(jupiter.anchor.position);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.0001, 10_000);
+  camera.position.set(jupiterPosition.x, jupiterPosition.y - 900, jupiterPosition.z + 540);
+  camera.lookAt(jupiterPosition.x, jupiterPosition.y, jupiterPosition.z);
+  visual.update(states);
+  visual.setFocusId(SUN_ID);
+  visual.updatePresentation(camera, 900);
+  visual.updatePresentation(camera, 900);
+  assert.equal(visual.representationFor(EUROPA_ID), "hidden");
+
+  visual.setFocusId(JUPITER_ID);
+  camera.position.set(jupiterPosition.x, jupiterPosition.y - 1.6, jupiterPosition.z + 0.96);
+  camera.lookAt(jupiterPosition.x, jupiterPosition.y, jupiterPosition.z);
+  visual.updatePresentation(camera, 900);
+  assert.notEqual(visual.representationFor(EUROPA_ID), "hidden");
+
+  visual.setSelected(PHOBOS_ID);
+  visual.setFocusId(PHOBOS_ID);
+  visual.updatePresentation(camera, 900);
+  assert.notEqual(visual.representationFor(PHOBOS_ID), "hidden");
+  assert.ok(visual.focusDistanceFor(PHOBOS_ID) < 1.6);
   visual.dispose();
 });

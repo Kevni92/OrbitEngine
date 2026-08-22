@@ -1,5 +1,3 @@
-import { MIN_ADAPTIVE_RADIUS_SCENE_UNITS } from "./render-space.js";
-
 export const ADAPTIVE_FEATURE_RADIUS_PIXELS = 2;
 export const ADAPTIVE_REACH_RADIUS_PIXELS = 7;
 export const ADAPTIVE_POWER = 0.5;
@@ -60,10 +58,7 @@ export function projectedPixelsToSceneRadius(
   finitePositive(distanceSceneUnits, "camera distance");
   finitePositive(verticalFieldOfViewRadians, "vertical field of view");
   finitePositive(viewportHeightPixels, "viewport height");
-  return Math.max(
-    MIN_ADAPTIVE_RADIUS_SCENE_UNITS,
-    radiusPixels * 2 * Math.tan(verticalFieldOfViewRadians / 2) * distanceSceneUnits / viewportHeightPixels,
-  );
+  return radiusPixels * 2 * Math.tan(verticalFieldOfViewRadians / 2) * distanceSceneUnits / viewportHeightPixels;
 }
 
 /** Cap an adaptive radius to a local parent/sibling separation without shrinking physical scale. */
