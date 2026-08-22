@@ -9,6 +9,8 @@ import {
 import {
   blackbodyTemperatureToLinearRgb,
   deriveSurfaceReflectance,
+  LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION,
+  mapSceneDiffuseContributionToLambertLightIntensity,
   REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER,
   resolveStellarIllumination,
   type StellarEmitter,
@@ -42,6 +44,11 @@ import {
   type LightingMode,
   type LightingModeDiagnostics,
 } from "./lighting-mode.js";
+import {
+  createProceduralSurfaceTexture,
+  generateProceduralSurfaceData,
+  type ProceduralSurfaceDiagnostics,
+} from "./procedural-surface.js";
 
 export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 0.000001;
 export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
@@ -73,10 +80,13 @@ export interface BodyRenderDiagnostics {
   readonly ndcZ: number;
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
+  readonly surfaceTextureKind?: ProceduralSurfaceDiagnostics["kind"];
+  readonly surfaceTextureLuminanceRange?: number;
   readonly physicalIrradianceWattsPerSquareMeter?: number;
   readonly lightingMode: LightingMode;
   readonly inspectionFillApplied: boolean;
   readonly inspectionFillContribution: number;
+  readonly rendererInspectionFillIntensity: number;
 }
 
 function isGlobalContextEntry(entry: RegisteredScenarioBody): boolean {
@@ -97,6 +107,8 @@ export class SolarSystemScene {
   readonly #runtimeSphereMeshes = new Map<ObjectId, THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial>>();
   readonly #runtimeSphereGeometry: THREE.SphereGeometry;
   readonly #runtimeSphereMaterial: THREE.MeshLambertMaterial;
+  readonly #surfaceTextures = new Map<ObjectId, THREE.DataTexture>();
+  readonly #surfaceDiagnostics = new Map<ObjectId, ProceduralSurfaceDiagnostics>();
   readonly #stellarLights = new Map<ObjectId, THREE.PointLight>();
   readonly #illuminationByBody = new Map<ObjectId, StellarIlluminationSet>();
   readonly #representations = new Map<ObjectId, RepresentationLevel>();
@@ -152,7 +164,9 @@ export class SolarSystemScene {
   setLightingMode(mode: LightingMode): void {
     this.#lightingMode = parseLightingMode(mode);
     this.#inspectionFillLight.visible = false;
-    this.#inspectionFillLight.intensity = inspectionFillContribution(this.#lightingMode);
+    this.#inspectionFillLight.intensity = mapSceneDiffuseContributionToLambertLightIntensity(
+      inspectionFillContribution(this.#lightingMode),
+    );
   }
 
   lightingMode(): LightingMode {
@@ -410,6 +424,10 @@ export class SolarSystemScene {
       renderPosition = mesh?.position.clone();
     }
 
+    const surface = this.#surfaceDiagnostics.get(objectId);
+    const fillContribution = this.#inspectionFillTargets.has(objectId)
+      ? inspectionFillContribution(this.#lightingMode)
+      : 0;
     return Object.freeze({
       objectId,
       representation,
@@ -427,12 +445,13 @@ export class SolarSystemScene {
           ? undefined
           : deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor).source;
       })(),
+      surfaceTextureKind: surface?.kind,
+      surfaceTextureLuminanceRange: surface === undefined ? undefined : surface.maxLuminance - surface.minLuminance,
       physicalIrradianceWattsPerSquareMeter: this.#illuminationByBody.get(objectId)?.totalIrradianceWattsPerSquareMeter,
       lightingMode: this.#lightingMode,
       inspectionFillApplied: this.#inspectionFillTargets.has(objectId),
-      inspectionFillContribution: this.#inspectionFillTargets.has(objectId)
-        ? inspectionFillContribution(this.#lightingMode)
-        : 0,
+      inspectionFillContribution: fillContribution,
+      rendererInspectionFillIntensity: mapSceneDiffuseContributionToLambertLightIntensity(fillContribution),
     });
   }
 
@@ -555,6 +574,9 @@ export class SolarSystemScene {
       if (Array.isArray(body.mesh.material)) body.mesh.material.forEach((material) => material.dispose());
       else body.mesh.material.dispose();
     }
+    for (const texture of this.#surfaceTextures.values()) texture.dispose();
+    this.#surfaceTextures.clear();
+    this.#surfaceDiagnostics.clear();
     for (const mesh of this.#runtimeSphereMeshes.values()) this.#scene.remove(mesh);
     this.#runtimeSphereMeshes.clear();
     for (const light of this.#stellarLights.values()) {
@@ -586,20 +608,44 @@ export class SolarSystemScene {
     if (radius === undefined) throw new TypeError(`Scenario body ${entry.definition.id} has no physical radius`);
     const physicalRadiusMeters = meters(radius);
     const accentColor = new THREE.Color(entry.definition.display.accentColor);
-    const material = entry.definition.type === ObjectType.star
-      ? new THREE.MeshStandardMaterial({
+    let material: THREE.Material;
+    if (entry.definition.type === ObjectType.star) {
+      material = new THREE.MeshStandardMaterial({
         color: accentColor,
         emissive: accentColor,
         emissiveIntensity: 1,
-      })
-      : new THREE.MeshLambertMaterial({
-        color: (() => {
-          const reflectance = deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor);
-          return new THREE.Color(reflectance.linearReflectance.r, reflectance.linearReflectance.g, reflectance.linearReflectance.b);
-        })(),
       });
+    } else {
+      const reflectance = deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor);
+      const surfaceData = entry.definition.appearance === undefined
+        ? undefined
+        : generateProceduralSurfaceData(
+          entry.definition.id,
+          entry.definition.appearance,
+          reflectance.linearReflectance,
+        );
+      if (surfaceData !== undefined) {
+        const texture = createProceduralSurfaceTexture(surfaceData);
+        this.#surfaceTextures.set(entry.definition.id, texture);
+        this.#surfaceDiagnostics.set(entry.definition.id, surfaceData);
+        material = new THREE.MeshLambertMaterial({
+          color: new THREE.Color(1, 1, 1),
+          map: texture,
+          dithering: true,
+        });
+      } else {
+        material = new THREE.MeshLambertMaterial({
+          color: new THREE.Color(
+            reflectance.linearReflectance.r,
+            reflectance.linearReflectance.g,
+            reflectance.linearReflectance.b,
+          ),
+          dithering: true,
+        });
+      }
+    }
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 24, 16),
+      new THREE.SphereGeometry(1, 48, 32),
       material,
     );
     mesh.name = entry.definition.name;
@@ -634,7 +680,9 @@ export class SolarSystemScene {
       this.#inspectionFillTargets.add(objectId);
     }
     this.#inspectionFillLight.position.copy(camera.position);
-    this.#inspectionFillLight.intensity = inspectionFillContribution(this.#lightingMode);
+    this.#inspectionFillLight.intensity = mapSceneDiffuseContributionToLambertLightIntensity(
+      inspectionFillContribution(this.#lightingMode),
+    );
     this.#inspectionFillLight.visible = this.#inspectionFillTargets.size > 0;
   }
 
@@ -730,11 +778,12 @@ export class SolarSystemScene {
       }
       const chromaticity = blackbodyTemperatureToLinearRgb(emitter.effectiveTemperatureKelvin);
       light.color.setRGB(chromaticity.r, chromaticity.g, chromaticity.b);
-      // Three.js point-light intensity is expressed in scene-space units. The
-      // conversion preserves the document-19 W/m² reference mapping while the
-      // light's quadratic falloff preserves inverse-square ratios.
+      // MeshLambertMaterial applies 1 / PI. Compensate that renderer BRDF
+      // exactly once while preserving the physical W/m² and inverse-square
+      // diagnostics calculated above the renderer boundary.
       light.intensity = emitter.luminosityWatts
-        / (4 * Math.PI * METERS_PER_SCENE_UNIT ** 2 * REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER);
+        / (4 * Math.PI * METERS_PER_SCENE_UNIT ** 2 * REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER)
+        * LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION;
       const position = positionToSceneUnits(emitter.position);
       light.position.set(position.x, position.y, position.z);
       light.visible = true;
