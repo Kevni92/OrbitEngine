@@ -8,6 +8,7 @@ import {
 } from "./rendering/three-shell.js";
 import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
 import { SolarSystemScene } from "./rendering/solar-system-scene.js";
+import type { AtmosphereDiagnostics } from "./rendering/atmosphere-rendering.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
 import { RuntimeAsteroidOverlay } from "./scenario/runtime-asteroid-overlay.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
@@ -44,6 +45,7 @@ interface BrowserRenderBodyDiagnostics {
   readonly inFront: boolean;
   readonly inViewport: boolean;
   readonly positionErrorSceneUnits?: number;
+  readonly atmosphere: Pick<AtmosphereDiagnostics, "resourcesAllocated" | "visible" | "projectedDiameterPixels" | "viewSampleCount">;
 }
 
 interface BrowserOrbitDiagnostics {
@@ -466,6 +468,15 @@ async function bootstrap(): Promise<void> {
           inFront: diagnostics?.inFront ?? false,
           inViewport: diagnostics?.inViewport ?? false,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
+          atmosphere: (() => {
+            const atmosphere = scene?.atmosphereDiagnosticsFor(entry.definition.id);
+            return {
+              resourcesAllocated: atmosphere?.resourcesAllocated ?? false,
+              visible: atmosphere?.visible ?? false,
+              projectedDiameterPixels: atmosphere?.projectedDiameterPixels ?? 0,
+              viewSampleCount: atmosphere?.viewSampleCount ?? 0,
+            };
+          })(),
         };
       }),
     });
