@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This document records the browser-demo architecture decided by Architecture issue #61.
+This document records the browser-demo architecture decided by Architecture issue #61 and refined by Architecture issue #99.
 
 It defines presentation behavior for camera-aware body sizing, representation level of detail (LOD), hierarchical child visibility, and runtime synthetic asteroid populations in `apps/solar-system-demo`.
 
@@ -17,12 +17,13 @@ The browser demo remains a consumer of public OrbitEngine TypeScript APIs. Three
 - Every runtime asteroid is still a real OrbitEngine object with a stable caller-supplied `ObjectId`, `ObjectType.asteroid`, exact Cartesian anchor state, physical properties, and explicit propagation model.
 - Synthetic asteroid generation creates initial physical inputs only. It never becomes a JavaScript propagator.
 - The legacy fixed world-space `physical × multiplier + minimum scene radius` enhanced-visibility policy is replaced by a camera-aware **adaptive** policy based on projected CSS-pixel size.
-- `physical` remains available as an exact visual-radius mode.
+- `physical` is an exact **global body-size mode**: sphere meshes and batched marker/point primitives must both reflect true projected physical size and may not apply a fixed visible-size floor.
+- `adaptive` is the legibility mode: it may use adaptive sphere enhancement and viewport-stable contextual markers.
 - Adaptive enhancement is monotonic with physical radius, converges to physical size for already-resolved bodies, and is capped by projected separation from nearby bodies.
 - Body representation is independent from physics and has three conceptual levels: `hidden`, `marker`, and `sphere`.
 - Representation transitions use hysteresis so zooming near a threshold does not flicker.
 - Child systems are hierarchical: unresolved planets do not expose all moons merely because each moon could be inflated to a marker.
-- Selected/focused bodies and their required ancestor/local context can override normal LOD culling.
+- Selected/focused bodies and their required ancestor/local context can override normal LOD culling, but cannot override `physical` mode by inflating body size.
 - Large asteroid populations use batched marker rendering; the architecture forbids one permanent unique mesh/geometry/material per unresolved asteroid.
 - Registered count, queried count, and rendered count are separate quantities.
 
@@ -43,8 +44,8 @@ application/scenario creates physical inputs
               v
      demo presentation policy
        /        |          \
- projected   adaptive      LOD
-   size       radius    representation
+ projected   radius       LOD
+   size        mode    representation
        \        |          /
               v
           Three.js scene
@@ -147,14 +148,20 @@ Device pixel ratio is not allowed to change the semantic visibility thresholds; 
 
 Bodies behind the camera or outside valid projection are culled by normal view/frustum rules before enhancement decisions matter.
 
-### Adaptive radius mapping
+### Radius-mode contract
 
-Two user-facing radius policies are canonical:
+Two user-facing radius policies are canonical and apply to **all celestial body visuals**, not only sphere meshes:
 
-- `physical` — sphere radius is the physical radius converted to scene units;
-- `adaptive` — physical projected size is enhanced only when needed for visual legibility.
+- `physical` — the visible body size is the true physical radius projected through the active camera. A sphere uses the physical radius converted to scene units. A batched point/marker primitive used for performance uses the corresponding true projected physical diameter. No fixed CSS-pixel minimum or adaptive visible-size floor may enlarge the body.
+- `adaptive` — physical projected size is enhanced only when needed for visual legibility. Unresolved/contextual bodies may use a bounded viewport-stable marker and resolved bodies use separation-bounded adaptive spheres.
 
 The old `visible` policy based on one fixed world-space multiplier/minimum is retired rather than kept as a third competing production policy.
+
+`physical` is therefore allowed to produce sub-pixel or effectively invisible bodies at large distance. That is the intended meaning of true physical scale. Navigation and selection affordances such as orbit guides, search, labels, view-center controls, and selection halos are separate non-body presentation primitives and may remain legible without changing the body's visible radius.
+
+The representation level (`hidden`, `marker`, `sphere`) remains a rendering/performance decision. In `physical` mode, the `marker` level must not imply a fixed marker size: it is only a batched primitive whose point size equals the current projected physical diameter.
+
+### Adaptive radius mapping
 
 For `adaptive`, define:
 
@@ -208,7 +215,7 @@ This means Ganymede remains visually at least as large as Europa, and Jupiter re
 
 ### Selection visualization
 
-Selection does not multiply the physical-looking sphere radius by a large factor.
+Selection does not multiply the physical-looking sphere radius by a large factor and never changes physical-mode body size.
 
 Selection emphasis should use a separate presentation primitive such as:
 
@@ -217,7 +224,7 @@ Selection emphasis should use a separate presentation primitive such as:
 - emissive/accent marker;
 - label.
 
-A small bounded sphere-scale nudge is allowed only if it cannot violate separation constraints, but a halo is preferred. This avoids selected bodies physically-looking larger than nearby siblings.
+A small bounded sphere-scale nudge is allowed only in adaptive mode if it cannot violate separation constraints, but a halo is preferred. This avoids selected bodies physically-looking larger than nearby siblings and keeps `physical` mode exact.
 
 ## Separation-aware enhancement cap
 
@@ -266,18 +273,18 @@ Each body has one presentation representation for the frame/context:
    - path/orbit rendering is normally also suppressed unless explicitly needed for selection/navigation.
 
 2. `marker`
-   - cheap screen-readable point/billboard/instanced representation;
-   - used for unresolved but contextually relevant bodies;
-   - marker sizing is bounded in CSS pixels and is not interpreted as physical radius;
+   - cheap point/billboard/instanced representation used for unresolved or batched bodies;
+   - in `adaptive` mode, contextual marker sizing is bounded in CSS pixels and is not interpreted as physical radius;
+   - in `physical` mode, the same primitive must use the body's true projected physical diameter with no artificial visual-size floor;
    - large populations should batch this level.
 
 3. `sphere`
-   - normal 3D body sphere using `physical` or separation-bounded `adaptive` radius;
+   - normal 3D body sphere using exact `physical` radius or separation-bounded `adaptive` radius;
    - used when the body/local context is sufficiently resolved or explicitly inspected.
 
 ### Threshold direction
 
-The exact tuned thresholds are implementation details, but the initial target should be approximately:
+The exact tuned thresholds are implementation details, but the initial adaptive target should be approximately:
 
 ```text
 sphere promotion: physical/adaptive presentation is useful at >= 4–6 px diameter
@@ -286,6 +293,8 @@ hidden:           below marker relevance or hierarchy-gated
 ```
 
 The implementation may distinguish physical projected diameter from enhanced target diameter when choosing representation. Hierarchy gating is evaluated before a child is promoted merely because enhancement could make it large.
+
+The same representation state may be retained when switching radius mode, but its visual-size policy must change immediately. A `marker` remaining in the batch may not keep the adaptive fixed marker size after switching to `physical`.
 
 ### Hysteresis
 
@@ -332,16 +341,17 @@ The key invariant is behavioral rather than one magic number: **if Jupiter itsel
 
 ### Focus and selection overrides
 
-The current selected/focused body must never disappear solely because normal hierarchy LOD says its parent is unresolved.
+The current selected/focused body must remain navigable even when normal hierarchy LOD says its parent is unresolved.
 
 Override rules:
 
-- selected body is at least `marker` when it is projectable/in front of the camera;
-- focused/view-center body is at least `marker`, normally `sphere` when close enough;
-- ancestors needed to understand the selected body's local context remain visible;
-- when a selected moon forces its system open, only the required local context is forced; this does not globally reveal every moon of every planet.
+- in adaptive mode, selected bodies are at least `marker` when projectable/in front of the camera;
+- in adaptive mode, focused/view-center bodies are at least `marker`, normally `sphere` when close enough;
+- ancestors needed to understand the selected body's local context remain eligible/represented;
+- when a selected moon forces its system open, only the required local context is forced; this does not globally reveal every moon of every planet;
+- in physical mode, these overrides may force submission/eligibility but must not force a larger visual body size than the true projected physical size; viewport-stable emphasis belongs to the selection/focus indicator layer instead.
 
-The UI/catalog remains capable of selecting a body that is currently hidden in the scene. Navigation to it then changes focus/camera context, after which its local system becomes eligible.
+The UI/catalog remains capable of selecting a body that is currently hidden or visually sub-pixel in the scene. Navigation to it then changes focus/camera context, after which its local system becomes eligible.
 
 ### Orbit/path LOD
 
@@ -361,10 +371,12 @@ Runtime stress populations are expected to contain hundreds to tens of thousands
 Preferred initial direction:
 
 - one or a small bounded number of `THREE.Points` drawables, or an equivalent instanced marker layer;
-- packed positions/colors/selection metadata updated from authoritative state snapshots;
+- packed positions/colors/size/selection metadata updated from authoritative state snapshots and the current presentation mode;
 - no unique `SphereGeometry` per unresolved runtime asteroid;
 - no unique material per unresolved runtime asteroid;
 - no orbit path per asteroid by default.
+
+In adaptive mode, the batch may use a bounded viewport-stable marker size. In physical mode, per-body point size must derive from the projected physical diameter; the batch must not impose a fixed visible-size floor merely because it is batched.
 
 A runtime asteroid may promote out of the batch into an individual selected/resolved sphere/halo representation while preserving the same `ObjectId`.
 
@@ -413,13 +425,14 @@ These metrics are diagnostics, not physical state.
 
 ## Failure and edge cases
 
-- Missing physical radius: a body cannot use physical/adaptive sphere sizing; it may use an explicitly non-physical marker if application metadata allows it.
+- Missing physical radius: a body cannot use physical/adaptive sphere sizing. In `physical` mode it must not receive a fake visible body size; an explicitly non-body navigation indicator may be used only if application metadata allows it.
 - Camera inside a body sphere: physical geometry dominates; projected-radius heuristics must avoid division/NaN errors.
 - Body behind camera: hidden from scene representation regardless of enhancement.
 - Near-zero projected sibling separation: do not inflate both spheres into overlap; use marker/hidden policy unless physical geometry itself overlaps.
-- Selected hidden child: force selected/local context visibility, do not globally disable LOD.
+- Selected hidden/sub-pixel child: force navigation/context eligibility as needed, but in physical mode do not inflate its body; use the separate selection/focus indicator for legibility.
 - Removed runtime object: remove its marker/sphere/path/picking metadata after successful engine removal and never reuse its ID.
 - Batch creation failure: report deterministic created/failed state; do not expose app metadata for objects that did not complete engine registration/binding.
+- Radius-mode switch with unchanged marker membership: marker visual sizes must update in the same presentation update; no stale adaptive/physical size may persist until the next state snapshot.
 
 ## Rejected alternatives
 
@@ -433,7 +446,7 @@ Rejected because it preserves neither local readability nor meaningful behavior 
 
 ### Inflate every sub-pixel object to the same screen size
 
-Rejected because it destroys size ordering and makes dense systems unreadable.
+Rejected because it destroys size ordering and makes dense systems unreadable. This is explicitly forbidden in `physical` mode; fixed-size contextual markers belong only to `adaptive` mode.
 
 ### Render all moons whenever their individual marker floor is visible
 
@@ -478,6 +491,16 @@ Implement:
 
 Stage B may refine Stage A's temporary runtime-asteroid rendering path, but it must preserve object/session contracts and public-engine ownership.
 
+### Stage C — global radius-mode consistency
+
+Implement the Architecture #99 refinement without changing physics or LOD hierarchy semantics:
+
+- make batched marker size an explicit per-body attribute rather than a single global shader size;
+- use the existing adaptive marker size in `adaptive` mode;
+- use each marker body's current projected physical diameter in `physical` mode;
+- update marker sizes whenever camera/viewport/radius mode changes, even when marker membership and engine state are unchanged;
+- keep picking tolerance independent from visible point size so sub-pixel physical bodies remain navigable through explicit UI/selection affordances.
+
 ## Validation requirements
 
 Implementation must test at least:
@@ -497,4 +520,8 @@ Implementation must test at least:
 - runtime asteroid authoritative motion comes from OrbitEngine state queries;
 - large unresolved runtime populations use batched rendering rather than one permanent mesh/geometry/material per body;
 - hidden objects do not automatically receive orbit paths;
+- switching `adaptive -> physical` changes existing marker visual sizes from the adaptive marker size to projected physical diameters without changing authoritative state or requiring marker-membership rebuild;
+- switching `physical -> adaptive` restores the adaptive marker size immediately;
+- distant major planets and locally eligible moons obey the same selected radius mode;
+- marker picking remains deterministic even when the physical visible diameter is sub-pixel;
 - native/WASM engine semantics remain unchanged.
