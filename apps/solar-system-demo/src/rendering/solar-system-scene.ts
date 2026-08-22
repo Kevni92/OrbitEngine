@@ -46,6 +46,7 @@ export interface BodyRenderDiagnostics {
   readonly objectId: ObjectId;
   readonly representation: RepresentationLevel;
   readonly submitted: boolean;
+  readonly orbitVisible: boolean;
   readonly inFront: boolean;
   readonly inViewport: boolean;
   readonly ndcX: number;
@@ -277,7 +278,10 @@ export class SolarSystemScene {
           this.#removeRuntimeSphere(objectId);
         }
       }
-      const pathVisible = representation === Representation.sphere || objectId === this.#selected || objectId === this.#focusId;
+      const pathVisible = entry.definition.type === ObjectType.planet
+        || representation === Representation.sphere
+        || objectId === this.#selected
+        || objectId === this.#focusId;
       this.#orbitRenderer.setBodyRepresentation(objectId, pathVisible);
     }
     this.#updateSelectionHalo(camera);
@@ -334,6 +338,7 @@ export class SolarSystemScene {
       objectId,
       representation,
       submitted,
+      orbitVisible: this.#orbitRenderer.isPathVisible(objectId),
       inFront,
       inViewport,
       ndcX: ndc.x,
