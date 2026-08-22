@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { ObjectId, PropagationState } from "orbit-engine";
 import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
+import { MARKER_RENDER_ORDER } from "./presentation-order.js";
 import { positionToSceneUnits } from "./render-space.js";
 
 export const MARKER_PIXEL_SIZE = 7;
@@ -23,7 +24,7 @@ void main() {
   float distanceSquared = dot(centered, centered);
   if (distanceSquared > 0.25) discard;
   float edge = 1.0 - smoothstep(0.18, 0.25, distanceSquared);
-  gl_FragColor = vec4(uColor, edge * 0.9);
+  gl_FragColor = vec4(uColor, edge);
 }
 `;
 
@@ -49,6 +50,7 @@ export class BatchedMarkerLayer {
     this.#points = new THREE.Points(geometry, material);
     this.#points.name = "Runtime asteroid markers";
     this.#points.userData.objectType = "asteroid";
+    this.#points.renderOrder = MARKER_RENDER_ORDER;
     this.#points.visible = false;
     scene.add(this.#points);
   }
