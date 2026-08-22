@@ -92,6 +92,23 @@ async function bootstrap(): Promise<void> {
     panel.setSimulationTime(clock.currentInstant(), clock.isPlaying());
   }
 
+  function updateSceneContext(): void {
+    if (stateSource === undefined) return;
+    const focusEntry = stateSource.bodyFor(focusId);
+    const selectedEntry = stateSource.bodyFor(selectedId);
+    if (focusEntry === undefined || selectedEntry === undefined) return;
+    const localSystemId = focusEntry.definition.display.category === "moon"
+      ? focusEntry.definition.centralBody
+      : focusEntry.definition.display.category === "planet"
+        ? focusEntry.definition.id
+        : undefined;
+    panel.setSceneContext({
+      focus: focusEntry,
+      selected: selectedEntry,
+      localSystem: localSystemId === undefined ? undefined : stateSource.bodyFor(localSystemId),
+    });
+  }
+
   function updateSelectedPanel(frame: ScenarioStateFrame): void {
     if (stateSource === undefined || engineHealth === undefined) return;
     const selectedIndex = frame.objectIds.indexOf(selectedId);
@@ -113,6 +130,7 @@ async function bootstrap(): Promise<void> {
       if (centerImmediately) centerCameraOnFocus();
     }
     panel.setFocusId(focusId);
+    updateSceneContext();
     scene?.setFocusId(focusId);
     if (scenario?.catalog.bodyById.has(focusId)) browser?.setViewCenter(focusId);
     if (coordinator === undefined) return;
@@ -122,6 +140,7 @@ async function bootstrap(): Promise<void> {
   function setSelectedBody(objectIdValue: ObjectId): void {
     selectedId = objectIdValue;
     panel.setSelectedId(selectedId);
+    updateSceneContext();
     if (scenario?.catalog.bodyById.has(selectedId)) browser?.setSelectedBody(selectedId);
     scene?.setSelected(selectedId);
     if (scene?.selectedOrbitActive()) {
@@ -350,6 +369,7 @@ async function bootstrap(): Promise<void> {
     stateSource = new SolarSystemStateSource(engine, scenario, runtimeOverlay);
     panel.populateBodies(stateSource.currentBodies());
     panel.setFocusId(focusId);
+    updateSceneContext();
     panel.setSelectedId(selectedId);
     panel.setPopulationDiagnostics(runtimeOverlay.count, {
       registeredCount: scenario.bodies.length,

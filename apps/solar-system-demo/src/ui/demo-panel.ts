@@ -79,6 +79,10 @@ export class DemoPanel {
   #localDateTimeDraft = false;
   readonly #selectedName = element<HTMLElement>("selected-name");
   readonly #selectedType = element<HTMLElement>("selected-type");
+  readonly #sceneContext = element<HTMLElement>("scene-context");
+  readonly #sceneContextKind = element<HTMLElement>("scene-context-kind");
+  readonly #sceneContextTitle = element<HTMLElement>("scene-context-title");
+  readonly #sceneContextDetail = element<HTMLElement>("scene-context-detail");
   readonly #summaryDistance = element<HTMLElement>("summary-distance");
   readonly #summarySpeed = element<HTMLElement>("summary-speed");
   readonly #summaryRadius = element<HTMLElement>("summary-radius");
@@ -243,6 +247,28 @@ export class DemoPanel {
 
   setSelectedId(objectIdValue: ObjectId): void {
     this.#selectedSelect.value = objectIdValue;
+  }
+
+  setSceneContext(context: {
+    readonly focus: RegisteredScenarioBody;
+    readonly selected: RegisteredScenarioBody;
+    readonly localSystem?: RegisteredScenarioBody;
+  }): void {
+    const { focus, selected, localSystem } = context;
+    const focusName = focus.definition.name;
+    const selectedName = selected.definition.name;
+    const viewCenter = `View center: ${focusName}`;
+    if (localSystem === undefined) {
+      this.#sceneContext.dataset.contextKind = "overview";
+      this.#sceneContextKind.textContent = "Overview";
+      this.#sceneContextTitle.textContent = "Solar-System overview";
+      this.#sceneContextDetail.textContent = `Sun-centered overview · Focus: ${focusName} · Selected: ${selectedName} · ${viewCenter}`;
+      return;
+    }
+    this.#sceneContext.dataset.contextKind = "local-system";
+    this.#sceneContextKind.textContent = "Local system";
+    this.#sceneContextTitle.textContent = `Local system: ${localSystem.definition.name}`;
+    this.#sceneContextDetail.textContent = `Focus: ${focusName} · Selected: ${selectedName} · ${viewCenter}`;
   }
 
   focusId(): ObjectId {
