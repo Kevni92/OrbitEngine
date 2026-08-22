@@ -15,7 +15,15 @@ interface RenderBodyDiagnostics {
 interface RenderDiagnostics {
   readonly focusId: string;
   readonly selectedId: string;
+  readonly orbits: readonly RenderOrbitDiagnostics[];
   readonly bodies: readonly RenderBodyDiagnostics[];
+}
+
+interface RenderOrbitDiagnostics {
+  readonly objectId: string;
+  readonly role: string;
+  readonly opacity: number;
+  readonly visible: boolean;
 }
 
 const GLOBAL_CONTEXT = [
@@ -79,6 +87,17 @@ function expectSubmitted(diagnostics: RenderDiagnostics, objectId: string, name:
   expect(body!.positionErrorSceneUnits ?? Number.POSITIVE_INFINITY, `${name} current renderer position`).toBeLessThan(0.002);
 }
 
+function expectOrbitHierarchy(diagnostics: RenderDiagnostics, selectedId: string, localId: string, backgroundId: string): void {
+  const selected = diagnostics.orbits.find((orbit) => orbit.objectId === selectedId);
+  const local = diagnostics.orbits.find((orbit) => orbit.objectId === localId);
+  const background = diagnostics.orbits.find((orbit) => orbit.objectId === backgroundId);
+  expect(selected?.role).toBe("selected");
+  expect(local?.role).toBe("local-system");
+  expect(background?.role).toBe("background");
+  expect(background!.opacity).toBeLessThan(local!.opacity);
+  expect(local!.opacity).toBeLessThan(selected!.opacity);
+}
+
 test("local moon focus preserves global Solar-System renderer context and major planet orbits", async ({ page }) => {
   const pageErrors: Error[] = [];
   page.on("pageerror", (error) => pageErrors.push(error));
@@ -96,8 +115,17 @@ test("local moon focus preserves global Solar-System renderer context and major 
   expectGlobalContext(diagnostics);
   expectMajorPlanetOrbits(diagnostics);
   expect(diagnostics.bodies.find((body) => body.objectId === "1202")?.representation).toBe("hidden");
+  await expect(page.locator("#orbit-guide-legend")).toBeVisible();
+
+  await page.locator("#orbits-toggle").click();
+  await expect(page.locator("#orbit-guide-legend")).toBeHidden();
+  await expect.poll(async () => (await readDiagnostics(page))?.orbits.every((orbit) => !orbit.visible)).toBe(true);
+  await page.locator("#orbits-toggle").click();
+  await expect(page.locator("#orbit-guide-legend")).toBeVisible();
+  await expect.poll(async () => (await readDiagnostics(page))?.orbits.some((orbit) => orbit.visible)).toBe(true);
 
   diagnostics = await navigateTo(page, "1006");
+  expectOrbitHierarchy(diagnostics, "1006", "1202", "1003");
   expectGlobalContext(diagnostics);
   expectMajorPlanetOrbits(diagnostics);
   expectSubmitted(diagnostics, "1201", "Io");
@@ -107,6 +135,7 @@ test("local moon focus preserves global Solar-System renderer context and major 
   expect(diagnostics.bodies.find((body) => body.objectId === "1306")?.representation).toBe("hidden");
 
   diagnostics = await navigateTo(page, "1202");
+  expectOrbitHierarchy(diagnostics, "1202", "1201", "1003");
   expectGlobalContext(diagnostics);
   expectMajorPlanetOrbits(diagnostics);
   expectSubmitted(diagnostics, "1006", "Jupiter");

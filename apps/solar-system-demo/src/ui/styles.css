@@ -147,6 +147,15 @@ select, input { min-width: 0; width: 100%; }
 .toggle-button > span:first-child { font-size: .68rem; }
 .toggle-state { color: var(--text-subtle); font-size: .61rem; }
 .toggle-state[data-state="on"] { color: var(--success); }
+.orbit-guide-legend { border-top: 1px solid var(--section-separator); color: var(--text-muted); font-size: .68rem; padding-top: .7rem; }
+.orbit-guide-legend summary { cursor: pointer; font-weight: 650; }
+.orbit-guide-legend ul { display: grid; gap: .48rem; list-style: none; margin: .65rem 0 0; padding: 0; }
+.orbit-guide-legend li { align-items: center; display: grid; gap: .5rem; grid-template-columns: 1.45rem minmax(0, 1fr); line-height: 1.4; }
+.orbit-guide-legend strong { color: var(--text-primary); }
+.guide-swatch { border-top: 2px solid currentColor; display: block; opacity: .9; width: 1.35rem; }
+.guide-swatch--background { border-top-style: dotted; color: var(--text-subtle); opacity: .55; }
+.guide-swatch--local { color: var(--success); opacity: .8; }
+.guide-swatch--selected { border-top-width: 3px; box-shadow: 0 0 .35rem rgba(159, 208, 255, .6); color: var(--accent-strong); }
 .summary-grid, .diagnostic-grid { display: grid; gap: .48rem; margin: 0; }
 .summary-grid > div, .diagnostic-grid > div { align-items: baseline; display: flex; gap: .7rem; justify-content: space-between; }
 .scene-context { background: rgba(128, 184, 255, .08); border: 1px solid rgba(128, 184, 255, .28); border-radius: 10px; display: grid; gap: .28rem; padding: .7rem .75rem; }

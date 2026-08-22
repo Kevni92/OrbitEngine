@@ -62,3 +62,56 @@ test("orbit renderer anchors relative geometry and exposes selected direction st
   renderer.dispose();
   assert.equal(renderer.pathCount(), 0);
 });
+
+test("orbit guide roles emphasize the active hierarchy without rebuilding geometry", () => {
+  const scene = new THREE.Scene();
+  const renderer = new OrbitRenderer(scene);
+  const sunId = objectId("1000");
+  const jupiterId = objectId("1006");
+  const europaId = objectId("1202");
+  const earthId = objectId("1003");
+  const frame = referenceFrameId("1");
+  const basePath: OrbitPath = {
+    objectId: earthId,
+    focusId: sunId,
+    outputFrame: frame,
+    interval: { start: simulationInstant(0), end: simulationInstant(10) },
+    sampleCount: 4,
+    motionRevision: revisionId("1"),
+    configurationRevision: revisionId("1"),
+    samples: [0, 1, 2, 3].map((second) => ({
+      instant: simulationInstant(second),
+      state: propagationState({
+        position: { x: meters(second), y: meters(0), z: meters(0) },
+        velocity: { x: metersPerSecond(1), y: metersPerSecond(0), z: metersPerSecond(0) },
+        epoch: simulationInstant(second),
+        referenceFrame: frame,
+      }),
+    })),
+  };
+  renderer.setPath(basePath, 0x4f83cc);
+  renderer.setPath({ ...basePath, objectId: europaId, focusId: jupiterId }, 0x4f83cc);
+  renderer.setLocalSystemRoot(jupiterId);
+
+  assert.equal(renderer.guideRoleFor(earthId), "background");
+  assert.equal(renderer.guideRoleFor(europaId), "local-system");
+  const earthGeometry = (renderer.group.getObjectByName(`Orbit ${earthId}`)!.children[0] as THREE.LineLoop).geometry;
+  const europaGeometry = (renderer.group.getObjectByName(`Orbit ${europaId}`)!.children[0] as THREE.LineLoop).geometry;
+  const background = renderer.guideDiagnostics().find((orbit) => orbit.objectId === earthId)!;
+  const local = renderer.guideDiagnostics().find((orbit) => orbit.objectId === europaId)!;
+  assert.ok(background.opacity < local.opacity);
+
+  renderer.setSelected(europaId);
+  const selected = renderer.guideDiagnostics().find((orbit) => orbit.objectId === europaId)!;
+  assert.equal(selected.role, "selected");
+  assert.ok(local.opacity < selected.opacity);
+  assert.equal((renderer.group.getObjectByName(`Orbit ${earthId}`)!.children[0] as THREE.LineLoop).geometry, earthGeometry);
+  assert.equal((renderer.group.getObjectByName(`Orbit ${europaId}`)!.children[0] as THREE.LineLoop).geometry, europaGeometry);
+
+  renderer.setVisible(false);
+  assert.equal(renderer.group.visible, false);
+  assert.ok(renderer.guideDiagnostics().every((orbit) => orbit.visible));
+  renderer.setVisible(true);
+  assert.equal(renderer.guideRoleFor(europaId), "selected");
+  renderer.dispose();
+});
