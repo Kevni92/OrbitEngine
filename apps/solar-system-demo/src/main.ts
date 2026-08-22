@@ -9,6 +9,7 @@ import {
 import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
 import { SolarSystemScene } from "./rendering/solar-system-scene.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
+import { RuntimeAsteroidOverlay } from "./scenario/runtime-asteroid-overlay.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
 import { SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
 import { PathCache } from "./simulation/path-sampling.js";
@@ -45,6 +46,7 @@ async function bootstrap(): Promise<void> {
   let scene: SolarSystemScene | undefined;
   let guides: SceneGuides | undefined;
   let stateSource: SolarSystemStateSource | undefined;
+  let runtimeOverlay: RuntimeAsteroidOverlay | undefined;
   let coordinator: StateQueryCoordinator<ScenarioStateFrame> | undefined;
   let browser: CelestialBrowser | undefined;
   let focusId: ObjectId = SUN_ID;
@@ -56,9 +58,9 @@ async function bootstrap(): Promise<void> {
 
   function centerCameraOnFocus(): void {
     const currentScene = scene;
-    const focusMesh = currentScene?.meshFor(focusId);
-    if (focusMesh === undefined || renderShell === undefined || currentScene === undefined) return;
-    renderShell.centerOn(focusMesh.position, currentScene.focusDistanceFor(focusId));
+    const focusPosition = currentScene?.positionFor(focusId);
+    if (focusPosition === undefined || renderShell === undefined || currentScene === undefined) return;
+    renderShell.centerOn(focusPosition, currentScene.focusDistanceFor(focusId));
   }
 
   function updateClockUi(): void {
@@ -66,10 +68,10 @@ async function bootstrap(): Promise<void> {
   }
 
   function updateSelectedPanel(frame: ScenarioStateFrame): void {
-    if (scenario === undefined || engineHealth === undefined) return;
-    const selectedIndex = scenario.objectIds.indexOf(selectedId);
-    const focusIndex = scenario.objectIds.indexOf(focusId);
-    const selectedEntry = scenario.bodyById.get(selectedId);
+    if (stateSource === undefined || engineHealth === undefined) return;
+    const selectedIndex = frame.objectIds.indexOf(selectedId);
+    const focusIndex = frame.objectIds.indexOf(focusId);
+    const selectedEntry = stateSource.bodyFor(selectedId);
     const state = selectedIndex < 0 ? undefined : frame.states[selectedIndex];
     const focusState = focusIndex < 0 ? undefined : frame.states[focusIndex];
     if (selectedEntry === undefined || state === undefined) return;
@@ -83,15 +85,15 @@ async function bootstrap(): Promise<void> {
       if (centerImmediately) centerCameraOnFocus();
     }
     panel.setFocusId(focusId);
-    browser?.setViewCenter(focusId);
+    if (scenario?.catalog.bodyById.has(focusId)) browser?.setViewCenter(focusId);
     if (coordinator === undefined) return;
-    coordinator.request(clock.currentInstant(), `view-center:${focusId}`);
+    coordinator.request(clock.currentInstant(), stateSource?.contextKey(focusId) ?? `view-center:${focusId}`);
   }
 
   function setSelectedBody(objectIdValue: ObjectId): void {
     selectedId = objectIdValue;
     panel.setSelectedId(selectedId);
-    browser?.setSelectedBody(selectedId);
+    if (scenario?.catalog.bodyById.has(selectedId)) browser?.setSelectedBody(selectedId);
     scene?.setSelected(selectedId);
     if (scene?.selectedOrbitActive()) {
       panel.setOrbitStatus("ready", `${scene.pathCount()} reference orbits · selected direction highlighted`);
@@ -103,7 +105,7 @@ async function bootstrap(): Promise<void> {
   }
 
   function navigateToBody(objectIdValue: ObjectId): void {
-    if (scenario === undefined || !scenario.bodyById.has(objectIdValue)) {
+    if (stateSource === undefined || stateSource.bodyFor(objectIdValue) === undefined) {
       panel.setScenarioNote("error", `Cannot navigate to unknown celestial body ${objectIdValue}`);
       return;
     }
@@ -212,6 +214,37 @@ async function bootstrap(): Promise<void> {
       requestCurrentState(true, focusAlreadySelected);
     },
     onRadiusModeChange: (mode) => scene?.setRadiusMode(mode),
+    onAddAsteroids: (count, seed) => {
+      if (runtimeOverlay === undefined || stateSource === undefined) return;
+      try {
+        runtimeOverlay.add(count, seed);
+        scene?.setRuntimeAsteroids(runtimeOverlay.entries());
+        panel.populateBodies(stateSource.currentBodies());
+        panel.setFocusId(focusId);
+        panel.setSelectedId(selectedId);
+        panel.setPopulationStatus("ready", `${runtimeOverlay.count} generated asteroid${runtimeOverlay.count === 1 ? "" : "s"}`);
+        requestCurrentState();
+      } catch (error) {
+        panel.setPopulationStatus("error", error instanceof Error ? error.message : String(error));
+      }
+    },
+    onRemoveAsteroids: () => {
+      if (runtimeOverlay === undefined || stateSource === undefined) return;
+      const removed = runtimeOverlay.removeAll();
+      if (removed > 0 && stateSource.bodyFor(selectedId) === undefined) {
+        selectedId = SUN_ID;
+        scene?.setSelected(selectedId);
+      }
+      if (removed > 0 && stateSource.bodyFor(focusId) === undefined) {
+        focusId = SUN_ID;
+      }
+      scene?.setRuntimeAsteroids(runtimeOverlay.entries());
+      panel.populateBodies(stateSource.currentBodies());
+      panel.setFocusId(focusId);
+      panel.setSelectedId(selectedId);
+      panel.setPopulationStatus("ready", removed === 0 ? "No runtime asteroids to remove" : `Removed ${removed} generated asteroid${removed === 1 ? "" : "s"}`);
+      requestCurrentState();
+    },
     onGridChange: (visible) => guides?.setGridVisible(visible),
     onOrbitsChange: (visible) => scene?.setOrbitsVisible(visible),
     onAxesChange: (visible) => guides?.setAxesVisible(visible),
@@ -284,33 +317,40 @@ async function bootstrap(): Promise<void> {
       viewCenterBodyId: focusId,
       onNavigateToBody: navigateToBody,
     });
-    panel.populateBodies(scenario);
+    runtimeOverlay = new RuntimeAsteroidOverlay(engine, scenario);
+    stateSource = new SolarSystemStateSource(engine, scenario, runtimeOverlay);
+    panel.populateBodies(stateSource.currentBodies());
     panel.setFocusId(focusId);
     panel.setSelectedId(selectedId);
-    panel.setScenarioNote("ready", `Offline deterministic catalog · ${scenario.bodies.length} bodies`);
+    panel.setPopulationDiagnostics(runtimeOverlay.count, scenario.bodies.length, 0);
+    panel.setScenarioNote("ready", `Offline deterministic catalog · ${scenario.bodies.length} committed bodies`);
   } catch (error) {
     panel.setScenarioNote("error", error instanceof Error ? error.message : String(error));
     return;
   }
 
-  stateSource = new SolarSystemStateSource(engine, scenario);
   coordinator = new StateQueryCoordinator<ScenarioStateFrame>({
     source: {
       query: (request) => {
         const requestedFocus = request.contextKey.startsWith("view-center:")
-          ? objectId(request.contextKey.slice("view-center:".length))
+          ? objectId(request.contextKey.slice("view-center:".length).split(":", 1)[0]!)
           : focusId;
         return stateSource!.query(requestedFocus, request.target);
       },
     },
     onSnapshot: (snapshot) => {
-      scene?.update(snapshot.value.states);
+      scene?.update(snapshot.value.states, snapshot.value.objectIds);
+      panel.setPopulationDiagnostics(
+        runtimeOverlay?.count ?? 0,
+        snapshot.value.objectIds.length,
+        scene?.markerCount() ?? 0,
+      );
       if (recenterAfterState && snapshot.value.focusId === focusId) {
         centerCameraOnFocus();
         recenterAfterState = false;
       }
       if (pendingNavigation?.targetId === snapshot.value.focusId
-          && snapshot.contextKey === `view-center:${pendingNavigation.targetId}`) {
+          && snapshot.contextKey.startsWith(`view-center:${pendingNavigation.targetId}:`)) {
         pendingNavigation = undefined;
       }
       updateSelectedPanel(snapshot.value);
@@ -318,7 +358,7 @@ async function bootstrap(): Promise<void> {
     onError: (error, request) => {
       const failedNavigation = pendingNavigation;
       if (failedNavigation !== undefined
-          && request.contextKey === `view-center:${failedNavigation.targetId}`) {
+          && request.contextKey.startsWith(`view-center:${failedNavigation.targetId}:`)) {
         pendingNavigation = undefined;
         recenterAfterState = false;
         selectedId = failedNavigation.previousSelectedId;
@@ -338,6 +378,7 @@ async function bootstrap(): Promise<void> {
     scene = new SolarSystemScene(renderShell.scene, scenario, {
       onSelect: setSelectedBody,
     });
+    scene.setRuntimeAsteroids(runtimeOverlay?.entries() ?? []);
     scene.setSelected(selectedId);
     sampleReferenceOrbits();
   } catch (error) {
@@ -356,6 +397,7 @@ async function bootstrap(): Promise<void> {
   if (renderShell === undefined) return;
   const resize = (): void => {
     renderShell!.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+    scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
   };
   window.addEventListener("resize", resize);
   resize();
@@ -374,6 +416,7 @@ async function bootstrap(): Promise<void> {
     requestCurrentState();
     guides?.updateForCamera(renderShell!.camera);
     updateCameraClipPlanes(renderShell!.camera, renderShell!.controls.target);
+    scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
     renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
   });
   loop.start();

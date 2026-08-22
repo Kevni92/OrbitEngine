@@ -10,11 +10,10 @@ export {
 export const ASTRONOMICAL_UNIT_METERS = 149_597_870_700;
 export const SCENE_UNITS_PER_ASTRONOMICAL_UNIT = 100;
 export const METERS_TO_SCENE_UNITS = SCENE_UNITS_PER_ASTRONOMICAL_UNIT / ASTRONOMICAL_UNIT_METERS;
-export const VISIBLE_RADIUS_MULTIPLIER = 5;
-export const MIN_VISIBLE_RADIUS_SCENE_UNITS = 0.15;
+export const MIN_ADAPTIVE_RADIUS_SCENE_UNITS = 0.15;
 export const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
 
-export type RadiusMode = "physical" | "visible";
+export type RadiusMode = "physical" | "adaptive";
 
 export interface RenderVector {
   readonly x: number;
@@ -25,6 +24,8 @@ export interface RenderVector {
 export interface RadiusPolicy {
   readonly mode: RadiusMode;
   readonly physicalRadiusMeters: Meters;
+  /** Adaptive mode supplies the camera-aware result in scene units. */
+  readonly adaptiveRadiusSceneUnits?: number;
 }
 
 function finite(value: number, name: string): number {
@@ -59,6 +60,9 @@ export function positionToSceneUnits(position: Vec3<number>, focus: Vec3<number>
 export function radiusToSceneUnits(policy: RadiusPolicy): number {
   const physical = metersToSceneUnits(policy.physicalRadiusMeters);
   if (policy.mode === "physical") return physical;
-  if (policy.mode !== "visible") throw new RangeError(`Unknown radius mode: ${String(policy.mode)}`);
-  return Math.max(physical * VISIBLE_RADIUS_MULTIPLIER, MIN_VISIBLE_RADIUS_SCENE_UNITS);
+  if (policy.mode !== "adaptive") throw new RangeError(`Unknown radius mode: ${String(policy.mode)}`);
+  if (policy.adaptiveRadiusSceneUnits === undefined) {
+    throw new RangeError("Adaptive radius requires a camera-aware scene-unit value");
+  }
+  return Math.max(physical, policy.adaptiveRadiusSceneUnits, MIN_ADAPTIVE_RADIUS_SCENE_UNITS);
 }
