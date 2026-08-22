@@ -20,6 +20,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 14. [Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md) — SSB/ICRS root, frame identity/graph, rigid-state transforms, quaternion convention, local/relative precision, surface attachment, lifecycle, caching, and backend contract.
 15. [Propagation Contract and Model Switching](15-propagation-contract-and-model-switching.md) — motion authority/segments, common state-at-time contract, model taxonomy, permanent divergence, safe switching, fidelity boundary, forces/mass, caching, and backend ownership.
 16. [Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md) — private Vite/Three.js reference application, browser-WASM loading contract, engine-driven animation, render-space precision, scenario data, CI, and staged demo implementation.
+17. [Adaptive Demo Rendering and Runtime Populations](17-adaptive-demo-rendering-and-runtime-populations.md) — runtime synthetic asteroid overlays, camera-aware screen-space sizing, separation-aware enhancement, hierarchical LOD, and batched large-population rendering.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
