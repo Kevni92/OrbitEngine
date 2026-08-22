@@ -4,16 +4,28 @@ import { SUN_ID } from "./scenario-data.js";
 
 export interface ScenarioStateFrame {
   readonly focusId: ObjectId;
+  readonly objectIds: readonly ObjectId[];
   readonly states: readonly PropagationState[];
+  readonly queryDurationMs: number;
+}
+
+export interface ScenarioObjectSetProvider {
+  objectIds(): readonly ObjectId[];
+}
+
+function nowMilliseconds(): number {
+  return globalThis.performance?.now() ?? Date.now();
 }
 
 export class SolarSystemStateSource {
   readonly #engine: OrbitEngine;
   readonly #scenario: SolarSystemScenario;
+  readonly #objectSet?: ScenarioObjectSetProvider;
 
-  constructor(engine: OrbitEngine, scenario: SolarSystemScenario) {
+  constructor(engine: OrbitEngine, scenario: SolarSystemScenario, objectSet?: ScenarioObjectSetProvider) {
     this.#engine = engine;
     this.#scenario = scenario;
+    this.#objectSet = objectSet;
   }
 
   stateAt(objectId: ObjectId, focusId: ObjectId, target: SimulationInstant, outputFrame: ReferenceFrameId): PropagationState {
@@ -31,16 +43,17 @@ export class SolarSystemStateSource {
   }
 
   query(focusId: ObjectId, target: SimulationInstant): ScenarioStateFrame {
-    if (focusId === SUN_ID) {
-      return Object.freeze({
-        focusId,
-        states: this.#engine.statesAt(this.#scenario.objectIds, target, this.#scenario.rootFrame),
-      });
-    }
+    const objectIds = Object.freeze([...(this.#objectSet?.objectIds() ?? this.#scenario.objectIds)]);
+    const started = nowMilliseconds();
+    const states = focusId === SUN_ID
+      ? this.#engine.statesAt(objectIds, target, this.#scenario.rootFrame)
+      : Object.freeze(objectIds.map((id) =>
+        this.#engine.relativeStateAt(id, focusId, target, this.#scenario.rootFrame)));
     return Object.freeze({
       focusId,
-      states: Object.freeze(this.#scenario.objectIds.map((id) =>
-        this.#engine.relativeStateAt(id, focusId, target, this.#scenario.rootFrame))),
+      objectIds,
+      states,
+      queryDurationMs: Math.max(0, nowMilliseconds() - started),
     });
   }
 }
