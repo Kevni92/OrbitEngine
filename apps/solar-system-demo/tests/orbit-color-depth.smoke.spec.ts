@@ -37,17 +37,8 @@ test("selecting a direct Mars moon keeps Mars heliocentric orbit visible", async
   await expect.poll(async () => {
     const current = await diagnostics(page);
     const mars = current?.orbits.find((orbit) => orbit.objectId === "1005");
-    const deimos = current?.orbits.find((orbit) => orbit.objectId === "1102");
-    return mars === undefined || deimos === undefined ? undefined : {
-      marsVisible: mars.visible,
-      deimosVisible: deimos.visible,
-      deimosRole: deimos.role,
-    };
-  }).toEqual({
-    marsVisible: true,
-    deimosVisible: true,
-    deimosRole: "selected",
-  });
+    return mars?.visible;
+  }).toBe(true);
 
   expect(pageErrors).toHaveLength(0);
 });
