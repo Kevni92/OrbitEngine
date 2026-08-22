@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { positionToSceneUnits } from "../src/rendering/render-space.js";
-import { SolarSystemScene } from "../src/rendering/solar-system-scene.js";
+import {
+  MAX_FOCUS_DISTANCE_SCENE_UNITS,
+  MIN_FOCUS_DISTANCE_SCENE_UNITS,
+  SolarSystemScene,
+} from "../src/rendering/solar-system-scene.js";
 import { referenceFrameId, revisionId, simulationInstant } from "orbit-engine";
 import type { OrbitPath } from "../src/simulation/path-sampling.js";
 import {
@@ -54,6 +58,10 @@ test("scene keys meshes by stable ObjectId and consumes returned positions", () 
   assert.equal(visual.selectedObjectId(), SUN_ID);
   visual.setRadiusMode("physical");
   assert.ok(visual.stateFor(SUN_ID) !== undefined);
+  const focusDistance = visual.focusDistanceFor(EARTH_ID);
+  assert.ok(focusDistance >= MIN_FOCUS_DISTANCE_SCENE_UNITS);
+  assert.ok(focusDistance <= MAX_FOCUS_DISTANCE_SCENE_UNITS);
+  assert.throws(() => visual.focusDistanceFor("999999" as typeof SUN_ID), /Unknown scenario body/);
 
   const path: OrbitPath = {
     objectId: EARTH_ID,
