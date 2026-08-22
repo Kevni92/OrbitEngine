@@ -54,6 +54,7 @@ export interface BodyRenderDiagnostics {
   readonly ndcX: number;
   readonly ndcY: number;
   readonly ndcZ: number;
+  readonly markerSizePixels?: number;
   readonly positionErrorSceneUnits?: number;
 }
 
@@ -199,6 +200,7 @@ export class SolarSystemScene {
     const orderedEntries = [...this.#currentEntries.values()].sort((left, right) => this.#depth(left) - this.#depth(right));
     const forcedAncestors = this.#ancestorIds(new Set([this.#selected, this.#focusId].filter((id): id is ObjectId => id !== undefined)));
     const next = new Map<ObjectId, RepresentationLevel>();
+    const physicalDiameterPixelsById = new Map<ObjectId, number>();
 
     for (const entry of orderedEntries) {
       const objectId = entry.definition.id;
@@ -217,6 +219,7 @@ export class SolarSystemScene {
       const fieldOfView = perspective.fov * Math.PI / 180;
       const physicalRadiusPixels = projectedRadiusPixels(physicalRadius, distance, fieldOfView, viewportHeightPixels);
       const physicalDiameterPixels = physicalRadiusPixels * 2;
+      physicalDiameterPixelsById.set(objectId, physicalDiameterPixels);
       const parentId = entry.definition.centralBody;
       const isMoon = entry.definition.type === ObjectType.moon && parentId !== undefined;
       const parentRepresentation = parentId === undefined ? undefined : next.get(parentId);
@@ -262,6 +265,17 @@ export class SolarSystemScene {
       this.#markerLayer.setBodies(markerEntries, this.#positions);
       this.#markerMembershipKey = markerKey;
     }
+    const markerSizes = new Map<ObjectId, number>();
+    for (const entry of markerEntries) {
+      markerSizes.set(
+        entry.definition.id,
+        this.#radiusMode === "physical"
+          ? (physicalDiameterPixelsById.get(entry.definition.id) ?? 0)
+          : MARKER_PIXEL_SIZE,
+      );
+    }
+    this.#markerLayer.updateSizes(markerSizes);
+
     this.#promotedRuntimeSphereCount = 0;
     for (const entry of orderedEntries) {
       const objectId = entry.definition.id;
@@ -327,9 +341,11 @@ export class SolarSystemScene {
       && ndc.z >= -1 && ndc.z <= 1;
 
     let submitted = false;
+    let markerSizePixels: number | undefined;
     let renderPosition: THREE.Vector3 | undefined;
     if (representation === Representation.marker) {
       submitted = this.#markerLayer.contains(objectId);
+      markerSizePixels = this.#markerLayer.sizeFor(objectId);
       renderPosition = this.#markerLayer.positionFor(objectId);
     } else if (representation === Representation.sphere) {
       const mesh = this.meshFor(objectId);
@@ -347,6 +363,7 @@ export class SolarSystemScene {
       ndcX: ndc.x,
       ndcY: ndc.y,
       ndcZ: ndc.z,
+      markerSizePixels,
       positionErrorSceneUnits: renderPosition?.distanceTo(position),
     });
   }
