@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { positionToSceneUnits } from "../src/rendering/render-space.js";
 import {
   MAX_FOCUS_DISTANCE_SCENE_UNITS,
+  INSPECTION_FILL_LAYER,
   MIN_FOCUS_DISTANCE_SCENE_UNITS,
   SolarSystemScene,
 } from "../src/rendering/solar-system-scene.js";
@@ -139,6 +140,43 @@ test("resolved surfaces use lit materials while stellar illumination survives st
   assert.ok(visual.illuminationFor(EARTH_ID)?.totalIrradianceWattsPerSquareMeter! > 0);
   assert.notEqual(visual.representationFor(SUN_ID), "sphere");
   assert.ok(visual.illuminationFor(EARTH_ID)?.contributions.some((contribution) => contribution.emitterId === SUN_ID));
+  visual.dispose();
+});
+
+test("Enhanced adds bounded selected-body fill without changing physical irradiance", () => {
+  const root = new THREE.Scene();
+  const visual = new SolarSystemScene(root, scenario());
+  const earth = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
+  const earthPosition = positionToSceneUnits(earth.anchor.position);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.0001, 10_000);
+  camera.position.set(earthPosition.x, earthPosition.y - 1.5, earthPosition.z + 0.9);
+  camera.lookAt(earthPosition.x, earthPosition.y, earthPosition.z);
+  visual.update(SCENARIO_BODIES.map((body) => body.anchor));
+  visual.setSelected(EARTH_ID);
+  visual.setFocusId(EARTH_ID);
+  visual.updatePresentation(camera, 900);
+
+  const physicalIrradiance = visual.illuminationFor(EARTH_ID)?.totalIrradianceWattsPerSquareMeter;
+  const physicalDiagnostics = visual.renderDiagnosticsFor(EARTH_ID, camera)!;
+  assert.equal(visual.lightingMode(), "physical");
+  assert.equal(physicalDiagnostics.inspectionFillApplied, false);
+  assert.equal(physicalDiagnostics.inspectionFillContribution, 0);
+
+  visual.setLightingMode("enhanced");
+  visual.updatePresentation(camera, 900);
+  const enhancedDiagnostics = visual.renderDiagnosticsFor(EARTH_ID, camera)!;
+  assert.equal(enhancedDiagnostics.lightingMode, "enhanced");
+  assert.equal(enhancedDiagnostics.inspectionFillApplied, true);
+  assert.equal(enhancedDiagnostics.inspectionFillContribution, 0.18);
+  assert.equal(visual.lightingDiagnostics().inspectionFillSource, "presentation-only artificial inspection lighting");
+  assert.equal(visual.illuminationFor(EARTH_ID)?.totalIrradianceWattsPerSquareMeter, physicalIrradiance);
+  assert.ok((visual.meshFor(EARTH_ID)!.layers.mask & (1 << INSPECTION_FILL_LAYER)) !== 0);
+  assert.equal(root.getObjectByName("Enhanced inspection fill (presentation-only)")?.visible, true);
+
+  visual.setLightingMode("physical");
+  visual.updatePresentation(camera, 900);
+  assert.equal(visual.renderDiagnosticsFor(EARTH_ID, camera)!.inspectionFillApplied, false);
+  assert.equal(root.getObjectByName("Enhanced inspection fill (presentation-only)")?.visible, false);
   visual.dispose();
 });
 

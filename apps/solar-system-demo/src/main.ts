@@ -9,6 +9,7 @@ import {
 import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
 import { SolarSystemScene } from "./rendering/solar-system-scene.js";
 import type { AtmosphereDiagnostics } from "./rendering/atmosphere-rendering.js";
+import { lightingModeDiagnostics, type LightingMode } from "./rendering/lighting-mode.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
 import { RuntimeAsteroidOverlay } from "./scenario/runtime-asteroid-overlay.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
@@ -45,7 +46,11 @@ interface BrowserRenderBodyDiagnostics {
   readonly inFront: boolean;
   readonly inViewport: boolean;
   readonly positionErrorSceneUnits?: number;
+  readonly physicalIrradianceWattsPerSquareMeter?: number;
   readonly atmosphere: Pick<AtmosphereDiagnostics, "resourcesAllocated" | "visible" | "projectedDiameterPixels" | "viewSampleCount">;
+  readonly lightingMode: LightingMode;
+  readonly inspectionFillApplied: boolean;
+  readonly inspectionFillContribution: number;
 }
 
 interface BrowserOrbitDiagnostics {
@@ -58,6 +63,7 @@ interface BrowserOrbitDiagnostics {
 interface BrowserRenderDiagnostics {
   readonly focusId: string;
   readonly selectedId: string;
+  readonly lighting: ReturnType<typeof lightingModeDiagnostics>;
   readonly orbits: readonly BrowserOrbitDiagnostics[];
   readonly bodies: readonly BrowserRenderBodyDiagnostics[];
 }
@@ -87,6 +93,7 @@ async function bootstrap(): Promise<void> {
   let browser: CelestialBrowser | undefined;
   let focusId: ObjectId = SUN_ID;
   let selectedId: ObjectId = SUN_ID;
+  let lightingMode: LightingMode = "physical";
   let recenterAfterState = false;
   let pendingNavigation: PendingNavigation | undefined;
   let orbitResampleTimer: number | undefined;
@@ -273,6 +280,11 @@ async function bootstrap(): Promise<void> {
       requestCurrentState(true, focusAlreadySelected);
     },
     onRadiusModeChange: (mode) => scene?.setRadiusMode(mode),
+    onLightingModeChange: (mode) => {
+      lightingMode = mode;
+      scene?.setLightingMode(mode);
+      panel.setLightingDiagnostics(scene?.lightingDiagnostics() ?? lightingModeDiagnostics(mode, []));
+    },
     onAddAsteroids: (count, seed) => {
       if (runtimeOverlay === undefined || stateSource === undefined) return;
       try {
@@ -350,6 +362,7 @@ async function bootstrap(): Promise<void> {
     },
   });
   panel.setSimulationTime(clock.currentInstant(), clock.isPlaying());
+  panel.setLightingMode(lightingMode);
   panel.setGuideSettings(DEFAULT_SCENE_GUIDE_SETTINGS);
   panel.setOrbitsVisible(true);
   panel.setControlsReady(false);
@@ -444,12 +457,14 @@ async function bootstrap(): Promise<void> {
     scene = new SolarSystemScene(renderShell.scene, scenario, {
       onSelect: setSelectedBody,
     });
+    scene.setLightingMode(lightingMode);
     scene.setCurrentBodies(stateSource.currentBodies());
     scene.setFocusId(focusId);
     scene.setSelected(selectedId);
     window.__orbitDemoRenderDiagnostics = () => ({
       focusId,
       selectedId,
+      lighting: scene?.lightingDiagnostics() ?? lightingModeDiagnostics(lightingMode, []),
       orbits: (scene?.orbitGuideDiagnostics() ?? []).map((orbit) => ({
         objectId: orbit.objectId,
         role: orbit.role,
@@ -468,6 +483,10 @@ async function bootstrap(): Promise<void> {
           inFront: diagnostics?.inFront ?? false,
           inViewport: diagnostics?.inViewport ?? false,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
+          physicalIrradianceWattsPerSquareMeter: diagnostics?.physicalIrradianceWattsPerSquareMeter,
+          lightingMode: diagnostics?.lightingMode ?? lightingMode,
+          inspectionFillApplied: diagnostics?.inspectionFillApplied ?? false,
+          inspectionFillContribution: diagnostics?.inspectionFillContribution ?? 0,
           atmosphere: (() => {
             const atmosphere = scene?.atmosphereDiagnosticsFor(entry.definition.id);
             return {
@@ -498,6 +517,7 @@ async function bootstrap(): Promise<void> {
   const resize = (): void => {
     renderShell!.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
     scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
+    if (scene !== undefined) panel.setLightingDiagnostics(scene.lightingDiagnostics());
   };
   window.addEventListener("resize", resize);
   resize();
@@ -517,6 +537,7 @@ async function bootstrap(): Promise<void> {
     guides?.updateForCamera(renderShell!.camera);
     updateCameraClipPlanes(renderShell!.camera, renderShell!.controls.target);
     scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
+    if (scene !== undefined) panel.setLightingDiagnostics(scene.lightingDiagnostics());
     panel.setHierarchyDiagnostics(scene?.representationFor(EUROPA_ID));
     const latest = coordinator?.latestSnapshot();
     if (latest !== undefined && scene !== undefined) {
