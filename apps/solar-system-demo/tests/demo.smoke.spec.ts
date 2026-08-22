@@ -132,7 +132,7 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await expect(page.locator("#selected-name")).toHaveText("Earth");
 
   await page.locator("#scene").hover();
-  for (let index = 0; index < 160; index += 1) await page.mouse.wheel(0, 100);
+  await page.mouse.wheel(0, 16_000);
   await page.waitForTimeout(250);
 
   await page.locator("#advanced-details").locator("summary").click();

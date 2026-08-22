@@ -3,18 +3,45 @@ import type { ObjectId, PropagationState } from "orbit-engine";
 import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
 import { positionToSceneUnits } from "./render-space.js";
 
+export const MARKER_PIXEL_SIZE = 7;
+
+const MARKER_VERTEX_SHADER = `
+uniform float uSize;
+
+void main() {
+  vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * modelViewPosition;
+  gl_PointSize = uSize;
+}
+`;
+
+const MARKER_FRAGMENT_SHADER = `
+uniform vec3 uColor;
+
+void main() {
+  vec2 centered = gl_PointCoord - vec2(0.5);
+  float distanceSquared = dot(centered, centered);
+  if (distanceSquared > 0.25) discard;
+  float edge = 1.0 - smoothstep(0.18, 0.25, distanceSquared);
+  gl_FragColor = vec4(uColor, edge * 0.9);
+}
+`;
+
 /** A single bounded GPU marker layer for all unresolved current objects. */
 export class BatchedMarkerLayer {
-  readonly #points: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  readonly #points: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
   #objectIds: readonly ObjectId[] = [];
   #positions = new Float32Array();
 
   constructor(scene: THREE.Scene) {
     const geometry = new THREE.BufferGeometry();
-    const material = new THREE.PointsMaterial({
-      color: 0x9aa7b5,
-      size: 4,
-      sizeAttenuation: true,
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(0x9aa7b5) },
+        uSize: { value: MARKER_PIXEL_SIZE },
+      },
+      vertexShader: MARKER_VERTEX_SHADER,
+      fragmentShader: MARKER_FRAGMENT_SHADER,
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
