@@ -271,7 +271,8 @@ async function bootstrap(): Promise<void> {
         panel.populateBodies(stateSource.currentBodies());
         panel.setFocusId(focusId);
         panel.setSelectedId(selectedId);
-        panel.setPopulationStatus("ready", `${runtimeOverlay.count} generated asteroid${runtimeOverlay.count === 1 ? "" : "s"}`);
+        panel.setPopulationLiveCount(runtimeOverlay.count);
+        panel.setPopulationStatus("ready", `Added ${count} generated asteroid${count === 1 ? "" : "s"}. Live total: ${runtimeOverlay.count}.`);
         requestCurrentState();
       } catch (error) {
         panel.setPopulationStatus("error", error instanceof Error ? error.message : String(error));
@@ -291,7 +292,8 @@ async function bootstrap(): Promise<void> {
       panel.populateBodies(stateSource.currentBodies());
       panel.setFocusId(focusId);
       panel.setSelectedId(selectedId);
-      panel.setPopulationStatus("ready", removed === 0 ? "No runtime asteroids to remove" : `Removed ${removed} generated asteroid${removed === 1 ? "" : "s"}`);
+      panel.setPopulationLiveCount(runtimeOverlay.count);
+      panel.setPopulationStatus("ready", removed === 0 ? "No generated asteroids to remove. Live total: 0." : `Removed ${removed} generated asteroid${removed === 1 ? "" : "s"}. Live total: ${runtimeOverlay.count}.`);
       requestCurrentState();
     },
     onGridChange: (visible) => guides?.setGridVisible(visible),
