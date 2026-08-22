@@ -36,7 +36,6 @@ import {
   MARS_ID,
   SCENARIO_BODIES,
   SCENARIO_OBJECT_IDS,
-  SUN_CENTERED_FRAME,
   SUN_ID,
 } from "../src/scenario/scenario-data.js";
 import type { SolarSystemScenario } from "../src/scenario/load-solar-system.js";
