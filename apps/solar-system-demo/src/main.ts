@@ -17,6 +17,7 @@ import { PathCache } from "./simulation/path-sampling.js";
 import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visualization.js";
 import { SimulationClock } from "./simulation/simulation-clock.js";
 import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
+import { CelestialBrowser } from "./ui/celestial-browser.js";
 import { DemoPanel } from "./ui/demo-panel.js";
 import { simulationInstantFromLocalDateTimeInput } from "./ui/civil-time.js";
 import {
@@ -26,6 +27,13 @@ import {
   type ObjectId,
   type OrbitEngine,
 } from "orbit-engine";
+
+interface PendingNavigation {
+  readonly targetId: ObjectId;
+  readonly previousSelectedId: ObjectId;
+  readonly previousFocusId: ObjectId;
+  readonly requestContextKey: string;
+}
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene");
 const clock = new SimulationClock();
@@ -43,10 +51,12 @@ async function bootstrap(): Promise<void> {
   let stateSource: SolarSystemStateSource | undefined;
   let runtimeAsteroids: RuntimeAsteroidSession | undefined;
   let coordinator: StateQueryCoordinator<ScenarioStateFrame> | undefined;
+  let browser: CelestialBrowser | undefined;
   let focusId: ObjectId = SUN_ID;
   let selectedId: ObjectId = SUN_ID;
   let objectSetRevision = 0;
   let recenterAfterState = false;
+  let pendingNavigation: PendingNavigation | undefined;
   let orbitResampleTimer: number | undefined;
   const pathCache = new PathCache(ORBIT_CACHE_ENTRIES);
 
@@ -58,10 +68,20 @@ async function bootstrap(): Promise<void> {
     ]);
   }
 
+  function stateRequestContextKey(targetFocus: ObjectId = focusId): string {
+    return `view-center:${targetFocus}:objects:${objectSetRevision}`;
+  }
+
+  function focusFromContextKey(contextKey: string): ObjectId {
+    const match = /^view-center:([^:]+):objects:\d+$/.exec(contextKey);
+    return match?.[1] === undefined ? focusId : objectId(match[1]);
+  }
+
   function centerCameraOnFocus(): void {
-    const focusMesh = scene?.meshFor(focusId);
-    if (focusMesh === undefined || renderShell === undefined) return;
-    renderShell.centerOn(focusMesh.position);
+    const currentScene = scene;
+    const focusMesh = currentScene?.meshFor(focusId);
+    if (focusMesh === undefined || renderShell === undefined || currentScene === undefined) return;
+    renderShell.centerOn(focusMesh.position, currentScene.focusDistanceFor(focusId));
   }
 
   function updateClockUi(): void {
@@ -90,18 +110,20 @@ async function bootstrap(): Promise<void> {
   }
 
   function requestCurrentState(recenter = false, centerImmediately = false): void {
-    if (coordinator === undefined) return;
     if (recenter) {
       recenterAfterState = true;
       if (centerImmediately) centerCameraOnFocus();
     }
-    coordinator.request(clock.currentInstant(), `view-center:${focusId}:objects:${objectSetRevision}`);
     panel.setFocusId(focusId);
+    browser?.setViewCenter(focusId);
+    if (coordinator === undefined) return;
+    coordinator.request(clock.currentInstant(), stateRequestContextKey());
   }
 
   function setSelectedBody(objectIdValue: ObjectId): void {
     selectedId = objectIdValue;
     panel.setSelectedId(selectedId);
+    browser?.setSelectedBody(selectedId);
     scene?.setSelected(selectedId);
     if (scene?.selectedOrbitActive()) {
       panel.setOrbitStatus("ready", `${scene.pathCount()} reference orbits · selected direction highlighted`);
@@ -110,6 +132,24 @@ async function bootstrap(): Promise<void> {
     }
     const snapshot = coordinator?.latestSnapshot();
     if (snapshot !== undefined) updateSelectedPanel(snapshot.value);
+  }
+
+  function navigateToBody(objectIdValue: ObjectId): void {
+    if (scenario === undefined || !scenario.bodyById.has(objectIdValue)) {
+      panel.setScenarioNote("error", `Cannot navigate to unknown celestial body ${objectIdValue}`);
+      return;
+    }
+    const previousSelectedId = selectedId;
+    const previousFocusId = focusId;
+    setSelectedBody(objectIdValue);
+    focusId = objectIdValue;
+    pendingNavigation = {
+      targetId: objectIdValue,
+      previousSelectedId,
+      previousFocusId,
+      requestContextKey: stateRequestContextKey(objectIdValue),
+    };
+    requestCurrentState(true);
   }
 
   function orbitEntries(): readonly SolarSystemScenario["bodies"][number][] {
@@ -178,6 +218,7 @@ async function bootstrap(): Promise<void> {
 
   function addRuntimeAsteroids(count: number, seed: number): void {
     if (runtimeAsteroids === undefined) return;
+    pendingNavigation = undefined;
     panel.setAsteroidStatus("pending", `Adding ${count.toLocaleString()} synthetic asteroids…`);
     const result = runtimeAsteroids.addBatch({ count, seed });
     objectSetRevision += 1;
@@ -195,6 +236,7 @@ async function bootstrap(): Promise<void> {
 
   function removeRuntimeAsteroids(): void {
     if (runtimeAsteroids === undefined) return;
+    pendingNavigation = undefined;
     const result = runtimeAsteroids.removeAll();
     asteroidMarkers?.clear();
     objectSetRevision += 1;
@@ -226,11 +268,16 @@ async function bootstrap(): Promise<void> {
       }
     },
     onFocusChange: (objectIdValue) => {
+      pendingNavigation = undefined;
       focusId = objectIdValue;
       requestCurrentState(true);
     },
-    onSelectedChange: setSelectedBody,
+    onSelectedChange: (objectIdValue) => {
+      pendingNavigation = undefined;
+      setSelectedBody(objectIdValue);
+    },
     onCenterSelected: () => {
+      pendingNavigation = undefined;
       const focusAlreadySelected = focusId === selectedId;
       focusId = selectedId;
       requestCurrentState(true, focusAlreadySelected);
@@ -306,6 +353,12 @@ async function bootstrap(): Promise<void> {
     if (scenario.rootFrame !== SCENARIO_ROOT_FRAME) throw new Error("Scenario root frame is not the engine root frame");
     if (scenario.catalog.roots.length !== 1) throw new Error("Scenario catalog must have exactly one root");
     runtimeAsteroids = new RuntimeAsteroidSession(engine, scenario);
+    browser = new CelestialBrowser({
+      catalog: scenario.catalog,
+      selectedBodyId: selectedId,
+      viewCenterBodyId: focusId,
+      onNavigateToBody: navigateToBody,
+    });
     panel.populateBodies(scenario);
     panel.setFocusId(focusId);
     panel.setSelectedId(selectedId);
@@ -321,11 +374,7 @@ async function bootstrap(): Promise<void> {
   });
   coordinator = new StateQueryCoordinator<ScenarioStateFrame>({
     source: {
-      query: (request) => {
-        const match = /^view-center:([^:]+):objects:\d+$/.exec(request.contextKey);
-        const requestedFocus = match?.[1] === undefined ? focusId : objectId(match[1]);
-        return stateSource!.query(requestedFocus, request.target);
-      },
+      query: (request) => stateSource!.query(focusFromContextKey(request.contextKey), request.target),
     },
     onSnapshot: (snapshot) => {
       scene?.update(snapshot.value.states, snapshot.value.objectIds);
@@ -338,10 +387,24 @@ async function bootstrap(): Promise<void> {
         centerCameraOnFocus();
         recenterAfterState = false;
       }
+      if (pendingNavigation !== undefined
+          && snapshot.value.focusId === pendingNavigation.targetId
+          && snapshot.contextKey === pendingNavigation.requestContextKey) {
+        pendingNavigation = undefined;
+      }
       updateSelectedPanel(snapshot.value);
       updateRuntimeStats(snapshot.value);
     },
-    onError: (error) => {
+    onError: (error, request) => {
+      const failedNavigation = pendingNavigation;
+      if (failedNavigation !== undefined && request.contextKey === failedNavigation.requestContextKey) {
+        pendingNavigation = undefined;
+        recenterAfterState = false;
+        selectedId = failedNavigation.previousSelectedId;
+        focusId = failedNavigation.previousFocusId;
+        setSelectedBody(selectedId);
+        requestCurrentState(true);
+      }
       panel.setScenarioNote("error", `State query failed: ${error instanceof Error ? error.message : String(error)}`);
     },
   });
@@ -411,6 +474,7 @@ async function bootstrap(): Promise<void> {
     asteroidMarkers?.dispose();
     scene?.dispose();
     renderShell?.dispose();
+    browser?.dispose();
   }, { once: true });
 }
 
