@@ -9,6 +9,12 @@ export const LINEAR_SRGB_LUMINANCE = Object.freeze({ r: 0.2126, g: 0.7152, b: 0.
 export const FALLBACK_VISUAL_ALBEDO = 0.32;
 export const REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER = 1_361;
 export const MIN_STELLAR_DISTANCE_METERS = 1;
+/**
+ * Three.js MeshLambertMaterial applies the Lambert BRDF factor 1 / PI.
+ * Document 19 defines mapped scene irradiance as the final diffuse scalar,
+ * so renderer point-light intensity must compensate that factor exactly once.
+ */
+export const LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION = Math.PI;
 
 export type SurfaceReflectanceSource = "calibratedReflectance" | "composition" | "fallbackAccent";
 
@@ -174,6 +180,12 @@ export function mapIrradianceToSceneIntensity(irradianceWattsPerSquareMeter: num
   finite("irradiance", irradianceWattsPerSquareMeter);
   if (irradianceWattsPerSquareMeter < 0) throw new RangeError("irradiance must be non-negative");
   return irradianceWattsPerSquareMeter / REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER;
+}
+
+export function mapSceneDiffuseContributionToLambertLightIntensity(sceneDiffuseContribution: number): number {
+  finite("scene diffuse contribution", sceneDiffuseContribution);
+  if (sceneDiffuseContribution < 0) throw new RangeError("scene diffuse contribution must be non-negative");
+  return sceneDiffuseContribution * LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION;
 }
 
 function distanceBetween(left: CartesianPosition, right: CartesianPosition): number {
