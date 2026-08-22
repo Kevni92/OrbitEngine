@@ -5,6 +5,8 @@ import { ORBIT_RENDER_ORDER } from "./presentation-order.js";
 import { positionToSceneUnits } from "./render-space.js";
 
 export const ORBIT_BASE_OPACITY = 0.18;
+export const ORBIT_BACKGROUND_OPACITY = 0.11;
+export const ORBIT_LOCAL_SYSTEM_OPACITY = 0.27;
 export const ORBIT_SELECTED_BASE_OPACITY = 0.34;
 export const ORBIT_HEAD_FRACTION = 0.08;
 export const ORBIT_TAIL_FRACTION = 0.34;
@@ -12,6 +14,15 @@ export const ORBIT_TAIL_FRACTION = 0.34;
 export interface TrailGradientOptions {
   readonly headFraction?: number;
   readonly tailFraction?: number;
+}
+
+export type OrbitGuideRole = "background" | "local-system" | "selected";
+
+export interface OrbitGuideDiagnostics {
+  readonly objectId: ObjectId;
+  readonly role: OrbitGuideRole;
+  readonly opacity: number;
+  readonly visible: boolean;
 }
 
 export function nearestOrbitSampleIndex(points: readonly THREE.Vector3[], position: THREE.Vector3): number {
@@ -101,6 +112,7 @@ export class OrbitRenderer {
   readonly #entries = new Map<ObjectId, OrbitEntry>();
   #visible = true;
   #selected?: ObjectId;
+  #localSystemRootId?: ObjectId;
   #positions = new Map<ObjectId, THREE.Vector3>();
   readonly #representationVisible = new Map<ObjectId, boolean>();
 
@@ -124,6 +136,9 @@ export class OrbitRenderer {
     this.#visible = Boolean(visible);
     this.#root.visible = this.#visible;
     this.#root.userData.visible = this.#visible;
+    for (const entry of this.#entries.values()) {
+      entry.highlightLine.visible = this.#roleFor(entry) === "selected" && this.#visible;
+    }
   }
 
   setSelected(objectId: ObjectId | undefined): void {
@@ -132,6 +147,26 @@ export class OrbitRenderer {
     if (objectId !== undefined) this.#updateSelectedGradient();
     this.#root.userData.selectedObjectId = objectId;
     this.#root.userData.selectedOrbitActive = objectId !== undefined && this.#entries.has(objectId);
+  }
+
+  setLocalSystemRoot(objectId: ObjectId | undefined): void {
+    this.#localSystemRootId = objectId;
+    for (const entry of this.#entries.values()) this.#updateEntryVisibility(entry);
+    this.#root.userData.localSystemRootId = objectId;
+  }
+
+  guideRoleFor(objectId: ObjectId): OrbitGuideRole | undefined {
+    const entry = this.#entries.get(objectId);
+    return entry === undefined ? undefined : this.#roleFor(entry);
+  }
+
+  guideDiagnostics(): readonly OrbitGuideDiagnostics[] {
+    return Object.freeze([...this.#entries.values()].map((entry) => Object.freeze({
+      objectId: entry.path.objectId,
+      role: this.#roleFor(entry),
+      opacity: entry.baseMaterial.opacity,
+      visible: entry.group.visible,
+    })));
   }
 
   /** Hide background paths for hidden/marker bodies without changing path ownership. */
@@ -152,7 +187,7 @@ export class OrbitRenderer {
     const baseMaterial = new THREE.LineBasicMaterial({
       color: mutedColor(bodyColor),
       transparent: true,
-      opacity: ORBIT_BASE_OPACITY,
+      opacity: ORBIT_BACKGROUND_OPACITY,
       depthWrite: false,
     });
     const highlightMaterial = createHighlightMaterial(bodyColor);
@@ -233,11 +268,23 @@ export class OrbitRenderer {
   }
 
   #updateEntryVisibility(entry: OrbitEntry): void {
-    const selected = entry.path.objectId === this.#selected;
-    entry.baseMaterial.opacity = selected ? ORBIT_SELECTED_BASE_OPACITY : ORBIT_BASE_OPACITY;
-    entry.highlightLine.visible = selected && this.#visible;
+    const role = this.#roleFor(entry);
+    entry.baseMaterial.opacity = role === "selected"
+      ? ORBIT_SELECTED_BASE_OPACITY
+      : role === "local-system"
+        ? ORBIT_LOCAL_SYSTEM_OPACITY
+        : ORBIT_BACKGROUND_OPACITY;
+    entry.group.userData.guideRole = role;
+    entry.group.userData.guideOpacity = entry.baseMaterial.opacity;
+    entry.highlightLine.visible = role === "selected" && this.#visible;
     entry.group.visible = this.#visible
-      && ((this.#representationVisible.get(entry.path.objectId) ?? true) || selected);
+      && ((this.#representationVisible.get(entry.path.objectId) ?? true) || role === "selected");
+  }
+
+  #roleFor(entry: OrbitEntry): OrbitGuideRole {
+    if (entry.path.objectId === this.#selected) return "selected";
+    if (this.#localSystemRootId !== undefined && entry.path.focusId === this.#localSystemRootId) return "local-system";
+    return "background";
   }
 
   #updateEntryAnchor(entry: OrbitEntry): void {
