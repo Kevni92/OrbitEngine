@@ -12,6 +12,10 @@ import {
 import { OrbitRenderer } from "./orbit-renderer.js";
 import { metersToSceneUnits, positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
 
+export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 1.6;
+export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
+export const FOCUS_DISTANCE_RADIUS_MULTIPLIER = 8;
+
 interface SceneBody {
   readonly objectId: ObjectId;
   readonly centralBody?: ObjectId;
@@ -259,6 +263,20 @@ export class SolarSystemScene {
 
   selectionHalo(): THREE.Mesh {
     return this.#selectionHalo;
+  }
+
+  /**
+   * Presentation-only starting distance for focus navigation. It intentionally
+   * uses physical scale plus bounded readability limits rather than the
+   * current overview's camera-dependent adaptive sphere scale.
+   */
+  focusDistanceFor(objectId: ObjectId): number {
+    const body = this.#bodies.get(objectId);
+    if (body === undefined) throw new RangeError(`Unknown scenario body: ${objectId}`);
+    return Math.min(
+      MAX_FOCUS_DISTANCE_SCENE_UNITS,
+      Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, body.physicalRadiusSceneUnits * FOCUS_DISTANCE_RADIUS_MULTIPLIER),
+    );
   }
 
   dispose(): void {
