@@ -42,7 +42,8 @@ test("state source uses a batch query for the Sun view and relative queries for 
   const source = new SolarSystemStateSource(engine, scenario());
   const target = simulationInstant(42);
 
-  source.query(SUN_ID, target);
+  const sunFrame = source.query(SUN_ID, target);
+  assert.deepEqual(sunFrame.objectIds, SCENARIO_OBJECT_IDS);
   assert.equal(batchCalls.length, 1);
   assert.equal(relativeCalls.length, 0);
 
@@ -56,4 +57,32 @@ test("state source uses a batch query for the Sun view and relative queries for 
   assert.equal(stateCalls.length, 1);
   source.stateAt(focus, focus, target, SCENARIO_ROOT_FRAME);
   assert.equal(relativeCalls.length, SCENARIO_OBJECT_IDS.length + 1);
+});
+
+test("state source captures the current dynamic object set in every snapshot", () => {
+  const dynamicId = objectId("9000000000000000000");
+  let ids = [...SCENARIO_OBJECT_IDS];
+  const observedBatches: readonly unknown[][][] = [];
+  const batches: unknown[][][] = observedBatches as unknown[][][];
+  const engine = {
+    statesAt(objectIds: readonly unknown[], target: unknown, frame: unknown) {
+      batches.push([objectIds as unknown[], [target], [frame]]);
+      return objectIds.map(() => ({
+        position: { x: 0, y: 0, z: 0 },
+        velocity: { x: 0, y: 0, z: 0 },
+        epoch: target,
+        referenceFrame: frame,
+      }));
+    },
+  } as unknown as OrbitEngine;
+  const source = new SolarSystemStateSource(engine, scenario(), { objectIds: () => ids });
+
+  const first = source.query(SUN_ID, simulationInstant(0));
+  assert.equal(first.objectIds.includes(dynamicId), false);
+
+  ids = [...ids, dynamicId];
+  const second = source.query(SUN_ID, simulationInstant(1));
+  assert.equal(second.objectIds.at(-1), dynamicId);
+  assert.equal(second.states.length, second.objectIds.length);
+  assert.equal(batches.length, 2);
 });
