@@ -22,6 +22,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 16. [Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md) — private Vite/Three.js reference application, browser-WASM loading contract, engine-driven animation, render-space precision, scenario data, CI, and staged demo implementation.
 17. [Adaptive Demo Rendering and Runtime Populations](17-adaptive-demo-rendering-and-runtime-populations.md) — runtime synthetic asteroid overlays, camera-aware screen-space sizing, separation-aware enhancement, hierarchical LOD, and batched large-population rendering.
 18. [Global Solar-System Context Presentation](18-global-solar-system-context-presentation.md) — persistent major-body context across local focus, marker floors, and same-frame renderer-state invariants.
+19. [Celestial Appearance, Atmospheres, and Stellar Lighting](19-celestial-appearance-atmospheres-and-lighting.md) — application-owned surface/atmosphere appearance data, optical derivation, stellar illumination, shader semantics, lighting modes, provenance, and LOD integration.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -44,6 +45,7 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - The portable C++ core must not depend on Node.js or Emscripten APIs.
 - Native and WASM backends must preserve equivalent public semantics.
 - Browser/reference applications consume the public package from outside the engine boundary; rendering frameworks never become engine dependencies or authoritative physics state.
+- Celestial composition, atmosphere appearance, optical derivation, stellar-rendering parameters, and inspection lighting remain application/dataset concerns unless a separately designed physical engine capability explicitly requires a subset.
 - Every issue must declare exactly one authoritative task type before execution.
 
 When an architectural decision changes, update the relevant document in the same pull request.
