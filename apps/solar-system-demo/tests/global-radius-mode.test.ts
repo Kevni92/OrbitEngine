@@ -73,18 +73,21 @@ test("radius mode applies globally to distant marker planets and focused spheres
   visual.updatePresentation(camera, 900);
   assert.equal(visual.representationFor(URANUS_ID), "sphere");
   assert.equal(visual.representationFor(EARTH_ID), "marker");
-  assert.equal(visual.renderDiagnosticsFor(EARTH_ID, camera)?.markerSizePixels, MARKER_PIXEL_SIZE);
+  let earthDiagnostics = visual.renderDiagnosticsFor(EARTH_ID, camera);
+  assert.equal(earthDiagnostics?.submitted, true);
+  assert.equal(earthDiagnostics?.markerSizePixels, MARKER_PIXEL_SIZE);
 
-  const markerCount = visual.markerCount();
   visual.setRadiusMode("physical");
   visual.updatePresentation(camera, 900);
 
   const expectedEarthDiameter = expectedPhysicalDiameterPixels(visual, camera, EARTH_ID, 900);
-  const physicalEarthMarker = visual.renderDiagnosticsFor(EARTH_ID, camera)?.markerSizePixels;
+  earthDiagnostics = visual.renderDiagnosticsFor(EARTH_ID, camera);
+  assert.equal(visual.representationFor(EARTH_ID), "marker");
+  assert.equal(earthDiagnostics?.submitted, true, "radius-mode switch must keep the existing Earth marker submitted");
+  const physicalEarthMarker = earthDiagnostics?.markerSizePixels;
   assert.ok(physicalEarthMarker !== undefined);
   assert.ok(Math.abs(physicalEarthMarker - expectedEarthDiameter) < 1e-6);
   assert.ok(physicalEarthMarker < MARKER_PIXEL_SIZE, "physical mode must not clamp distant Earth back to adaptive marker size");
-  assert.equal(visual.markerCount(), markerCount, "radius-mode switch must not require marker membership changes");
 
   const uranusDefinition = SCENARIO_BODIES.find((body) => body.id === URANUS_ID)!;
   const expectedUranusRadius = radiusToSceneUnits({
@@ -94,15 +97,19 @@ test("radius mode applies globally to distant marker planets and focused spheres
   assert.equal(visual.meshFor(URANUS_ID)?.scale.x, expectedUranusRadius);
 
   visual.updatePresentation(camera, 450);
-  const halfViewportEarthMarker = visual.renderDiagnosticsFor(EARTH_ID, camera)?.markerSizePixels;
+  earthDiagnostics = visual.renderDiagnosticsFor(EARTH_ID, camera);
+  assert.equal(visual.representationFor(EARTH_ID), "marker");
+  assert.equal(earthDiagnostics?.submitted, true);
+  const halfViewportEarthMarker = earthDiagnostics?.markerSizePixels;
   assert.ok(halfViewportEarthMarker !== undefined);
   assert.ok(Math.abs(halfViewportEarthMarker - expectedEarthDiameter / 2) < 1e-6);
-  assert.equal(visual.markerCount(), markerCount);
 
   visual.setRadiusMode("adaptive");
   visual.updatePresentation(camera, 450);
-  assert.equal(visual.renderDiagnosticsFor(EARTH_ID, camera)?.markerSizePixels, MARKER_PIXEL_SIZE);
-  assert.equal(visual.markerCount(), markerCount);
+  earthDiagnostics = visual.renderDiagnosticsFor(EARTH_ID, camera);
+  assert.equal(visual.representationFor(EARTH_ID), "marker");
+  assert.equal(earthDiagnostics?.submitted, true);
+  assert.equal(earthDiagnostics?.markerSizePixels, MARKER_PIXEL_SIZE);
 
   visual.dispose();
 });
