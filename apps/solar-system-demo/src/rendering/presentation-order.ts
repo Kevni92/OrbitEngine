@@ -1,0 +1,3 @@
+export const ORBIT_RENDER_ORDER = 0;
+export const MARKER_RENDER_ORDER = 10;
+export const SELECTION_HALO_RENDER_ORDER = 20;
