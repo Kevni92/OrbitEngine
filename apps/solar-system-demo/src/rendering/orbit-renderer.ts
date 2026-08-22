@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { ObjectId } from "orbit-engine";
 import type { OrbitPath } from "../simulation/path-sampling.js";
+import { ORBIT_RENDER_ORDER } from "./presentation-order.js";
 import { positionToSceneUnits } from "./render-space.js";
 
 export const ORBIT_BASE_OPACITY = 0.18;
@@ -157,6 +158,8 @@ export class OrbitRenderer {
     const highlightMaterial = createHighlightMaterial(bodyColor);
     const baseLine = new THREE.LineLoop(geometry, baseMaterial);
     const highlightLine = new THREE.LineLoop(geometry, highlightMaterial);
+    baseLine.renderOrder = ORBIT_RENDER_ORDER;
+    highlightLine.renderOrder = ORBIT_RENDER_ORDER;
     const group = new THREE.Group();
     group.name = `Orbit ${path.objectId}`;
     group.userData.objectId = path.objectId;
