@@ -81,6 +81,31 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await page.selectOption("#selected-select", "1003");
   await expect(page.locator("#selected-name")).toHaveText("Earth");
 
+  await expect(page.locator("#radius-mode")).toHaveValue("adaptive");
+  await page.selectOption("#radius-mode", "physical");
+  await page.selectOption("#radius-mode", "adaptive");
+  await page.locator("#population-count").fill("25");
+  await page.locator("#population-seed").fill("smoke-62");
+  await page.click("#add-asteroids");
+  await expect(page.locator("#population-status")).toContainText("25 generated asteroids");
+  await expect(page.locator("#population-diagnostics")).toContainText("Generated asteroids: 25");
+  await expect(page.locator("#population-diagnostics")).toContainText("Current queried objects: 73");
+  await expect(page.locator("#population-diagnostics")).toContainText("Batched markers: 25");
+  await page.selectOption("#selected-select", "9000000000000000000");
+  await expect(page.locator("#selected-name")).toHaveText("Synthetic Asteroid 1");
+  await page.selectOption("#warp-select", "86400");
+  await page.click("#play-pause");
+  await page.waitForTimeout(120);
+  await page.click("#play-pause");
+  await page.click("#remove-asteroids");
+  await expect(page.locator("#population-status")).toContainText("Removed 25 generated asteroids");
+  await expect(page.locator("#population-diagnostics")).toContainText("Generated asteroids: 0");
+  await expect(page.locator("#population-diagnostics")).toContainText("Current queried objects: 48");
+  await expect(page.locator("#population-diagnostics")).toContainText("Batched markers: 0");
+  await expect(page.locator("#selected-name")).toHaveText("Sun");
+  await page.selectOption("#selected-select", "1003");
+  await expect(page.locator("#selected-name")).toHaveText("Earth");
+
   await page.locator("#scene").hover();
   for (let index = 0; index < 160; index += 1) await page.mouse.wheel(0, 100);
   await page.waitForTimeout(250);

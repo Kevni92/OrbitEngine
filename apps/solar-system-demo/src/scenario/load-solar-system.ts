@@ -114,7 +114,7 @@ function twoBodyModel(
   });
 }
 
-function registerChild(
+export function registerScenarioChild(
   engine: OrbitEngine,
   definition: CelestialBodyDefinition,
   centralBody: RegisteredScenarioBody,
@@ -152,7 +152,7 @@ export function loadSolarSystemScenario(engine: OrbitEngine): SolarSystemScenari
     const definition = definitions.get(id)!;
     const value = definition.centralBody === undefined
       ? registerRoot(engine, definition)
-      : registerChild(engine, definition, registered.get(definition.centralBody)!);
+      : registerScenarioChild(engine, definition, registered.get(definition.centralBody)!);
     registered.set(id, value);
 
     const centeredFrame = centeredFrames.get(id);

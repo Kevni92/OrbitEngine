@@ -1,5 +1,5 @@
 import { objectId, type ObjectId, type OrbitEngine, type PropagationState, type SimulationInstant } from "orbit-engine";
-import type { SolarSystemScenario } from "../scenario/load-solar-system.js";
+import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
 import {
   formatDistance,
   formatExactInstant,
@@ -19,7 +19,9 @@ export interface DemoPanelOptions {
   readonly onFocusChange?: (objectId: ObjectId) => void;
   readonly onSelectedChange?: (objectId: ObjectId) => void;
   readonly onCenterSelected?: () => void;
-  readonly onRadiusModeChange?: (mode: "visible" | "physical") => void;
+  readonly onRadiusModeChange?: (mode: "adaptive" | "physical") => void;
+  readonly onAddAsteroids?: (count: number, seed: string) => void;
+  readonly onRemoveAsteroids?: () => void;
   readonly onGridChange?: (visible: boolean) => void;
   readonly onOrbitsChange?: (visible: boolean) => void;
   readonly onAxesChange?: (visible: boolean) => void;
@@ -50,6 +52,12 @@ export class DemoPanel {
   readonly #focusSelect = element<HTMLSelectElement>("focus-select");
   readonly #selectedSelect = element<HTMLSelectElement>("selected-select");
   readonly #radiusMode = element<HTMLSelectElement>("radius-mode");
+  readonly #populationCount = element<HTMLInputElement>("population-count");
+  readonly #populationSeed = element<HTMLInputElement>("population-seed");
+  readonly #addAsteroids = element<HTMLButtonElement>("add-asteroids");
+  readonly #removeAsteroids = element<HTMLButtonElement>("remove-asteroids");
+  readonly #populationStatus = element<HTMLElement>("population-status");
+  readonly #populationDiagnostics = element<HTMLElement>("population-diagnostics");
   readonly #focusSelected = element<HTMLButtonElement>("focus-selected");
   readonly #jumpSeconds = element<HTMLInputElement>("jump-seconds");
   readonly #jumpNanoseconds = element<HTMLInputElement>("jump-nanoseconds");
@@ -89,9 +97,13 @@ export class DemoPanel {
     this.#selectedSelect.addEventListener("change", () => this.#options.onSelectedChange?.(this.selectedId()));
     this.#focusSelected.addEventListener("click", () => this.#options.onCenterSelected?.());
     this.#radiusMode.addEventListener("change", () => {
-      const value = this.#radiusMode.value === "physical" ? "physical" : "visible";
+      const value = this.#radiusMode.value === "physical" ? "physical" : "adaptive";
       this.#options.onRadiusModeChange?.(value);
     });
+    this.#addAsteroids.addEventListener("click", () => {
+      this.#options.onAddAsteroids?.(Number(this.#populationCount.value), this.#populationSeed.value);
+    });
+    this.#removeAsteroids.addEventListener("click", () => this.#options.onRemoveAsteroids?.());
     this.#gridToggle.addEventListener("click", () => {
       const visible = !this.isPressed(this.#gridToggle);
       this.setToggle(this.#gridToggle, this.#gridState, visible);
@@ -126,8 +138,8 @@ export class DemoPanel {
     });
   }
 
-  populateBodies(scenario: SolarSystemScenario): void {
-    const options = scenario.bodies.map((entry) => {
+  populateBodies(entries: readonly RegisteredScenarioBody[]): void {
+    const options = entries.map((entry) => {
       const option = document.createElement("option");
       option.value = entry.definition.id;
       option.textContent = entry.definition.name;
@@ -166,6 +178,10 @@ export class DemoPanel {
     this.#jumpTime.disabled = !ready;
     this.#localDateTime.disabled = !ready;
     this.#localDateTimeJump.disabled = !ready;
+    this.#populationCount.disabled = !ready;
+    this.#populationSeed.disabled = !ready;
+    this.#addAsteroids.disabled = !ready;
+    this.#removeAsteroids.disabled = !ready;
   }
 
   setSimulationTime(instant: SimulationInstant, playing: boolean): void {
@@ -218,7 +234,7 @@ export class DemoPanel {
     setStatus(this.#orbitStatus, state, message);
   }
 
-  setSelectedBody(entry: SolarSystemScenario["bodies"][number], state: PropagationState, focusState: PropagationState | undefined): void {
+  setSelectedBody(entry: RegisteredScenarioBody, state: PropagationState, focusState: PropagationState | undefined): void {
     const properties = entry.record.properties;
     this.#selectedName.textContent = entry.definition.name;
     this.#selectedType.textContent = formatObjectType(entry.definition.type);
@@ -232,7 +248,7 @@ export class DemoPanel {
   }
 
   setTechnicalDetails(
-    entry: SolarSystemScenario["bodies"][number],
+    entry: RegisteredScenarioBody,
     state: PropagationState,
     focusId: ObjectId,
     health: ReturnType<OrbitEngine["health"]>,
@@ -270,6 +286,18 @@ export class DemoPanel {
 
   clearLocalDateTimeJumpError(): void {
     setStatus(this.#localDateTimeError, "pending", "");
+  }
+
+  setPopulationStatus(state: string, message: string): void {
+    setStatus(this.#populationStatus, state, message);
+  }
+
+  setPopulationDiagnostics(generatedCount: number, currentObjectCount: number, markerCount: number): void {
+    this.#populationDiagnostics.textContent = [
+      `Generated asteroids: ${generatedCount}`,
+      `Current queried objects: ${currentObjectCount}`,
+      `Batched markers: ${markerCount}`,
+    ].join(" · ");
   }
 
   #isPressed(button: HTMLButtonElement): boolean {

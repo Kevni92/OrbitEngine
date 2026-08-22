@@ -5,7 +5,7 @@ import { MERCURY_ID, SCENARIO_BODIES } from "../src/scenario/scenario-data.js";
 import {
   ASTRONOMICAL_UNIT_METERS,
   J2000_ECLIPTIC_OBLIQUITY_RADIANS,
-  MIN_VISIBLE_RADIUS_SCENE_UNITS,
+  MIN_ADAPTIVE_RADIUS_SCENE_UNITS,
   SCENE_UP_VECTOR,
   focusRelativePosition,
   icrsToJ2000Ecliptic,
@@ -45,10 +45,11 @@ test("render space preserves focus-relative SI conversion before presentation ro
   assert.equal(metersToSceneUnits(ASTRONOMICAL_UNIT_METERS), 100);
 });
 
-test("radius policy keeps physical and visible presentation values separate", () => {
+test("radius policy keeps physical and adaptive presentation values separate", () => {
   const physical = radiusToSceneUnits({ mode: "physical", physicalRadiusMeters: meters(1) });
-  const visible = radiusToSceneUnits({ mode: "visible", physicalRadiusMeters: meters(1) });
+  const adaptive = radiusToSceneUnits({ mode: "adaptive", physicalRadiusMeters: meters(1), adaptiveRadiusSceneUnits: 0.2 });
   assert.equal(physical, metersToSceneUnits(1));
-  assert.ok(visible >= MIN_VISIBLE_RADIUS_SCENE_UNITS);
-  assert.notEqual(visible, physical);
+  assert.ok(adaptive >= MIN_ADAPTIVE_RADIUS_SCENE_UNITS);
+  assert.ok(adaptive >= physical);
+  assert.throws(() => radiusToSceneUnits({ mode: "adaptive", physicalRadiusMeters: meters(1) }), /camera-aware/);
 });
