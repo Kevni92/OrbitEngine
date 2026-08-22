@@ -175,7 +175,7 @@ export function generateProceduralSurfaceData(
     }
   }
 
-  const means = [0, 0, 0];
+  const means: [number, number, number] = [0, 0, 0];
   for (let index = 0; index < linear.length; index += 3) {
     means[0] += linear[index]!;
     means[1] += linear[index + 1]!;
@@ -185,10 +185,11 @@ export function generateProceduralSurfaceData(
   means[0] /= pixelCount;
   means[1] /= pixelCount;
   means[2] /= pixelCount;
-  const target = [baseline.r, baseline.g, baseline.b];
+  const target: [number, number, number] = [baseline.r, baseline.g, baseline.b];
   const scales = means.map((mean, index) => {
-    if (mean <= Number.EPSILON || target[index]! <= Number.EPSILON) return 1;
-    return Math.min(PROCEDURAL_SURFACE_MAX_CHANNEL_SCALE, Math.max(PROCEDURAL_SURFACE_MIN_CHANNEL_SCALE, target[index]! / mean));
+    const targetChannel = target[index]!;
+    if (mean <= Number.EPSILON || targetChannel <= Number.EPSILON) return 1;
+    return Math.min(PROCEDURAL_SURFACE_MAX_CHANNEL_SCALE, Math.max(PROCEDURAL_SURFACE_MIN_CHANNEL_SCALE, targetChannel / mean));
   });
 
   const pixels = new Uint8Array(pixelCount * 4);
