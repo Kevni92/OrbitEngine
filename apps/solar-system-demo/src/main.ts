@@ -43,6 +43,7 @@ interface BrowserRenderBodyDiagnostics {
   readonly orbitVisible: boolean;
   readonly inFront: boolean;
   readonly inViewport: boolean;
+  readonly markerSizePixels?: number;
   readonly positionErrorSceneUnits?: number;
 }
 
@@ -465,6 +466,7 @@ async function bootstrap(): Promise<void> {
           orbitVisible: diagnostics?.orbitVisible ?? false,
           inFront: diagnostics?.inFront ?? false,
           inViewport: diagnostics?.inViewport ?? false,
+          markerSizePixels: diagnostics?.markerSizePixels,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
         };
       }),
