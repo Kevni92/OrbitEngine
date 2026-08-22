@@ -6,6 +6,14 @@ import {
   type ObjectId,
   type PropagationState,
 } from "orbit-engine";
+import {
+  blackbodyTemperatureToLinearRgb,
+  deriveSurfaceReflectance,
+  REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER,
+  resolveStellarIllumination,
+  type StellarEmitter,
+  type StellarIlluminationSet,
+} from "./celestial-appearance-rendering.js";
 import type { RegisteredScenarioBody, SolarSystemScenario } from "../scenario/load-solar-system.js";
 import type { RuntimeAsteroidBody } from "../scenario/runtime-asteroid-overlay.js";
 import type { OrbitPath } from "../simulation/path-sampling.js";
@@ -23,7 +31,7 @@ import {
   type LodDiagnostics,
   type RepresentationLevel,
 } from "./representation-lod.js";
-import { positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
+import { METERS_PER_SCENE_UNIT, positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
 import { MARKER_PIXEL_SIZE, BatchedMarkerLayer } from "./runtime-asteroid-markers.js";
 import { SelectionHalo } from "./selection-halo.js";
 
@@ -37,7 +45,7 @@ interface SceneBody {
   readonly physicalRadiusMeters: Meters;
   readonly parentId?: ObjectId;
   readonly type: RegisteredScenarioBody["definition"]["type"];
-  readonly mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
+  readonly mesh: THREE.Mesh;
 }
 
 export interface SolarSystemSceneOptions {
@@ -55,6 +63,8 @@ export interface BodyRenderDiagnostics {
   readonly ndcY: number;
   readonly ndcZ: number;
   readonly positionErrorSceneUnits?: number;
+  readonly surfaceReflectanceSource?: string;
+  readonly physicalIrradianceWattsPerSquareMeter?: number;
 }
 
 function isGlobalContextEntry(entry: RegisteredScenarioBody): boolean {
@@ -72,9 +82,11 @@ export class SolarSystemScene {
   readonly #committedEntries = new Map<ObjectId, RegisteredScenarioBody>();
   readonly #currentEntries = new Map<ObjectId, RegisteredScenarioBody>();
   readonly #runtimeIds = new Set<ObjectId>();
-  readonly #runtimeSphereMeshes = new Map<ObjectId, THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>>();
+  readonly #runtimeSphereMeshes = new Map<ObjectId, THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial>>();
   readonly #runtimeSphereGeometry: THREE.SphereGeometry;
-  readonly #runtimeSphereMaterial: THREE.MeshBasicMaterial;
+  readonly #runtimeSphereMaterial: THREE.MeshLambertMaterial;
+  readonly #stellarLights = new Map<ObjectId, THREE.PointLight>();
+  readonly #illuminationByBody = new Map<ObjectId, StellarIlluminationSet>();
   readonly #representations = new Map<ObjectId, RepresentationLevel>();
   readonly #orbitRenderer: OrbitRenderer;
   readonly #markerLayer: BatchedMarkerLayer;
@@ -95,7 +107,7 @@ export class SolarSystemScene {
     this.#orbitRenderer = new OrbitRenderer(scene);
     this.#markerLayer = new BatchedMarkerLayer(scene);
     this.#runtimeSphereGeometry = new THREE.SphereGeometry(1, 20, 12);
-    this.#runtimeSphereMaterial = new THREE.MeshBasicMaterial({ color: 0x9aa7b5 });
+    this.#runtimeSphereMaterial = new THREE.MeshLambertMaterial({ color: new THREE.Color(0.32, 0.32, 0.32) });
     this.#selectionHalo = new SelectionHalo(scene);
 
     for (const entry of scenario.bodies) {
@@ -187,6 +199,7 @@ export class SolarSystemScene {
       this.#states.set(objectId, state);
     }
     this.#markerLayer.update(objectIds, states);
+    this.#updateStellarLighting(stateById);
     this.#orbitRenderer.updateBodyPositions(new Map(
       [...this.#positions].map(([objectId, position]) => [objectId, position.clone()]),
     ));
@@ -308,6 +321,10 @@ export class SolarSystemScene {
     return this.#states.get(objectId);
   }
 
+  illuminationFor(objectId: ObjectId): StellarIlluminationSet | undefined {
+    return this.#illuminationByBody.get(objectId);
+  }
+
   representationFor(objectId: ObjectId): RepresentationLevel | undefined {
     return this.#representations.get(objectId);
   }
@@ -348,6 +365,13 @@ export class SolarSystemScene {
       ndcY: ndc.y,
       ndcZ: ndc.z,
       positionErrorSceneUnits: renderPosition?.distanceTo(position),
+      surfaceReflectanceSource: (() => {
+        const entry = this.#currentEntries.get(objectId);
+        return entry === undefined
+          ? undefined
+          : deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor).source;
+      })(),
+      physicalIrradianceWattsPerSquareMeter: this.#illuminationByBody.get(objectId)?.totalIrradianceWattsPerSquareMeter,
     });
   }
 
@@ -355,7 +379,7 @@ export class SolarSystemScene {
     const body = this.#bodies.get(path.objectId);
     const entry = this.#currentEntries.get(path.objectId);
     if (body === undefined && entry === undefined) throw new RangeError(`Unknown scenario body: ${path.objectId}`);
-    const color = body?.mesh.material.color.getHex() ?? this.#currentEntries.get(path.objectId)?.definition.display.accentColor ?? 0x9aa7b5;
+    const color = this.#currentEntries.get(path.objectId)?.definition.display.accentColor ?? 0x9aa7b5;
     this.#orbitRenderer.setPath(path, color);
   }
 
@@ -458,10 +482,16 @@ export class SolarSystemScene {
     for (const body of this.#bodies.values()) {
       this.#scene.remove(body.mesh);
       body.mesh.geometry.dispose();
-      body.mesh.material.dispose();
+      if (Array.isArray(body.mesh.material)) body.mesh.material.forEach((material) => material.dispose());
+      else body.mesh.material.dispose();
     }
     for (const mesh of this.#runtimeSphereMeshes.values()) this.#scene.remove(mesh);
     this.#runtimeSphereMeshes.clear();
+    for (const light of this.#stellarLights.values()) {
+      this.#scene.remove(light);
+    }
+    this.#stellarLights.clear();
+    this.#illuminationByBody.clear();
     this.#runtimeSphereGeometry.dispose();
     this.#runtimeSphereMaterial.dispose();
     this.#bodies.clear();
@@ -483,9 +513,22 @@ export class SolarSystemScene {
     const radius = entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius;
     if (radius === undefined) throw new TypeError(`Scenario body ${entry.definition.id} has no physical radius`);
     const physicalRadiusMeters = meters(radius);
+    const accentColor = new THREE.Color(entry.definition.display.accentColor);
+    const material = entry.definition.type === ObjectType.star
+      ? new THREE.MeshStandardMaterial({
+        color: accentColor,
+        emissive: accentColor,
+        emissiveIntensity: 1,
+      })
+      : new THREE.MeshLambertMaterial({
+        color: (() => {
+          const reflectance = deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor);
+          return new THREE.Color(reflectance.linearReflectance.r, reflectance.linearReflectance.g, reflectance.linearReflectance.b);
+        })(),
+      });
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1, 24, 16),
-      new THREE.MeshBasicMaterial({ color: entry.definition.display.color }),
+      material,
     );
     mesh.name = entry.definition.name;
     mesh.userData.objectId = entry.definition.id;
@@ -501,10 +544,13 @@ export class SolarSystemScene {
     mesh.scale.setScalar(radiusToSceneUnits({ mode: "physical", physicalRadiusMeters }));
   }
 
-  #ensureRuntimeSphere(objectId: ObjectId): THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> {
+  #ensureRuntimeSphere(objectId: ObjectId): THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial> {
     const current = this.#runtimeSphereMeshes.get(objectId);
     if (current !== undefined) return current;
-    const mesh = new THREE.Mesh(this.#runtimeSphereGeometry, this.#runtimeSphereMaterial);
+    const mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial> = new THREE.Mesh(
+      this.#runtimeSphereGeometry,
+      this.#runtimeSphereMaterial,
+    );
     mesh.name = `Runtime sphere ${objectId}`;
     mesh.userData.objectId = objectId;
     mesh.userData.objectType = ObjectType.asteroid;
@@ -563,6 +609,58 @@ export class SolarSystemScene {
       if (otherPosition !== undefined) nearest = Math.min(nearest, position.distanceTo(otherPosition));
     }
     return Number.isFinite(nearest) ? nearest : undefined;
+  }
+
+  #updateStellarLighting(stateById: ReadonlyMap<ObjectId, PropagationState>): void {
+    const emitters: StellarEmitter[] = [];
+    for (const entry of this.#currentEntries.values()) {
+      const emission = entry.definition.appearance?.stellarEmission;
+      const state = stateById.get(entry.definition.id);
+      if (emission === undefined || state === undefined) continue;
+      emitters.push({
+        objectId: entry.definition.id,
+        position: state.position,
+        effectiveTemperatureKelvin: emission.effectiveTemperatureKelvin,
+        luminosityWatts: emission.luminosityWatts,
+      });
+    }
+    const activeEmitterIds = new Set(emitters.map((emitter) => emitter.objectId));
+    for (const emitter of emitters) {
+      let light = this.#stellarLights.get(emitter.objectId);
+      if (light === undefined) {
+        light = new THREE.PointLight(0xffffff, 0, 0, 2);
+        light.name = `Stellar illumination ${emitter.objectId}`;
+        light.userData.objectId = emitter.objectId;
+        this.#scene.add(light);
+        this.#stellarLights.set(emitter.objectId, light);
+      }
+      const chromaticity = blackbodyTemperatureToLinearRgb(emitter.effectiveTemperatureKelvin);
+      light.color.setRGB(chromaticity.r, chromaticity.g, chromaticity.b);
+      // Three.js point-light intensity is expressed in scene-space units. The
+      // conversion preserves the document-19 W/m² reference mapping while the
+      // light's quadratic falloff preserves inverse-square ratios.
+      light.intensity = emitter.luminosityWatts
+        / (4 * Math.PI * METERS_PER_SCENE_UNIT ** 2 * REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER);
+      const position = positionToSceneUnits(emitter.position);
+      light.position.set(position.x, position.y, position.z);
+      light.visible = true;
+    }
+    for (const [objectId, light] of this.#stellarLights) {
+      if (activeEmitterIds.has(objectId)) continue;
+      this.#scene.remove(light);
+      this.#stellarLights.delete(objectId);
+    }
+
+    this.#illuminationByBody.clear();
+    for (const entry of this.#currentEntries.values()) {
+      const state = stateById.get(entry.definition.id);
+      if (state === undefined) continue;
+      const bodyEmitters = emitters.filter((emitter) => emitter.objectId !== entry.definition.id);
+      this.#illuminationByBody.set(
+        entry.definition.id,
+        resolveStellarIllumination(state.position, bodyEmitters),
+      );
+    }
   }
 
   #depth(entry: RegisteredScenarioBody): number {
