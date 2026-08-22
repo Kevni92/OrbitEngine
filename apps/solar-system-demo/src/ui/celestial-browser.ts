@@ -29,6 +29,7 @@ function countLabel(count: number, singular: string, plural = `${singular}s`): s
 export class CelestialBrowser {
   readonly #panel = element<HTMLElement>("celestial-browser");
   readonly #toggle = element<HTMLButtonElement>("celestial-browser-toggle");
+  readonly #content = element<HTMLElement>("browser-content");
   readonly #search = element<HTMLInputElement>("celestial-browser-search");
   readonly #clear = element<HTMLButtonElement>("celestial-browser-clear");
   readonly #summary = element<HTMLElement>("celestial-browser-summary");
@@ -52,6 +53,7 @@ export class CelestialBrowser {
 
     this.#toggle.addEventListener("click", () => {
       const collapsed = this.#panel.classList.toggle("is-collapsed");
+      this.#content.hidden = collapsed;
       this.#toggle.setAttribute("aria-expanded", String(!collapsed));
       this.#toggle.textContent = collapsed ? "Show browser" : "Hide browser";
       this.#toggle.setAttribute("aria-label", collapsed ? "Show celestial browser" : "Hide celestial browser");
