@@ -202,8 +202,9 @@ export class RuntimeAsteroidSession {
     const anchors = generateSyntheticAsteroidAnchors(options, this.#scenario);
     let created = 0;
     for (const generated of anchors) {
+      const id = this.#allocator.allocate();
+      let registered = false;
       try {
-        const id = this.#allocator.allocate();
         const configurationRevision = revisionId((this.#configurationRevision++).toString());
         const sun = this.#scenario.bodyById.get(SUN_ID);
         if (sun === undefined || sun.record.properties.mu === undefined) {
@@ -224,6 +225,7 @@ export class RuntimeAsteroidSession {
             motionRevision: revisionId("1"),
           },
         });
+        registered = true;
         const model = this.#engine.twoBodyModel({
           anchor: generated.anchor,
           centralBody: SUN_ID,
@@ -248,6 +250,17 @@ export class RuntimeAsteroidSession {
         this.#entries.set(id, entry);
         created += 1;
       } catch (error) {
+        if (registered) {
+          try {
+            this.#engine.registry().remove(id);
+          } catch (rollbackError) {
+            return Object.freeze({
+              requested: anchors.length,
+              created,
+              error: new AggregateError([error, rollbackError], `Runtime asteroid ${id} failed and rollback also failed`),
+            });
+          }
+        }
         return Object.freeze({ requested: anchors.length, created, error });
       }
     }
