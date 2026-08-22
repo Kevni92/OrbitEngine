@@ -34,6 +34,7 @@ import {
 import { METERS_PER_SCENE_UNIT, positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
 import { MARKER_PIXEL_SIZE, BatchedMarkerLayer } from "./runtime-asteroid-markers.js";
 import { SelectionHalo } from "./selection-halo.js";
+import { AtmosphereShellManager, type AtmosphereDiagnostics } from "./atmosphere-rendering.js";
 
 export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 0.000001;
 export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
@@ -94,6 +95,7 @@ export class SolarSystemScene {
   readonly #positions = new Map<ObjectId, THREE.Vector3>();
   readonly #onSelect?: (objectId: ObjectId) => void;
   readonly #selectionHalo: SelectionHalo;
+  readonly #atmosphereShells: AtmosphereShellManager;
   #radiusMode: RadiusMode = "adaptive";
   #selected?: ObjectId;
   #focusId?: ObjectId;
@@ -109,6 +111,7 @@ export class SolarSystemScene {
     this.#runtimeSphereGeometry = new THREE.SphereGeometry(1, 20, 12);
     this.#runtimeSphereMaterial = new THREE.MeshLambertMaterial({ color: new THREE.Color(0.32, 0.32, 0.32) });
     this.#selectionHalo = new SelectionHalo(scene);
+    this.#atmosphereShells = new AtmosphereShellManager(scene);
 
     for (const entry of scenario.bodies) {
       this.#committedEntries.set(entry.definition.id, entry);
@@ -154,6 +157,7 @@ export class SolarSystemScene {
       this.#states.delete(objectId);
       this.#positions.delete(objectId);
       this.#removeRuntimeSphere(objectId);
+      this.#atmosphereShells.remove(objectId);
     }
     for (const entry of entries) {
       const objectId = entry.definition.id;
@@ -276,19 +280,26 @@ export class SolarSystemScene {
       this.#markerMembershipKey = markerKey;
     }
     this.#promotedRuntimeSphereCount = 0;
+    const presentedRadii = new Map<ObjectId, number>();
     for (const entry of orderedEntries) {
       const objectId = entry.definition.id;
       const representation = this.#representations.get(objectId) ?? Representation.hidden;
       const staticBody = this.#bodies.get(objectId);
       if (staticBody !== undefined) {
         staticBody.mesh.visible = representation === Representation.sphere;
-        if (staticBody.mesh.visible && perspective !== undefined) this.#applySphereScale(staticBody.mesh, entry, camera, perspective, viewportHeightPixels);
+        if (staticBody.mesh.visible && perspective !== undefined) {
+          this.#applySphereScale(staticBody.mesh, entry, camera, perspective, viewportHeightPixels);
+          presentedRadii.set(objectId, staticBody.mesh.scale.x);
+        }
       }
       if (this.#runtimeIds.has(objectId)) {
         if (representation === Representation.sphere) {
           const mesh = this.#ensureRuntimeSphere(objectId);
           mesh.visible = true;
-          if (perspective !== undefined) this.#applySphereScale(mesh, entry, camera, perspective, viewportHeightPixels);
+          if (perspective !== undefined) {
+            this.#applySphereScale(mesh, entry, camera, perspective, viewportHeightPixels);
+            presentedRadii.set(objectId, mesh.scale.x);
+          }
           this.#promotedRuntimeSphereCount += 1;
         } else {
           this.#removeRuntimeSphere(objectId);
@@ -300,6 +311,16 @@ export class SolarSystemScene {
         || objectId === this.#focusId;
       this.#orbitRenderer.setBodyRepresentation(objectId, pathVisible);
     }
+    this.#atmosphereShells.update(
+      orderedEntries,
+      this.#representations,
+      this.#positions,
+      presentedRadii,
+      perspective,
+      viewportHeightPixels,
+      new Set([this.#selected, this.#focusId].filter((id): id is ObjectId => id !== undefined)),
+      this.#illuminationByBody,
+    );
     this.#updateSelectionHalo(camera, viewportHeightPixels);
   }
 
@@ -428,6 +449,14 @@ export class SolarSystemScene {
     return this.#markerLayer.count();
   }
 
+  atmosphereDiagnosticsFor(objectId: ObjectId): AtmosphereDiagnostics {
+    return this.#atmosphereShells.diagnosticsFor(objectId);
+  }
+
+  atmosphereResourceCount(): number {
+    return this.#atmosphereShells.resourceCount();
+  }
+
   lodDiagnostics(): LodDiagnostics {
     let hiddenCount = 0;
     let markerCount = 0;
@@ -479,6 +508,7 @@ export class SolarSystemScene {
     this.#orbitRenderer.dispose();
     this.#markerLayer.dispose();
     this.#selectionHalo.dispose();
+    this.#atmosphereShells.dispose();
     for (const body of this.#bodies.values()) {
       this.#scene.remove(body.mesh);
       body.mesh.geometry.dispose();
