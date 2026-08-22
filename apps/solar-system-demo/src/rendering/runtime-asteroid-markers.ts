@@ -9,11 +9,15 @@ export const MARKER_PICK_TOLERANCE_PIXELS = 2;
 export const MARKER_PICK_RADIUS_PIXELS = MARKER_PIXEL_SIZE / 2 + MARKER_PICK_TOLERANCE_PIXELS;
 
 const PICK_DEPTH_EPSILON = 1e-7;
+const FALLBACK_MARKER_COLOR = 0x9aa7b5;
 
 const MARKER_VERTEX_SHADER = `
 uniform float uSize;
+attribute vec3 color;
+varying vec3 vColor;
 
 void main() {
+  vColor = color;
   vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * modelViewPosition;
   gl_PointSize = uSize;
@@ -21,14 +25,14 @@ void main() {
 `;
 
 const MARKER_FRAGMENT_SHADER = `
-uniform vec3 uColor;
+varying vec3 vColor;
 
 void main() {
   vec2 centered = gl_PointCoord - vec2(0.5);
   float distanceSquared = dot(centered, centered);
   if (distanceSquared > 0.25) discard;
   float edge = 1.0 - smoothstep(0.18, 0.25, distanceSquared);
-  gl_FragColor = vec4(uColor, edge);
+  gl_FragColor = vec4(vColor, edge);
 }
 `;
 
@@ -61,13 +65,13 @@ export class BatchedMarkerLayer {
   readonly #points: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
   #objectIds: readonly ObjectId[] = [];
   #positions = new Float32Array();
+  #colors = new Float32Array();
 
   constructor(scene: THREE.Scene) {
     this.#scene = scene;
     const geometry = new THREE.BufferGeometry();
     const material = new THREE.ShaderMaterial({
       uniforms: {
-        uColor: { value: new THREE.Color(0x9aa7b5) },
         uSize: { value: MARKER_PIXEL_SIZE },
       },
       vertexShader: MARKER_VERTEX_SHADER,
@@ -75,6 +79,7 @@ export class BatchedMarkerLayer {
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
+      depthTest: true,
     });
     this.#points = new THREE.Points(geometry, material);
     this.#points.name = "Runtime asteroid markers";
@@ -90,15 +95,25 @@ export class BatchedMarkerLayer {
   ): void {
     this.#objectIds = Object.freeze(bodies.map((body) => body.definition.id));
     this.#positions = new Float32Array(this.#objectIds.length * 3);
-    this.#objectIds.forEach((objectId, index) => {
-      const position = currentPositions.get(objectId);
-      if (position === undefined) return;
+    this.#colors = new Float32Array(this.#objectIds.length * 3);
+    bodies.forEach((body, index) => {
+      const objectId = body.definition.id;
       const offset = index * 3;
-      this.#positions[offset] = position.x;
-      this.#positions[offset + 1] = position.y;
-      this.#positions[offset + 2] = position.z;
+      const position = currentPositions.get(objectId);
+      if (position !== undefined) {
+        this.#positions[offset] = position.x;
+        this.#positions[offset + 1] = position.y;
+        this.#positions[offset + 2] = position.z;
+      }
+      // Committed/runtime catalog bodies carry display colors. The fallback is
+      // only for intentionally incomplete synthetic fixtures used by low-level tests.
+      const color = new THREE.Color(body.definition.display?.color ?? FALLBACK_MARKER_COLOR);
+      this.#colors[offset] = color.r;
+      this.#colors[offset + 1] = color.g;
+      this.#colors[offset + 2] = color.b;
     });
     this.#points.geometry.setAttribute("position", new THREE.BufferAttribute(this.#positions, 3));
+    this.#points.geometry.setAttribute("color", new THREE.BufferAttribute(this.#colors, 3));
     this.#points.geometry.setDrawRange(0, this.#objectIds.length);
     this.#points.userData.objectIds = this.#objectIds;
     this.#points.visible = this.#objectIds.length > 0;
@@ -212,6 +227,7 @@ export class BatchedMarkerLayer {
     this.#points.material.dispose();
     this.#objectIds = [];
     this.#positions = new Float32Array();
+    this.#colors = new Float32Array();
   }
 }
 
