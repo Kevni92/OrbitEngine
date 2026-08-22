@@ -44,6 +44,13 @@ function setStatus(value: HTMLElement, state: string, message: string): void {
 
 export class DemoPanel {
   readonly #panel = element<HTMLElement>("demo-panel");
+  readonly #panelContent = element<HTMLElement>("panel-content");
+  readonly #panelSummary = element<HTMLElement>("panel-summary");
+  readonly #controlNav = element<HTMLElement>("control-nav");
+  readonly #compactSimulationTime = element<HTMLElement>("compact-simulation-time");
+  readonly #compactSimulationState = element<HTMLElement>("compact-simulation-state");
+  readonly #compactSelectedBody = element<HTMLElement>("compact-selected-body");
+  readonly #compactViewCenter = element<HTMLElement>("compact-view-center");
   readonly #engineStatus = element<HTMLElement>("engine-status");
   readonly #renderingStatus = element<HTMLElement>("rendering-status");
   readonly #scenarioNote = element<HTMLElement>("scenario-note");
@@ -135,9 +142,26 @@ export class DemoPanel {
     });
     this.#panelToggle.addEventListener("click", () => {
       const collapsed = this.#panel.classList.toggle("is-collapsed");
+      this.#panelContent.hidden = collapsed;
+      this.#controlNav.hidden = collapsed;
       this.#panelToggle.setAttribute("aria-expanded", String(!collapsed));
       this.#panelToggle.textContent = collapsed ? "Show panel" : "Hide panel";
       this.#panelToggle.setAttribute("aria-label", collapsed ? "Show control panel" : "Hide control panel");
+    });
+    this.#controlNav.querySelectorAll<HTMLButtonElement>("button[data-target]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const targetId = button.dataset.target;
+        if (targetId === undefined) return;
+        const target = document.getElementById(targetId);
+        if (!(target instanceof HTMLElement)) return;
+        if (target instanceof HTMLDetailsElement) target.open = true;
+        this.#controlNav.querySelectorAll("button[data-target]").forEach((candidate) => {
+          candidate.removeAttribute("aria-current");
+        });
+        button.setAttribute("aria-current", "true");
+        target.scrollIntoView({ block: "start", behavior: "smooth" });
+        target.focus({ preventScroll: true });
+      });
     });
   }
 
@@ -188,7 +212,10 @@ export class DemoPanel {
   }
 
   setSimulationTime(instant: SimulationInstant, playing: boolean): void {
-    this.#simulationTime.textContent = formatSimulationTime(instant);
+    const formatted = formatSimulationTime(instant);
+    this.#simulationTime.textContent = formatted;
+    this.#compactSimulationTime.textContent = formatted;
+    this.#compactSimulationState.textContent = playing ? "Playing" : "Paused";
     if (!this.#localDateTimeDraft) this.#localDateTime.value = formatLocalDateTimeInput(instant);
     this.#playPause.textContent = playing ? "Pause" : "Play";
     this.#playPause.setAttribute("aria-label", playing ? "Pause simulation" : "Play simulation");
@@ -209,7 +236,9 @@ export class DemoPanel {
 
   setFocusId(objectIdValue: ObjectId): void {
     this.#focusSelect.value = objectIdValue;
-    this.#focusContext.textContent = `${this.#focusSelect.selectedOptions[0]?.textContent ?? objectIdValue} · render origin`;
+    const name = this.#focusSelect.selectedOptions[0]?.textContent ?? objectIdValue;
+    this.#focusContext.textContent = `${name} · render origin`;
+    this.#compactViewCenter.textContent = `View: ${name}`;
   }
 
   setSelectedId(objectIdValue: ObjectId): void {
@@ -247,6 +276,7 @@ export class DemoPanel {
     const properties = entry.record.properties;
     this.#selectedName.textContent = entry.definition.name;
     this.#selectedType.textContent = formatObjectType(entry.definition.type);
+    this.#compactSelectedBody.textContent = entry.definition.name;
     this.#summaryDistance.textContent = formatDistance(Math.hypot(state.position.x, state.position.y, state.position.z));
     this.#summarySpeed.textContent = formatSpeed(state);
     this.#summaryRadius.textContent = properties.physicalRadius === undefined ? "—" : formatRadius(properties.physicalRadius);

@@ -25,8 +25,21 @@
           </div>
         </header>
 
-        <div class="panel-content">
-          <section class="simulation-section panel-section" aria-labelledby="simulation-heading">
+        <div class="panel-summary" id="panel-summary" aria-live="polite">
+          <span class="panel-summary-item"><span class="panel-summary-label">Simulation</span><strong id="compact-simulation-time">Local time loading…</strong><span id="compact-simulation-state">Paused</span></span>
+          <span class="panel-summary-item"><span class="panel-summary-label">Selection</span><strong id="compact-selected-body">Sun</strong><span id="compact-view-center">View: Sun</span></span>
+        </div>
+
+        <nav class="control-nav" id="control-nav" aria-label="Control sections">
+          <button type="button" data-target="simulation-section" aria-controls="simulation-section">Simulation</button>
+          <button type="button" data-target="selected-body-section" aria-controls="selected-body-section">Selected body</button>
+          <button type="button" data-target="view-section" aria-controls="view-section">View</button>
+          <button type="button" data-target="population-section" aria-controls="population-section">Generated</button>
+          <button type="button" data-target="advanced-details" aria-controls="advanced-details">Advanced</button>
+        </nav>
+
+        <div class="panel-content" id="panel-content">
+          <section class="simulation-section panel-section" id="simulation-section" tabindex="-1" aria-labelledby="simulation-heading">
             <div class="section-heading">
               <div>
                 <p class="section-kicker">Simulation</p>
@@ -58,7 +71,7 @@
             </div>
           </section>
 
-          <section class="panel-section" id="selected-body-section" aria-labelledby="selected-heading">
+          <section class="panel-section" id="selected-body-section" tabindex="-1" aria-labelledby="selected-heading">
             <div class="section-heading">
               <div>
                 <p class="section-kicker">Selected body</p>
@@ -76,7 +89,7 @@
             <p class="field-help">Centers the visualization without changing OrbitEngine physics.</p>
           </section>
 
-          <section class="panel-section" aria-labelledby="view-heading">
+          <section class="panel-section" id="view-section" tabindex="-1" aria-labelledby="view-heading">
             <div class="section-heading">
               <div>
                 <p class="section-kicker">View</p>
@@ -102,7 +115,7 @@
             </label>
           </section>
 
-          <section class="panel-section" aria-labelledby="population-heading">
+          <section class="panel-section" id="population-section" tabindex="-1" aria-labelledby="population-heading">
             <div class="section-heading">
               <div>
                 <p class="section-kicker">Runtime population</p>
@@ -186,7 +199,7 @@
           </div>
           <button class="icon-button" id="celestial-browser-toggle" type="button" aria-expanded="true" aria-label="Hide celestial browser">Hide browser</button>
         </header>
-        <div class="browser-content">
+        <div class="browser-content" id="browser-content">
           <div class="browser-search">
             <label class="visually-hidden" for="celestial-browser-search">Search celestial bodies</label>
             <input id="celestial-browser-search" type="search" placeholder="Search celestial bodies…" autocomplete="off" />
@@ -197,6 +210,10 @@
           <ul class="celestial-tree" id="celestial-browser-tree" role="tree" aria-label="Celestial body catalog"></ul>
         </div>
       </aside>
+      <nav class="mobile-surface-bar" id="mobile-surface-bar" aria-label="Open demo surfaces">
+        <button class="mobile-surface-button" id="mobile-controls-toggle" type="button" aria-controls="demo-panel" aria-expanded="true">Controls</button>
+        <button class="mobile-surface-button" id="mobile-browser-toggle" type="button" aria-controls="celestial-browser" aria-expanded="false">Browse bodies</button>
+      </nav>
       <canvas id="scene" aria-label="Interactive OrbitEngine Solar System scene"></canvas>
     </main>
     <script type="module" src="/src/main.ts"></script>
