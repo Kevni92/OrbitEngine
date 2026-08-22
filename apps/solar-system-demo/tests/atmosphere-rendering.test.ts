@@ -15,6 +15,8 @@ import {
 import { createCelestialAppearance } from "../src/scenario/celestial-appearance.js";
 import { EARTH_ID, SCENARIO_BODIES } from "../src/scenario/scenario-data.js";
 import { positionToSceneUnits } from "../src/rendering/render-space.js";
+import { objectId } from "orbit-engine";
+import type { RegisteredScenarioBody } from "../src/scenario/load-solar-system.js";
 
 test("atmosphere optics prefer explicit calibration and distinguish gas/haze fallbacks", () => {
   const earth = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
@@ -101,6 +103,28 @@ test("atmosphere shell resources are allocated only for forced sphere bodies and
   );
   assert.equal(manager.diagnosticsFor(EARTH_ID).resourcesAllocated, false);
   assert.equal(manager.resourceCount(), 0);
+  manager.dispose();
+});
+
+test("large marker-only atmospheric populations allocate no per-object shell resources", () => {
+  const earthDefinition = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
+  const entries = Array.from({ length: 512 }, (_, index) => {
+    const id = objectId(String(9_000_000_000_000_000_000n + BigInt(index)));
+    return {
+      definition: { ...earthDefinition, id, name: `Synthetic atmospheric marker ${index}` },
+      record: { properties: earthDefinition.properties },
+    } as RegisteredScenarioBody;
+  });
+  const scene = new THREE.Scene();
+  const manager = new AtmosphereShellManager(scene);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10_000);
+  camera.position.set(0, -30, 18);
+  const representations = new Map(entries.map((entry) => [entry.definition.id, "marker" as const]));
+  const positions = new Map(entries.map((entry, index) => [entry.definition.id, new THREE.Vector3(index * 0.01, 0, 0)]));
+  const radii = new Map(entries.map((entry) => [entry.definition.id, 0.02]));
+  manager.update(entries, representations, positions, radii, camera, 900, new Set(), new Map());
+  assert.equal(manager.resourceCount(), 0);
+  assert.equal(scene.children.filter((child) => child.name.startsWith("Atmosphere ")).length, 0);
   manager.dispose();
 });
 

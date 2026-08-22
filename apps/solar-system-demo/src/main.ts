@@ -46,8 +46,9 @@ interface BrowserRenderBodyDiagnostics {
   readonly inFront: boolean;
   readonly inViewport: boolean;
   readonly positionErrorSceneUnits?: number;
+  readonly surfaceReflectanceSource?: string;
   readonly physicalIrradianceWattsPerSquareMeter?: number;
-  readonly atmosphere: Pick<AtmosphereDiagnostics, "resourcesAllocated" | "visible" | "projectedDiameterPixels" | "viewSampleCount">;
+  readonly atmosphere: Pick<AtmosphereDiagnostics, "resourcesAllocated" | "visible" | "projectedDiameterPixels" | "viewSampleCount" | "opticalSource">;
   readonly lightingMode: LightingMode;
   readonly inspectionFillApplied: boolean;
   readonly inspectionFillContribution: number;
@@ -64,6 +65,12 @@ interface BrowserRenderDiagnostics {
   readonly focusId: string;
   readonly selectedId: string;
   readonly lighting: ReturnType<typeof lightingModeDiagnostics>;
+  readonly atmosphereResourceCount: number;
+  readonly performance: {
+    readonly frameCount: number;
+    readonly lastFrameDurationMs: number;
+    readonly averageFrameDurationMs: number;
+  };
   readonly orbits: readonly BrowserOrbitDiagnostics[];
   readonly bodies: readonly BrowserRenderBodyDiagnostics[];
 }
@@ -97,6 +104,9 @@ async function bootstrap(): Promise<void> {
   let recenterAfterState = false;
   let pendingNavigation: PendingNavigation | undefined;
   let orbitResampleTimer: number | undefined;
+  let renderedFrameCount = 0;
+  let totalFrameDurationMs = 0;
+  let lastFrameDurationMs = 0;
   const pathCache = new PathCache(ORBIT_CACHE_ENTRIES);
 
   function centerCameraOnFocus(): void {
@@ -465,6 +475,12 @@ async function bootstrap(): Promise<void> {
       focusId,
       selectedId,
       lighting: scene?.lightingDiagnostics() ?? lightingModeDiagnostics(lightingMode, []),
+      atmosphereResourceCount: scene?.atmosphereResourceCount() ?? 0,
+      performance: {
+        frameCount: renderedFrameCount,
+        lastFrameDurationMs,
+        averageFrameDurationMs: renderedFrameCount === 0 ? 0 : totalFrameDurationMs / renderedFrameCount,
+      },
       orbits: (scene?.orbitGuideDiagnostics() ?? []).map((orbit) => ({
         objectId: orbit.objectId,
         role: orbit.role,
@@ -483,6 +499,7 @@ async function bootstrap(): Promise<void> {
           inFront: diagnostics?.inFront ?? false,
           inViewport: diagnostics?.inViewport ?? false,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
+          surfaceReflectanceSource: diagnostics?.surfaceReflectanceSource,
           physicalIrradianceWattsPerSquareMeter: diagnostics?.physicalIrradianceWattsPerSquareMeter,
           lightingMode: diagnostics?.lightingMode ?? lightingMode,
           inspectionFillApplied: diagnostics?.inspectionFillApplied ?? false,
@@ -494,6 +511,7 @@ async function bootstrap(): Promise<void> {
               visible: atmosphere?.visible ?? false,
               projectedDiameterPixels: atmosphere?.projectedDiameterPixels ?? 0,
               viewSampleCount: atmosphere?.viewSampleCount ?? 0,
+              opticalSource: atmosphere?.opticalSource,
             };
           })(),
         };
@@ -531,6 +549,7 @@ async function bootstrap(): Promise<void> {
   });
 
   const loop = createAnimationLoop(() => {
+    const frameStartedAt = performance.now();
     clock.advanceTo(performance.now());
     updateClockUi();
     requestCurrentState();
@@ -545,6 +564,9 @@ async function bootstrap(): Promise<void> {
       updateSelectedPanel(latest.value);
     }
     renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
+    lastFrameDurationMs = Math.max(0, performance.now() - frameStartedAt);
+    totalFrameDurationMs += lastFrameDurationMs;
+    renderedFrameCount += 1;
   });
   loop.start();
   window.addEventListener("beforeunload", () => {
