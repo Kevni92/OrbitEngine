@@ -6,9 +6,11 @@ import {
   WebGL2UnavailableError,
   type RenderShell,
 } from "./rendering/three-shell.js";
+import { AsteroidMarkerLayer } from "./rendering/asteroid-marker-layer.js";
 import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
 import { SolarSystemScene } from "./rendering/solar-system-scene.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
+import { RuntimeAsteroidSession } from "./scenario/runtime-asteroids.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
 import { SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
 import { PathCache } from "./simulation/path-sampling.js";
@@ -36,14 +38,25 @@ async function bootstrap(): Promise<void> {
   let engineHealth: ReturnType<OrbitEngine["health"]> | undefined;
   let renderShell: RenderShell | undefined;
   let scene: SolarSystemScene | undefined;
+  let asteroidMarkers: AsteroidMarkerLayer | undefined;
   let guides: SceneGuides | undefined;
   let stateSource: SolarSystemStateSource | undefined;
+  let runtimeAsteroids: RuntimeAsteroidSession | undefined;
   let coordinator: StateQueryCoordinator<ScenarioStateFrame> | undefined;
   let focusId: ObjectId = SUN_ID;
   let selectedId: ObjectId = SUN_ID;
+  let objectSetRevision = 0;
   let recenterAfterState = false;
   let orbitResampleTimer: number | undefined;
   const pathCache = new PathCache(ORBIT_CACHE_ENTRIES);
+
+  function currentObjectIds(): readonly ObjectId[] {
+    if (scenario === undefined) return Object.freeze([]);
+    return Object.freeze([
+      ...scenario.objectIds,
+      ...(runtimeAsteroids?.objectIds() ?? []),
+    ]);
+  }
 
   function centerCameraOnFocus(): void {
     const focusMesh = scene?.meshFor(focusId);
@@ -55,10 +68,19 @@ async function bootstrap(): Promise<void> {
     panel.setSimulationTime(clock.currentInstant(), clock.isPlaying());
   }
 
+  function updateRuntimeStats(frame?: ScenarioStateFrame): void {
+    panel.setRuntimeStats({
+      generatedAsteroids: runtimeAsteroids?.count() ?? 0,
+      totalObjects: frame?.objectIds.length ?? currentObjectIds().length,
+      markerCount: asteroidMarkers?.markerCount() ?? 0,
+      queryDurationMs: frame?.queryDurationMs,
+    });
+  }
+
   function updateSelectedPanel(frame: ScenarioStateFrame): void {
     if (scenario === undefined || engineHealth === undefined) return;
-    const selectedIndex = scenario.objectIds.indexOf(selectedId);
-    const focusIndex = scenario.objectIds.indexOf(focusId);
+    const selectedIndex = frame.objectIds.indexOf(selectedId);
+    const focusIndex = frame.objectIds.indexOf(focusId);
     const selectedEntry = scenario.bodyById.get(selectedId);
     const state = selectedIndex < 0 ? undefined : frame.states[selectedIndex];
     const focusState = focusIndex < 0 ? undefined : frame.states[focusIndex];
@@ -73,7 +95,7 @@ async function bootstrap(): Promise<void> {
       recenterAfterState = true;
       if (centerImmediately) centerCameraOnFocus();
     }
-    coordinator.request(clock.currentInstant(), `view-center:${focusId}`);
+    coordinator.request(clock.currentInstant(), `view-center:${focusId}:objects:${objectSetRevision}`);
     panel.setFocusId(focusId);
   }
 
@@ -154,6 +176,38 @@ async function bootstrap(): Promise<void> {
     orbitResampleTimer = window.setTimeout(sampleNext, 0);
   }
 
+  function addRuntimeAsteroids(count: number, seed: number): void {
+    if (runtimeAsteroids === undefined) return;
+    panel.setAsteroidStatus("pending", `Adding ${count.toLocaleString()} synthetic asteroids…`);
+    const result = runtimeAsteroids.addBatch({ count, seed });
+    objectSetRevision += 1;
+    if (result.error === undefined) {
+      panel.setAsteroidStatus("ready", `${runtimeAsteroids.count().toLocaleString()} generated asteroids · seed ${seed}`);
+    } else {
+      panel.setAsteroidStatus(
+        "error",
+        `Created ${result.created.toLocaleString()} of ${result.requested.toLocaleString()} before registration failed`,
+      );
+    }
+    updateRuntimeStats();
+    requestCurrentState();
+  }
+
+  function removeRuntimeAsteroids(): void {
+    if (runtimeAsteroids === undefined) return;
+    const result = runtimeAsteroids.removeAll();
+    asteroidMarkers?.clear();
+    objectSetRevision += 1;
+    panel.setAsteroidStatus(
+      result.errors.length === 0 ? "ready" : "error",
+      result.errors.length === 0
+        ? "0 generated asteroids"
+        : `Removed ${result.removed.toLocaleString()} of ${result.requested.toLocaleString()} generated asteroids`,
+    );
+    updateRuntimeStats();
+    requestCurrentState();
+  }
+
   panel = new DemoPanel({
     onPlayPause: () => {
       panel.clearSimulationError();
@@ -185,6 +239,8 @@ async function bootstrap(): Promise<void> {
     onGridChange: (visible) => guides?.setGridVisible(visible),
     onOrbitsChange: (visible) => scene?.setOrbitsVisible(visible),
     onAxesChange: (visible) => guides?.setAxesVisible(visible),
+    onAddAsteroids: addRuntimeAsteroids,
+    onRemoveAsteroids: removeRuntimeAsteroids,
     onExactJump: (seconds, nanoseconds) => {
       try {
         if (!Number.isSafeInteger(seconds) || !Number.isSafeInteger(nanoseconds)) {
@@ -229,6 +285,7 @@ async function bootstrap(): Promise<void> {
   panel.setGuideSettings(DEFAULT_SCENE_GUIDE_SETTINGS);
   panel.setOrbitsVisible(true);
   panel.setControlsReady(false);
+  panel.setRuntimeStats({ generatedAsteroids: 0, totalObjects: 0, markerCount: 0 });
 
   if (canvas === null) {
     panel.setEngineStatus("error", "Scene canvas is missing");
@@ -248,32 +305,41 @@ async function bootstrap(): Promise<void> {
     scenario = loadSolarSystemScenario(engine);
     if (scenario.rootFrame !== SCENARIO_ROOT_FRAME) throw new Error("Scenario root frame is not the engine root frame");
     if (scenario.catalog.roots.length !== 1) throw new Error("Scenario catalog must have exactly one root");
+    runtimeAsteroids = new RuntimeAsteroidSession(engine, scenario);
     panel.populateBodies(scenario);
     panel.setFocusId(focusId);
     panel.setSelectedId(selectedId);
-    panel.setScenarioNote("ready", `Offline deterministic catalog · ${scenario.bodies.length} bodies`);
+    panel.setScenarioNote("ready", `Offline deterministic catalog · ${scenario.bodies.length} reference bodies`);
+    updateRuntimeStats();
   } catch (error) {
     panel.setScenarioNote("error", error instanceof Error ? error.message : String(error));
     return;
   }
 
-  stateSource = new SolarSystemStateSource(engine, scenario);
+  stateSource = new SolarSystemStateSource(engine, scenario, {
+    objectIds: currentObjectIds,
+  });
   coordinator = new StateQueryCoordinator<ScenarioStateFrame>({
     source: {
       query: (request) => {
-        const requestedFocus = request.contextKey.startsWith("view-center:")
-          ? objectId(request.contextKey.slice("view-center:".length))
-          : focusId;
+        const match = /^view-center:([^:]+):objects:\d+$/.exec(request.contextKey);
+        const requestedFocus = match?.[1] === undefined ? focusId : objectId(match[1]);
         return stateSource!.query(requestedFocus, request.target);
       },
     },
     onSnapshot: (snapshot) => {
-      scene?.update(snapshot.value.states);
+      scene?.update(snapshot.value.states, snapshot.value.objectIds);
+      asteroidMarkers?.update(
+        snapshot.value.objectIds,
+        snapshot.value.states,
+        runtimeAsteroids?.objectIds() ?? [],
+      );
       if (recenterAfterState && snapshot.value.focusId === focusId) {
         centerCameraOnFocus();
         recenterAfterState = false;
       }
       updateSelectedPanel(snapshot.value);
+      updateRuntimeStats(snapshot.value);
     },
     onError: (error) => {
       panel.setScenarioNote("error", `State query failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -284,10 +350,11 @@ async function bootstrap(): Promise<void> {
     renderShell = createRenderShell(canvas);
     guides = new SceneGuides(renderShell.scene);
     guides.updateForCamera(renderShell.camera);
-    panel.setRenderingStatus("ready", "WebGL ready", "WebGL 2 · identity axes · +Z up");
+    panel.setRenderingStatus("ready", "WebGL ready", "WebGL 2 · J2000 ecliptic presentation · +Z up");
     scene = new SolarSystemScene(renderShell.scene, scenario, {
       onSelect: setSelectedBody,
     });
+    asteroidMarkers = new AsteroidMarkerLayer(renderShell.scene);
     scene.setSelected(selectedId);
     sampleReferenceOrbits();
   } catch (error) {
@@ -306,6 +373,11 @@ async function bootstrap(): Promise<void> {
   if (renderShell === undefined) return;
   const resize = (): void => {
     renderShell!.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+    scene?.updatePresentation(
+      renderShell!.camera,
+      canvas.clientWidth || window.innerWidth,
+      canvas.clientHeight || window.innerHeight,
+    );
   };
   window.addEventListener("resize", resize);
   resize();
@@ -324,6 +396,11 @@ async function bootstrap(): Promise<void> {
     requestCurrentState();
     guides?.updateForCamera(renderShell!.camera);
     updateCameraClipPlanes(renderShell!.camera, renderShell!.controls.target);
+    scene?.updatePresentation(
+      renderShell!.camera,
+      canvas.clientWidth || window.innerWidth,
+      canvas.clientHeight || window.innerHeight,
+    );
     renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
   });
   loop.start();
@@ -331,6 +408,7 @@ async function bootstrap(): Promise<void> {
     loop.stop();
     window.removeEventListener("resize", resize);
     guides?.dispose();
+    asteroidMarkers?.dispose();
     scene?.dispose();
     renderShell?.dispose();
   }, { once: true });
