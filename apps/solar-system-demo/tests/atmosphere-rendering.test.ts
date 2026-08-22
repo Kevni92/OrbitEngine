@@ -5,10 +5,13 @@ import {
   ATMOSPHERE_ENTER_DIAMETER_PIXELS,
   ATMOSPHERE_EXIT_DIAMETER_PIXELS,
   ATMOSPHERE_MAX_RIM_FRACTION,
+  ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS,
   ATMOSPHERE_RIM_THICKNESS_CSS_PIXELS,
   ATMOSPHERE_VIEW_SAMPLES,
   AtmosphereShellManager,
   atmosphereLodState,
+  atmosphereViewPathLength,
+  presentationAltitudeScaleHeights,
   presentationAtmosphereThickness,
   resolveAtmosphereOptics,
 } from "../src/rendering/atmosphere-rendering.js";
@@ -61,7 +64,27 @@ test("presentation atmosphere thickness is readable but capped and non-authorita
   assert.throws(() => presentationAtmosphereThickness(1, 0, 100), /dimensions/);
 });
 
-test("atmosphere shell resources are allocated only for forced sphere bodies and use bounded shader work", () => {
+test("presentation shell altitude maps back to physical scale heights independent of shell inflation", () => {
+  const thinShellMidpoint = presentationAltitudeScaleHeights(1.05, 1, 1.1);
+  const inflatedShellMidpoint = presentationAltitudeScaleHeights(1.25, 1, 1.5);
+  assert.ok(Math.abs(thinShellMidpoint - ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS / 2) < 1e-12);
+  assert.ok(Math.abs(inflatedShellMidpoint - ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS / 2) < 1e-12);
+  assert.equal(presentationAltitudeScaleHeights(1, 1, 1.5), 0);
+  assert.equal(
+    presentationAltitudeScaleHeights(1.5, 1, 1.5),
+    ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS,
+  );
+});
+
+test("atmosphere view path increases strongly toward the body limb", () => {
+  const radialPath = atmosphereViewPathLength(1, 1.08, 0);
+  const grazingPath = atmosphereViewPathLength(1, 1.08, 1);
+  assert.ok(Math.abs(radialPath - 0.08) < 1e-12);
+  assert.ok(grazingPath > radialPath * 5);
+  assert.equal(atmosphereViewPathLength(1, 1.08, 1.08), 0);
+});
+
+test("atmosphere shell resources are allocated only for forced sphere bodies and use bounded ray-shell shader work", () => {
   const earthDefinition = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
   const entry = {
     definition: earthDefinition,
@@ -87,9 +110,16 @@ test("atmosphere shell resources are allocated only for forced sphere bodies and
   assert.equal(active.resourcesAllocated, true);
   assert.equal(active.visible, true);
   assert.equal(active.viewSampleCount, ATMOSPHERE_VIEW_SAMPLES);
+  assert.equal(active.physicalExtentScaleHeights, ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS);
   const mesh = scene.getObjectByName(`Atmosphere ${EARTH_ID}`) as THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   assert.ok(mesh.material.fragmentShader.includes(`const int VIEW_SAMPLES = ${ATMOSPHERE_VIEW_SAMPLES};`));
+  assert.ok(mesh.material.fragmentShader.includes("raySphereInterval"));
+  assert.ok(mesh.material.fragmentShader.includes("uLightChromaticities"));
+  assert.ok(mesh.material.fragmentShader.includes("altitudeScaleHeights"));
   assert.equal(mesh.material.fragmentShader.includes("while"), false);
+  assert.equal(mesh.material.fragmentShader.includes("uScaleHeight"), false);
+  assert.equal(mesh.material.premultipliedAlpha, true);
+  assert.equal(mesh.material.blending, THREE.NormalBlending);
 
   manager.update(
     [entry],
@@ -127,4 +157,3 @@ test("large marker-only atmospheric populations allocate no per-object shell res
   assert.equal(scene.children.filter((child) => child.name.startsWith("Atmosphere ")).length, 0);
   manager.dispose();
 });
-

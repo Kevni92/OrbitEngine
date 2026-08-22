@@ -9,14 +9,14 @@ import {
 import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
 import type { RepresentationLevel } from "./representation-lod.js";
 import { projectedRadiusPixels } from "./adaptive-sizing.js";
-import { METERS_TO_SCENE_UNITS, positionToSceneUnits } from "./render-space.js";
 import type { StellarIlluminationSet } from "./celestial-appearance-rendering.js";
 
 export const ATMOSPHERE_VIEW_SAMPLES = 8;
 export const ATMOSPHERE_ENTER_DIAMETER_PIXELS = 12;
 export const ATMOSPHERE_EXIT_DIAMETER_PIXELS = 10;
-export const ATMOSPHERE_RIM_THICKNESS_CSS_PIXELS = 1.5;
+export const ATMOSPHERE_RIM_THICKNESS_CSS_PIXELS = 2.5;
 export const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
+export const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
 
 export interface ResolvedAtmosphereOptics {
   readonly rayleighScattering: LinearRgb;
@@ -39,6 +39,7 @@ export interface AtmosphereDiagnostics {
   readonly projectedDiameterPixels: number;
   readonly presentationThicknessSceneUnits?: number;
   readonly viewSampleCount: number;
+  readonly physicalExtentScaleHeights: number;
   readonly opticalSource?: ResolvedAtmosphereOptics["source"];
 }
 
@@ -127,21 +128,57 @@ export function atmosphereLodState(
 }
 
 export function presentationAtmosphereThickness(
-  physicalThicknessSceneUnits: number,
+  physicalPresentationThicknessSceneUnits: number,
   presentedBodyRadiusSceneUnits: number,
   pixelsPerSceneUnit: number,
 ): number {
-  if (![physicalThicknessSceneUnits, presentedBodyRadiusSceneUnits, pixelsPerSceneUnit].every(Number.isFinite)
-      || physicalThicknessSceneUnits < 0 || presentedBodyRadiusSceneUnits <= 0 || pixelsPerSceneUnit <= 0) {
+  if (![physicalPresentationThicknessSceneUnits, presentedBodyRadiusSceneUnits, pixelsPerSceneUnit].every(Number.isFinite)
+      || physicalPresentationThicknessSceneUnits < 0 || presentedBodyRadiusSceneUnits <= 0 || pixelsPerSceneUnit <= 0) {
     throw new RangeError("atmosphere presentation dimensions must be finite and positive where required");
   }
-  const physicalProjectedThickness = physicalThicknessSceneUnits * pixelsPerSceneUnit;
+  const physicalProjectedThickness = physicalPresentationThicknessSceneUnits * pixelsPerSceneUnit;
   const minimumReadableThickness = ATMOSPHERE_RIM_THICKNESS_CSS_PIXELS / pixelsPerSceneUnit;
   const maximumPresentationThickness = presentedBodyRadiusSceneUnits * ATMOSPHERE_MAX_RIM_FRACTION;
   return Math.min(
     maximumPresentationThickness,
     Math.max(physicalProjectedThickness, minimumReadableThickness),
   );
+}
+
+export function presentationAltitudeScaleHeights(
+  radialDistanceSceneUnits: number,
+  bodyRadiusSceneUnits: number,
+  atmosphereRadiusSceneUnits: number,
+  physicalExtentScaleHeights = ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS,
+): number {
+  if (![radialDistanceSceneUnits, bodyRadiusSceneUnits, atmosphereRadiusSceneUnits, physicalExtentScaleHeights].every(Number.isFinite)
+      || bodyRadiusSceneUnits <= 0 || atmosphereRadiusSceneUnits <= bodyRadiusSceneUnits || physicalExtentScaleHeights <= 0) {
+    throw new RangeError("atmosphere altitude mapping dimensions must be finite and positive");
+  }
+  const fraction = Math.min(1, Math.max(0,
+    (radialDistanceSceneUnits - bodyRadiusSceneUnits) / (atmosphereRadiusSceneUnits - bodyRadiusSceneUnits),
+  ));
+  return fraction * physicalExtentScaleHeights;
+}
+
+export function atmosphereViewPathLength(
+  bodyRadiusSceneUnits: number,
+  atmosphereRadiusSceneUnits: number,
+  impactParameterSceneUnits: number,
+): number {
+  if (![bodyRadiusSceneUnits, atmosphereRadiusSceneUnits, impactParameterSceneUnits].every(Number.isFinite)
+      || bodyRadiusSceneUnits <= 0 || atmosphereRadiusSceneUnits <= bodyRadiusSceneUnits || impactParameterSceneUnits < 0) {
+    throw new RangeError("atmosphere path dimensions must be finite and positive");
+  }
+  if (impactParameterSceneUnits >= atmosphereRadiusSceneUnits) return 0;
+  const atmosphereHalfChord = Math.sqrt(Math.max(0,
+    atmosphereRadiusSceneUnits ** 2 - impactParameterSceneUnits ** 2,
+  ));
+  if (impactParameterSceneUnits >= bodyRadiusSceneUnits) return atmosphereHalfChord * 2;
+  const bodyHalfChord = Math.sqrt(Math.max(0,
+    bodyRadiusSceneUnits ** 2 - impactParameterSceneUnits ** 2,
+  ));
+  return atmosphereHalfChord - bodyHalfChord;
 }
 
 export const ATMOSPHERE_VERTEX_SHADER = `
@@ -161,7 +198,8 @@ varying vec3 vWorldPosition;
 
 uniform vec3 uBodyCenter;
 uniform float uBodyRadius;
-uniform float uScaleHeight;
+uniform float uAtmosphereRadius;
+uniform float uPhysicalExtentScaleHeights;
 uniform vec3 uRayleighScattering;
 uniform vec3 uMieScattering;
 uniform vec3 uAbsorption;
@@ -169,10 +207,12 @@ uniform float uReferenceVerticalOpticalDepth;
 uniform float uMieAnisotropy;
 uniform float uLightCount;
 uniform vec3 uLightDirections[${shaderLightCount}];
+uniform vec3 uLightChromaticities[${shaderLightCount}];
 uniform float uLightIrradiances[${shaderLightCount}];
 
 const int VIEW_SAMPLES = ${ATMOSPHERE_VIEW_SAMPLES};
 const float PI = 3.14159265359;
+const float EPSILON = 0.000001;
 
 float rayleighPhase(float cosine) {
   return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
@@ -184,39 +224,109 @@ float miePhase(float cosine, float anisotropy) {
   return (1.0 - g2) / (4.0 * PI * denominator);
 }
 
-void main() {
-  vec3 fromCenter = vWorldPosition - uBodyCenter;
-  float radius = max(length(fromCenter), uBodyRadius);
-  vec3 surfaceNormal = normalize(fromCenter);
-  vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-  float altitude = max(radius - uBodyRadius, 0.0);
-  float density = exp(-altitude / max(uScaleHeight, 1.0));
-  float viewDepth = 0.0;
+vec2 raySphereInterval(vec3 rayOrigin, vec3 rayDirection, float sphereRadius) {
+  vec3 offset = rayOrigin - uBodyCenter;
+  float b = dot(offset, rayDirection);
+  float c = dot(offset, offset) - sphereRadius * sphereRadius;
+  float discriminant = b * b - c;
+  if (discriminant < 0.0) return vec2(1.0, -1.0);
+  float root = sqrt(discriminant);
+  return vec2(-b - root, -b + root);
+}
 
-  // Fixed-cost view integration. Light-path depth is analytic below; there
-  // is intentionally no nested or adaptive raymarch in the default path.
+void main() {
+  vec3 rayOrigin = cameraPosition;
+  vec3 rayDirection = normalize(vWorldPosition - cameraPosition);
+  vec2 atmosphereInterval = raySphereInterval(rayOrigin, rayDirection, uAtmosphereRadius);
+  float segmentStart = max(0.0, atmosphereInterval.x);
+  float segmentEnd = atmosphereInterval.y;
+  if (segmentEnd <= segmentStart) discard;
+
+  vec2 bodyInterval = raySphereInterval(rayOrigin, rayDirection, uBodyRadius);
+  if (bodyInterval.y >= bodyInterval.x && bodyInterval.x > segmentStart) {
+    segmentEnd = min(segmentEnd, bodyInterval.x);
+  }
+  if (segmentEnd <= segmentStart) discard;
+
+  float presentationThickness = max(uAtmosphereRadius - uBodyRadius, EPSILON);
+  float segmentLength = segmentEnd - segmentStart;
+  float sampleLength = segmentLength / float(VIEW_SAMPLES);
+  float sampleLengthScaleHeights = sampleLength / presentationThickness * uPhysicalExtentScaleHeights;
+  float verticalIntegral = max(1.0 - exp(-uPhysicalExtentScaleHeights), EPSILON);
+  float integratedDensityScaleHeights = 0.0;
+  vec3 integratedScattering = vec3(0.0);
+  vec3 viewDirection = -rayDirection;
+
+  // Fixed-cost view integration. The light path is an analytic local-depth
+  // approximation; there is no nested or adaptive light raymarch.
   for (int sampleIndex = 0; sampleIndex < VIEW_SAMPLES; sampleIndex++) {
     float sampleFraction = (float(sampleIndex) + 0.5) / float(VIEW_SAMPLES);
-    viewDepth += exp(-(altitude + sampleFraction * uScaleHeight) / max(uScaleHeight, 1.0));
+    float distanceAlongRay = segmentStart + segmentLength * sampleFraction;
+    vec3 samplePosition = rayOrigin + rayDirection * distanceAlongRay;
+    vec3 fromCenter = samplePosition - uBodyCenter;
+    float radialDistance = length(fromCenter);
+    vec3 localNormal = normalize(fromCenter);
+    float altitudeFraction = clamp((radialDistance - uBodyRadius) / presentationThickness, 0.0, 1.0);
+    float altitudeScaleHeights = altitudeFraction * uPhysicalExtentScaleHeights;
+    float density = exp(-altitudeScaleHeights);
+    float sampleColumn = density * sampleLengthScaleHeights;
+    integratedDensityScaleHeights += sampleColumn;
+
+    for (int lightIndex = 0; lightIndex < ${shaderLightCount}; lightIndex++) {
+      if (float(lightIndex) >= uLightCount) continue;
+      vec3 lightDirection = normalize(uLightDirections[lightIndex]);
+      float lightZenithCosine = dot(localNormal, lightDirection);
+      float dayFactor = smoothstep(-0.18, 0.08, lightZenithCosine);
+      if (dayFactor <= 0.0001) continue;
+      float lightPathFactor = 1.0 / max(0.12, lightZenithCosine + 0.20);
+      float verticalDepthAboveSample = uReferenceVerticalOpticalDepth * exp(-altitudeScaleHeights);
+      float absorptionMean = (uAbsorption.r + uAbsorption.g + uAbsorption.b) / 3.0;
+      float transmittance = exp(-absorptionMean * verticalDepthAboveSample * lightPathFactor);
+      float phaseCosine = dot(viewDirection, lightDirection);
+      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
+        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
+      integratedScattering += scatteringSource
+        * uLightChromaticities[lightIndex]
+        * uLightIrradiances[lightIndex]
+        * transmittance
+        * dayFactor
+        * sampleColumn / verticalIntegral;
+    }
   }
-  float viewOpticalDepth = uReferenceVerticalOpticalDepth * density * viewDepth / float(VIEW_SAMPLES);
-  vec3 scattering = vec3(0.0);
-  for (int lightIndex = 0; lightIndex < ${shaderLightCount}; lightIndex++) {
-    if (float(lightIndex) >= uLightCount) continue;
-    vec3 lightDirection = normalize(uLightDirections[lightIndex]);
-    float cosine = dot(surfaceNormal, lightDirection);
-    float lightPathDepth = 1.0 / max(0.08, cosine + 0.08);
-    float transmittance = exp(-(uAbsorption.r + uAbsorption.g + uAbsorption.b) / 3.0
-      * viewOpticalDepth * lightPathDepth);
-    float rayleigh = rayleighPhase(dot(viewDirection, lightDirection));
-    float mie = miePhase(dot(viewDirection, lightDirection), uMieAnisotropy);
-    vec3 source = uRayleighScattering * rayleigh + uMieScattering * mie;
-    scattering += source * uLightIrradiances[lightIndex] * transmittance * max(0.0, cosine + 0.05);
-  }
-  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.92);
-  gl_FragColor = vec4(scattering, alpha);
+
+  float viewOpticalDepth = uReferenceVerticalOpticalDepth
+    * integratedDensityScaleHeights / verticalIntegral;
+  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
+  vec3 radiance = integratedScattering * 1.75;
+  radiance = radiance / (vec3(1.0) + radiance);
+  gl_FragColor = vec4(radiance, alpha);
 }
 `;
+}
+
+function lightUniformValues(illumination: StellarIlluminationSet | undefined): {
+  readonly directions: THREE.Vector3[];
+  readonly chromaticities: THREE.Vector3[];
+  readonly irradiances: number[];
+  readonly lightCount: number;
+} {
+  const contributions = illumination?.contributions ?? [];
+  const directions = contributions.map((contribution) => new THREE.Vector3(
+    contribution.directionToEmitter.x,
+    contribution.directionToEmitter.y,
+    contribution.directionToEmitter.z,
+  ).normalize());
+  const chromaticities = contributions.map((contribution) => new THREE.Vector3(
+    contribution.linearChromaticity.r,
+    contribution.linearChromaticity.g,
+    contribution.linearChromaticity.b,
+  ));
+  const irradiances = contributions.map((contribution) => contribution.exposureMappedIrradiance);
+  const lightCount = contributions.length;
+  if (directions.length === 0) directions.push(new THREE.Vector3(0, 1, 0));
+  if (chromaticities.length === 0) chromaticities.push(new THREE.Vector3(1, 1, 1));
+  if (irradiances.length === 0) irradiances.push(0);
+  return { directions, chromaticities, irradiances, lightCount };
 }
 
 function atmosphereMaterial(
@@ -224,72 +334,63 @@ function atmosphereMaterial(
   optics: ResolvedAtmosphereOptics,
   bodyCenter: THREE.Vector3,
   bodyRadiusSceneUnits: number,
-  scaleHeightSceneUnits: number,
+  atmosphereRadiusSceneUnits: number,
   illumination: StellarIlluminationSet | undefined,
 ): { readonly material: THREE.ShaderMaterial; readonly lightCount: number } {
-  const contributions = illumination?.contributions ?? [];
-  const lightDirections = contributions.map((contribution) => {
-    const direction = positionToSceneUnits(contribution.directionToEmitter);
-    return new THREE.Vector3(direction.x, direction.y, direction.z).normalize();
-  });
-  const lightIrradiances = contributions.map((contribution) => contribution.exposureMappedIrradiance);
-  const lightCount = contributions.length;
-  const shaderLightCount = Math.max(1, lightCount);
-  if (lightDirections.length === 0) lightDirections.push(new THREE.Vector3(0, 1, 0));
-  if (lightIrradiances.length === 0) lightIrradiances.push(0);
+  const lights = lightUniformValues(illumination);
+  const shaderLightCount = Math.max(1, lights.lightCount);
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uBodyCenter: { value: bodyCenter.clone() },
       uBodyRadius: { value: bodyRadiusSceneUnits },
-      uScaleHeight: { value: scaleHeightSceneUnits },
+      uAtmosphereRadius: { value: atmosphereRadiusSceneUnits },
+      uPhysicalExtentScaleHeights: { value: ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS },
       uRayleighScattering: { value: new THREE.Vector3(optics.rayleighScattering.r, optics.rayleighScattering.g, optics.rayleighScattering.b) },
       uMieScattering: { value: new THREE.Vector3(optics.mieScattering.r, optics.mieScattering.g, optics.mieScattering.b) },
       uAbsorption: { value: new THREE.Vector3(optics.absorption.r, optics.absorption.g, optics.absorption.b) },
       uReferenceVerticalOpticalDepth: { value: optics.referenceVerticalOpticalDepth },
       uMieAnisotropy: { value: optics.mieAnisotropy },
-      uLightCount: { value: lightCount },
-      uLightDirections: { value: lightDirections.slice(0, shaderLightCount) },
-      uLightIrradiances: { value: lightIrradiances.slice(0, shaderLightCount) },
+      uLightCount: { value: lights.lightCount },
+      uLightDirections: { value: lights.directions.slice(0, shaderLightCount) },
+      uLightChromaticities: { value: lights.chromaticities.slice(0, shaderLightCount) },
+      uLightIrradiances: { value: lights.irradiances.slice(0, shaderLightCount) },
     },
     vertexShader: ATMOSPHERE_VERTEX_SHADER,
-    fragmentShader: atmosphereFragmentShader(lightCount),
+    fragmentShader: atmosphereFragmentShader(lights.lightCount),
     transparent: true,
+    premultipliedAlpha: true,
     depthWrite: false,
     depthTest: true,
     side: THREE.BackSide,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
     toneMapped: true,
   });
   void atmosphere;
-  return { material, lightCount };
+  return { material, lightCount: lights.lightCount };
 }
 
 function setAtmosphereUniforms(
   material: THREE.ShaderMaterial,
   bodyCenter: THREE.Vector3,
   bodyRadiusSceneUnits: number,
-  scaleHeightSceneUnits: number,
+  atmosphereRadiusSceneUnits: number,
   optics: ResolvedAtmosphereOptics,
   illumination: StellarIlluminationSet | undefined,
 ): void {
-  const directions = (illumination?.contributions ?? []).map((contribution) => {
-    const direction = positionToSceneUnits(contribution.directionToEmitter);
-    return new THREE.Vector3(direction.x, direction.y, direction.z).normalize();
-  });
-  const irradiances = (illumination?.contributions ?? []).map((contribution) => contribution.exposureMappedIrradiance);
-  if (directions.length === 0) directions.push(new THREE.Vector3(0, 1, 0));
-  if (irradiances.length === 0) irradiances.push(0);
+  const lights = lightUniformValues(illumination);
   material.uniforms.uBodyCenter!.value.copy(bodyCenter);
   material.uniforms.uBodyRadius!.value = bodyRadiusSceneUnits;
-  material.uniforms.uScaleHeight!.value = scaleHeightSceneUnits;
+  material.uniforms.uAtmosphereRadius!.value = atmosphereRadiusSceneUnits;
+  material.uniforms.uPhysicalExtentScaleHeights!.value = ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS;
   material.uniforms.uRayleighScattering!.value.set(optics.rayleighScattering.r, optics.rayleighScattering.g, optics.rayleighScattering.b);
   material.uniforms.uMieScattering!.value.set(optics.mieScattering.r, optics.mieScattering.g, optics.mieScattering.b);
   material.uniforms.uAbsorption!.value.set(optics.absorption.r, optics.absorption.g, optics.absorption.b);
   material.uniforms.uReferenceVerticalOpticalDepth!.value = optics.referenceVerticalOpticalDepth;
   material.uniforms.uMieAnisotropy!.value = optics.mieAnisotropy;
-  material.uniforms.uLightDirections!.value = directions;
-  material.uniforms.uLightIrradiances!.value = irradiances;
-  material.uniforms.uLightCount!.value = illumination?.contributions.length ?? 0;
+  material.uniforms.uLightDirections!.value = lights.directions;
+  material.uniforms.uLightChromaticities!.value = lights.chromaticities;
+  material.uniforms.uLightIrradiances!.value = lights.irradiances;
+  material.uniforms.uLightCount!.value = lights.lightCount;
 }
 
 export class AtmosphereShellManager {
@@ -300,7 +401,7 @@ export class AtmosphereShellManager {
 
   constructor(scene: THREE.Scene) {
     this.#scene = scene;
-    this.#geometry = new THREE.SphereGeometry(1, 32, 20);
+    this.#geometry = new THREE.SphereGeometry(1, 40, 28);
   }
 
   update(
@@ -326,10 +427,18 @@ export class AtmosphereShellManager {
         this.#enabledByBody.delete(bodyId);
         continue;
       }
-      const physicalRadius = METERS_TO_SCENE_UNITS * (entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius ?? 0);
-      const distance = Math.max(camera.position.distanceTo(position), physicalRadius * 2, Number.EPSILON);
+
+      const physicalRadiusMeters = entry.record.properties.physicalRadius
+        ?? entry.definition.properties.physicalRadius
+        ?? 0;
+      if (physicalRadiusMeters <= 0) {
+        this.remove(bodyId);
+        this.#enabledByBody.delete(bodyId);
+        continue;
+      }
+      const distance = Math.max(camera.position.distanceTo(position), presentedRadius * 2, Number.EPSILON);
       const fieldOfView = camera.fov * Math.PI / 180;
-      const projectedRadius = projectedRadiusPixels(physicalRadius, distance, fieldOfView, viewportHeightPixels);
+      const projectedRadius = projectedRadiusPixels(presentedRadius, distance, fieldOfView, viewportHeightPixels);
       const projectedDiameter = projectedRadius * 2;
       const lod = atmosphereLodState(this.#enabledByBody.get(bodyId), projectedDiameter, forcedBodies.has(bodyId));
       this.#enabledByBody.set(bodyId, lod.enabled);
@@ -337,14 +446,21 @@ export class AtmosphereShellManager {
         this.remove(bodyId);
         continue;
       }
+
       const optics = resolveAtmosphereOptics(entry.definition.appearance);
       if (optics === undefined) {
         this.remove(bodyId);
         continue;
       }
       const pixelsPerSceneUnit = Math.max(projectedRadius / Math.max(presentedRadius, Number.EPSILON), Number.EPSILON);
-      const physicalThickness = Math.max(0, atmosphere.scaleHeightMeters * 4 * METERS_TO_SCENE_UNITS);
-      const presentationThickness = presentationAtmosphereThickness(physicalThickness, presentedRadius, pixelsPerSceneUnit);
+      const physicalExtentMeters = atmosphere.scaleHeightMeters * ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS;
+      const physicalPresentationThickness = presentedRadius * physicalExtentMeters / physicalRadiusMeters;
+      const presentationThickness = presentationAtmosphereThickness(
+        physicalPresentationThickness,
+        presentedRadius,
+        pixelsPerSceneUnit,
+      );
+      const atmosphereRadius = presentedRadius + presentationThickness;
       const bodyCenter = position.clone();
       const illumination = illuminationByBody.get(bodyId);
       const current = this.#shells.get(bodyId);
@@ -357,7 +473,7 @@ export class AtmosphereShellManager {
           optics,
           bodyCenter,
           presentedRadius,
-          atmosphere.scaleHeightMeters * METERS_TO_SCENE_UNITS,
+          atmosphereRadius,
           illumination,
         );
         const mesh = new THREE.Mesh(this.#geometry, materialResult.material);
@@ -377,13 +493,20 @@ export class AtmosphereShellManager {
         };
         this.#shells.set(bodyId, shell);
       } else {
-        setAtmosphereUniforms(shell.material, bodyCenter, presentedRadius, atmosphere.scaleHeightMeters * METERS_TO_SCENE_UNITS, optics, illumination);
+        setAtmosphereUniforms(
+          shell.material,
+          bodyCenter,
+          presentedRadius,
+          atmosphereRadius,
+          optics,
+          illumination,
+        );
         shell.presentationThicknessSceneUnits = presentationThickness;
         shell.projectedDiameterPixels = projectedDiameter;
         shell.opticalSource = optics.source;
       }
       shell.mesh.position.copy(position);
-      shell.mesh.scale.setScalar(presentedRadius + presentationThickness);
+      shell.mesh.scale.setScalar(atmosphereRadius);
       shell.mesh.visible = true;
       liveIds.add(bodyId);
     }
@@ -404,6 +527,7 @@ export class AtmosphereShellManager {
         opticalSource: shell.opticalSource,
       }),
       viewSampleCount: ATMOSPHERE_VIEW_SAMPLES,
+      physicalExtentScaleHeights: ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS,
     });
   }
 

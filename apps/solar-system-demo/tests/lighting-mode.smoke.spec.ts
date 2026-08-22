@@ -62,6 +62,17 @@ test("Physical and Enhanced preserve stellar diagnostics while toggling bounded 
   expect(enhancedBody.inspectionFillContribution).toBe(0.18);
   expect(enhancedBody.physicalIrradianceWattsPerSquareMeter).toBe(physicalBody.physicalIrradianceWattsPerSquareMeter);
 
+  await page.selectOption("#selected-select", "1009");
+  await page.selectOption("#focus-select", "1009");
+  await expect.poll(async () => (await readDiagnostics(page))?.bodies.find((body) => body.objectId === "1009")?.representation).toBe("sphere");
+  await page.selectOption("#lighting-mode", "physical");
+  const neptunePhysical = (await readDiagnostics(page))!.bodies.find((body) => body.objectId === "1009")!;
+  await page.selectOption("#lighting-mode", "enhanced");
+  await expect.poll(async () => (await readDiagnostics(page))?.bodies.find((body) => body.objectId === "1009")?.inspectionFillApplied).toBe(true);
+  const neptuneEnhanced = (await readDiagnostics(page))!.bodies.find((body) => body.objectId === "1009")!;
+  expect(neptuneEnhanced.inspectionFillContribution).toBe(0.18);
+  expect(neptuneEnhanced.physicalIrradianceWattsPerSquareMeter).toBe(neptunePhysical.physicalIrradianceWattsPerSquareMeter);
+
   await page.selectOption("#selected-select", "2001");
   await expect(page.locator("#selected-name")).toHaveText("Ceres");
   await expect(page.locator("#lighting-mode")).toHaveValue("enhanced");
