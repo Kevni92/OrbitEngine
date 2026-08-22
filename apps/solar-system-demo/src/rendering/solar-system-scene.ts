@@ -10,6 +10,7 @@ import type { RegisteredScenarioBody, SolarSystemScenario } from "../scenario/lo
 import type { RuntimeAsteroidBody } from "../scenario/runtime-asteroid-overlay.js";
 import type { OrbitPath } from "../simulation/path-sampling.js";
 import { OrbitRenderer } from "./orbit-renderer.js";
+import type { OrbitGuideDiagnostics } from "./orbit-renderer.js";
 import {
   adaptiveRadiusPixels,
   cappedAdaptiveRadiusSceneUnits,
@@ -124,6 +125,13 @@ export class SolarSystemScene {
       throw new RangeError(`Unknown scenario body: ${objectId}`);
     }
     this.#focusId = objectId;
+    const focus = objectId === undefined ? undefined : this.#currentEntries.get(objectId);
+    const localSystemRootId = focus?.definition.type === ObjectType.moon
+      ? focus.definition.centralBody
+      : focus?.definition.type === ObjectType.planet
+        ? focus.definition.id
+        : undefined;
+    this.#orbitRenderer.setLocalSystemRoot(localSystemRootId);
   }
 
   /** Updates the combined committed-plus-runtime membership without changing engine state. */
@@ -366,6 +374,10 @@ export class SolarSystemScene {
 
   pathCount(): number {
     return this.#orbitRenderer.pathCount();
+  }
+
+  orbitGuideDiagnostics(): readonly OrbitGuideDiagnostics[] {
+    return this.#orbitRenderer.guideDiagnostics();
   }
 
   setOrbitsVisible(visible: boolean): void {

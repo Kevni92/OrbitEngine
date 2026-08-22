@@ -225,6 +225,7 @@ function horizonsBody(
   centralBody: ObjectId,
   sourceIdentifier: string,
   aliases: readonly string[] = [],
+  orbitVisualizationDefinition?: OrbitVisualizationDefinition,
 ): ScenarioBodyDefinition {
   return body(
     id,
@@ -236,7 +237,7 @@ function horizonsBody(
     { mass, mu, physicalRadius },
     state,
     centralBody,
-    undefined,
+    orbitVisualizationDefinition,
     {
       aliases,
       sourceIdentifier,
@@ -422,25 +423,25 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     IO_ID, "Io", ObjectType.moon, 0xd5a56c, JUPITER_CENTERED_FRAME, "13",
     8.9319e22, 5.9599e12, 1_821_600,
     horizonsAnchor(399_714.236329573, 114_358.2337934756, 61_202.66694087301, -5.397081715786772, 14.96898532269375, 7.040742588937143, JUPITER_CENTERED_FRAME),
-    JUPITER_ID, "501 Io", ["Jupiter I"],
+    JUPITER_ID, "501 Io", ["Jupiter I"], orbitVisualization(152_850),
   ),
   horizonsBody(
     EUROPA_ID, "Europa", ObjectType.moon, 0xb9c8d7, JUPITER_CENTERED_FRAME, "14",
     4.8000e22, 3.2027e12, 1_560_800,
     horizonsAnchor(-561_244.4737473305, -319_493.8652420691, -158_086.4244536535, 7.462294847234357, -10.63755742098116, -4.848776619880565, JUPITER_CENTERED_FRAME),
-    JUPITER_ID, "502 Europa", ["Jupiter II"],
+    JUPITER_ID, "502 Europa", ["Jupiter II"], orbitVisualization(306_820),
   ),
   horizonsBody(
     GANYMEDE_ID, "Ganymede", ObjectType.moon, 0x9fa6a9, JUPITER_CENTERED_FRAME, "15",
     1.4819e23, 9.8878e12, 2_634_100,
     horizonsAnchor(-821_345.0948603005, -615_085.6733875166, -304_338.121372288, 6.987637098645384, -7.557915765882209, -3.52782080567081, JUPITER_CENTERED_FRAME),
-    JUPITER_ID, "503 Ganymede", ["Jupiter III"],
+    JUPITER_ID, "503 Ganymede", ["Jupiter III"], orbitVisualization(618_150),
   ),
   horizonsBody(
     CALLISTO_ID, "Callisto", ObjectType.moon, 0x817c73, JUPITER_CENTERED_FRAME, "16",
     1.0759e23, 7.1793e12, 2_410_300,
     horizonsAnchor(325_079.7306331359, 1_673_657.388398113, 796_198.0648559552, -8.07297227372281, 1.381786782005837, 0.5353865241984859, JUPITER_CENTERED_FRAME),
-    JUPITER_ID, "504 Callisto", ["Jupiter IV"],
+    JUPITER_ID, "504 Callisto", ["Jupiter IV"], orbitVisualization(1_442_000),
   ),
   horizonsBody(
     AMALTHEA_ID, "Amalthea", ObjectType.moon, 0xb85f45, JUPITER_CENTERED_FRAME, "17",
