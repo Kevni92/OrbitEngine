@@ -100,7 +100,7 @@
                 <option value="physical">True physical scale</option>
               </select>
             </label>
-            <p class="field-help">Adaptive visibility uses projected screen size and local spacing rather than a fixed world-space multiplier.</p>
+            <p class="field-help">Adaptive visibility responds to zoom and local projected spacing instead of using one fixed world-space multiplier.</p>
           </section>
 
           <section class="panel-section" aria-labelledby="asteroid-heading">
@@ -182,9 +182,29 @@
             </div>
           </details>
 
-          <p class="panel-footnote">Click a catalog body in the scene to select it. Positions, generated asteroid markers, and orbit curves consume public OrbitEngine state queries.</p>
+          <p class="panel-footnote">Click a catalog body in the scene to select it. Positions, asteroid markers, and orbit curves consume public OrbitEngine state queries.</p>
         </div>
       </section>
+      <aside class="celestial-browser" id="celestial-browser" aria-labelledby="celestial-browser-title">
+        <header class="browser-header">
+          <div>
+            <p class="eyebrow">Navigation</p>
+            <h2 id="celestial-browser-title">Celestial Bodies</h2>
+            <p class="panel-subtitle">Find a body and center the view</p>
+          </div>
+          <button class="icon-button" id="celestial-browser-toggle" type="button" aria-expanded="true" aria-label="Hide celestial browser">Hide browser</button>
+        </header>
+        <div class="browser-content">
+          <div class="browser-search">
+            <label class="visually-hidden" for="celestial-browser-search">Search celestial bodies</label>
+            <input id="celestial-browser-search" type="search" placeholder="Search celestial bodies…" autocomplete="off" />
+            <button class="browser-clear" id="celestial-browser-clear" type="button" aria-label="Clear body search" hidden>Clear</button>
+          </div>
+          <p class="browser-summary" id="celestial-browser-summary" aria-live="polite">Catalog loading…</p>
+          <ul class="celestial-search-results" id="celestial-browser-results" aria-label="Celestial body search results"></ul>
+          <ul class="celestial-tree" id="celestial-browser-tree" role="tree" aria-label="Celestial body catalog"></ul>
+        </div>
+      </aside>
       <canvas id="scene" aria-label="Interactive OrbitEngine Solar System scene"></canvas>
     </main>
     <script type="module" src="/src/main.ts"></script>
