@@ -81,6 +81,43 @@ Orbit-relevant dataset fields may include:
 
 Resource composition, geology, atmosphere as gameplay content, habitability, population, economy, detailed terrain, and rendering-coordinate data are outside OrbitEngine unless a physical subset is specifically required by trajectory/frame physics.
 
+## Astronomical appearance data for consumers
+
+A versioned scenario/import product may contain additional astronomical metadata that is useful for presentation but is not part of the OrbitEngine physical registry. The canonical browser-demo contract for that data is defined by [19 — Celestial Appearance, Atmospheres, and Stellar Lighting](19-celestial-appearance-atmospheres-and-lighting.md).
+
+Examples include:
+
+- visible surface/cloud-layer composition;
+- calibrated visible reflectance and visual albedo;
+- atmosphere gas composition, pressure, scale height, haze, clouds, and optical calibration;
+- stellar effective temperature and luminosity;
+- appearance-specific provenance and limitations.
+
+These records are associated with the same stable `ObjectId` as their physical OrbitEngine object but remain application/dataset metadata. They must not be inserted into `PhysicalPropertiesInput` merely because they describe a physical body.
+
+The boundary is based on simulation responsibility rather than whether a fact is physically real. A surface composition may be physically real while still being irrelevant to orbit propagation. If a future OrbitEngine feature genuinely needs a physical subset — for example an atmospheric density model for aerodynamic drag — that subset receives a separate explicitly defined engine contract and must not consume rendering metadata implicitly.
+
+### Appearance provenance is independent
+
+Orbital/ephemeris provenance does not automatically establish appearance provenance.
+
+The normalized dataset must track the source and limitations of appearance fields independently enough to avoid claims such as treating a JPL Horizons state-vector source as the authority for atmosphere chemistry or cloud optical depth.
+
+A body may therefore have separate source records for:
+
+- state vectors/ephemerides;
+- mass/radius/orientation;
+- surface or cloud composition;
+- atmosphere composition and structure;
+- albedo/reflectance;
+- stellar temperature/luminosity.
+
+### No authoritative stored planet RGB
+
+A fixed RGB value is presentation metadata, not an astronomical physical truth. The browser demo may retain an accent/fallback color for markers, UI, orbit guides, or incomplete data, but resolved sphere appearance is derived through the document-19 optical/lighting pipeline when richer appearance data exists.
+
+Composition alone must not be presented as an exact color prediction. The normalized appearance dataset may provide calibrated visible reflectance where available and otherwise use a documented, versioned optical approximation.
+
 ## Browser demo fixture
 
 The browser Solar-System reference application defined by [16 — Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md) uses a small committed offline fixture containing at least the Sun, eight planets, and Earth's Moon.
@@ -93,7 +130,8 @@ Requirements:
 - use stable explicit object/frame IDs rather than name-based engine identity;
 - record source, epoch/time scale, source frame, normalization steps, and known accuracy limitations;
 - require no runtime network access;
-- keep display metadata such as names/colors outside engine physical records;
+- keep display and celestial-appearance metadata outside engine physical records;
+- keep appearance provenance separate from ephemeris provenance;
 - remain replaceable by later production importer output without changing rendering architecture;
 - use OrbitEngine production state-at-time models for visible motion rather than embedding a JavaScript orbital approximation in the demo.
 
