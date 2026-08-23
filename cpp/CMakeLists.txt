@@ -10,4 +10,5 @@ endif()
 
 if(ORBIT_ENGINE_BUILD_WASM)
   add_subdirectory(bindings/wasm)
+  add_subdirectory(bindings/oep_wasm)
 endif()
