@@ -90,6 +90,16 @@ import {
   mergeEncounterCouplingWindows,
 } from "./encounter-scheduling.js";
 import {
+  EncounterLifecycleManager,
+  type EncounterCoverage,
+  type EncounterCoverageQuery,
+  type EncounterPerformanceDiagnostics,
+  type EncounterRecordDiagnostic,
+  type EncounterRegistrationInput,
+  type EncounterRebuildResult,
+  type EncounterUpcomingQuery,
+} from "./encounter-lifecycle.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -114,6 +124,7 @@ export * from "./encounter.js";
 export * from "./broad-phase.js";
 export * from "./closest-approach.js";
 export * from "./encounter-scheduling.js";
+export * from "./encounter-lifecycle.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -178,6 +189,7 @@ export class OrbitEngine {
   readonly #encounterDomainRegistry: EncounterDomainRegistry;
   readonly #encounterBroadPhaseIndex: EncounterBroadPhaseIndex;
   readonly #encounterSchedulingManager: EncounterSchedulingManager;
+  readonly #encounterLifecycleManager: EncounterLifecycleManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -187,10 +199,10 @@ export class OrbitEngine {
     this.#fidelityManager = new FidelityManager();
     this.#invalidationManager = new RevisionInvalidationManager(this.#scheduledWorkQueue);
     this.#encounterPolicyManager = new EncounterPolicyManager(undefined, (_previous, next) => {
-      this.#invalidationManager.invalidate(
-        { kind: "interactionPolicy", id: "encounter-policy", revision: next.revision },
-        this.currentTime,
-      );
+      const dependency = { kind: "interactionPolicy" as const, id: "encounter-policy", revision: next.revision };
+      this.#invalidationManager.invalidate(dependency, this.currentTime);
+      this.#encounterSchedulingManager.invalidateDependency(dependency, this.currentTime);
+      this.#encounterLifecycleManager.invalidate(dependency, this.currentTime);
     });
     this.#encounterDomainRegistry = new EncounterDomainRegistry();
     this.#encounterBroadPhaseIndex = new EncounterBroadPhaseIndex();
@@ -199,6 +211,10 @@ export class OrbitEngine {
       scheduleWork: (input) => this.scheduleWork(input),
       cancelScheduledWork: (id, generation) => this.cancelScheduledWork(id, generation),
       setFidelitySignal: (id, signalId, requirement) => this.#fidelityManager.setSignal(id, signalId, requirement, this.currentTime),
+    });
+    this.#encounterLifecycleManager = new EncounterLifecycleManager({
+      currentTime: () => this.currentTime,
+      schedulingStatus: () => this.#encounterSchedulingManager.status(),
     });
   }
 
@@ -324,7 +340,10 @@ export class OrbitEngine {
     effectiveFrom: SimulationInstant,
     options?: DependencyInvalidationOptions,
   ): InvalidationReport {
-    return this.#invalidationManager.invalidate(dependency, effectiveFrom, options);
+    const report = this.#invalidationManager.invalidate(dependency, effectiveFrom, options);
+    this.#encounterSchedulingManager.invalidateDependency(dependency, effectiveFrom);
+    this.#encounterLifecycleManager.invalidate(dependency, effectiveFrom);
+    return report;
   }
 
   invalidateFrom(
@@ -378,6 +397,41 @@ export class OrbitEngine {
     return this.#encounterSchedulingManager.status();
   }
 
+  registerEncounter(input: EncounterRegistrationInput): ReturnType<EncounterLifecycleManager["register"]> {
+    return this.#encounterLifecycleManager.register(input);
+  }
+
+  getEncounter(id: string): ReturnType<EncounterLifecycleManager["get"]> {
+    return this.#encounterLifecycleManager.get(id);
+  }
+
+  listUpcomingEncounters(input: EncounterUpcomingQuery): ReturnType<EncounterLifecycleManager["listUpcoming"]> {
+    return this.#encounterLifecycleManager.listUpcoming(input);
+  }
+
+  getEncounterCoverage(input: EncounterCoverageQuery = {}): EncounterCoverage {
+    return this.#encounterLifecycleManager.getCoverage(input);
+  }
+
+  getEncounterDiagnostics(id: string): EncounterRecordDiagnostic | undefined {
+    return this.#encounterLifecycleManager.getDiagnostics(id);
+  }
+
+  enqueueEncounterRebuild(inputs: readonly EncounterRegistrationInput[]): number {
+    return this.#encounterLifecycleManager.enqueueRebuild(inputs);
+  }
+
+  rebuildEncounters(maxItems = 64): EncounterRebuildResult {
+    return this.#encounterLifecycleManager.rebuild(maxItems);
+  }
+
+  encounterPerformanceDiagnostics(): EncounterPerformanceDiagnostics {
+    return this.#encounterLifecycleManager.performanceDiagnostics(
+      this.#encounterBroadPhaseIndex.diagnostics(),
+      this.#encounterSchedulingManager.status(),
+    );
+  }
+
   assessEncounterMutualCoupling(input: EncounterCouplingAssessmentInput): EncounterCouplingAssessment {
     return assessEncounterMutualCoupling(input);
   }
@@ -390,11 +444,15 @@ export class OrbitEngine {
   }
 
   coarseClosestApproach(input: CoarseClosestApproachInput): CoarseClosestApproachResult {
-    return solveCoarseClosestApproach(input);
+    const result = solveCoarseClosestApproach(input);
+    this.#encounterLifecycleManager.recordCoarseResult(result.decision, result.samples.length);
+    return result;
   }
 
   refineClosestApproach(input: RefinedClosestApproachInput): RefinedClosestApproachResult {
-    return refineClosestApproach(input);
+    const result = refineClosestApproach(input);
+    this.#encounterLifecycleManager.recordRefinementResult(result.evaluatedIntervals, result.iterations);
+    return result;
   }
 
   getFidelityStatus(id: ObjectId): FidelityStatus {

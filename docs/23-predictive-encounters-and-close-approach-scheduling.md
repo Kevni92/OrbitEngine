@@ -334,6 +334,10 @@ getEncounter(encounterId)
 listUpcomingEncounters({ objectId?, from, to, quality? })
 getEncounterCoverage(profile/domain?)
 getEncounterDiagnostics(encounterId)
+registerEncounter(record, dependencyRevisions?)
+enqueueEncounterRebuild(records)
+rebuildEncounters(maxItems?)
+encounterPerformanceDiagnostics()
 ```
 
 Results contain stable semantic records, revisions/quality and physical metrics. They do not expose BVH nodes, C++ pointers, cache addresses or mutable queue internals.

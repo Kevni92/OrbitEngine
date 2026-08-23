@@ -35,6 +35,7 @@ import {
   type ScheduledWorkRecord,
 } from "./scheduler.js";
 import type { DependencyRevision } from "./dependency.js";
+import { dependencyKey, dependencyRevisionIdentity, type DependencyInvalidationTarget } from "./dependency.js";
 
 const NEWTONIAN_GRAVITATIONAL_CONSTANT = 6.67430e-11;
 const DEFAULT_COUPLED_GROUP_LIMIT = 32;
@@ -45,6 +46,7 @@ export const EncounterSchedulingDiagnosticCode = Object.freeze({
   lateWork: "lateWork",
   groupLimitExceeded: "groupLimitExceeded",
   insufficientPhysicalData: "insufficientPhysicalData",
+  staleWork: "staleWork",
 } as const);
 
 export type EncounterSchedulingDiagnosticCode =
@@ -932,6 +934,50 @@ export class EncounterSchedulingManager {
       }
     }
     this.#fidelity.delete(schedule.signalId);
+  }
+
+  invalidateDependency(target: DependencyInvalidationTarget, effectiveFrom: SimulationInstant): void {
+    const dependency = dependencyRevisionIdentity(target);
+    const instant = normalizedInstant(effectiveFrom, "effectiveFrom");
+    for (const [key, state] of this.#maintenance) {
+      const dependencies = state.input.dependencyRevisions ?? [];
+      if (!dependencies.some((value) => dependencyKey(value) === dependencyKey(dependency) && value.revision !== dependency.revision)
+        || compareSimulationInstants(state.coverage.maintenanceInstant, instant) < 0) continue;
+      try {
+        this.#host.cancelScheduledWork(state.coverage.scheduledWorkId, state.coverage.scheduledGeneration);
+      } catch {
+        // Generic invalidation may already have retired the same queue item.
+      }
+      this.#maintenance.delete(key);
+      this.#diagnose({
+        code: EncounterSchedulingDiagnosticCode.staleWork,
+        message: "Encounter maintenance work was retired by a dependency revision",
+        instant,
+        domainId: state.coverage.domainId,
+      });
+    }
+    for (const [signalId, state] of this.#fidelity) {
+      const dependencies = state.input.dependencyRevisions ?? [];
+      if (!dependencies.some((value) => dependencyKey(value) === dependencyKey(dependency) && value.revision !== dependency.revision)
+        || !state.actions.some((action) => compareSimulationInstants(action.instant, instant) >= 0)) continue;
+      for (const action of state.actions) {
+        try {
+          this.#host.cancelScheduledWork(action.workId, action.generation);
+        } catch {
+          // Generic invalidation may already have retired the same queue item.
+        }
+      }
+      if (compareSimulationInstants(this.#host.currentTime(), state.schedule.promotionInstant) >= 0) {
+        this.#host.setFidelitySignal(state.actions[0]?.objectId ?? objectId(state.input.record.objectA), signalId, null);
+      }
+      this.#fidelity.delete(signalId);
+      this.#diagnose({
+        code: EncounterSchedulingDiagnosticCode.staleWork,
+        message: "Encounter fidelity/refinement work was retired by a dependency revision",
+        instant,
+        encounterId: state.schedule.encounterId,
+      });
+    }
   }
 
   status(): EncounterSchedulingStatus {
