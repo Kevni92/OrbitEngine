@@ -130,7 +130,9 @@ export async function oepParitySnapshot(engine: OrbitEngine): Promise<OepParityS
 
   const relative2 = engine.stateAt(id2, epoch);
   const relative3 = engine.stateAt(id3, epoch);
-  const [root2, root3] = engine.statesAt([id2, id3], epoch, ROOT_REFERENCE_FRAME_ID);
+  const roots = engine.statesAt([id2, id3], epoch, ROOT_REFERENCE_FRAME_ID);
+  const root2 = roots[0]!;
+  const root3 = roots[1]!;
   const sources = [dataset.sourceInfo(1), source2, source3];
 
   engine.registry().remove(id2);
@@ -233,7 +235,9 @@ export async function assertOepRuntime(engine: OrbitEngine): Promise<void> {
   const relative = engine.stateAt(id2, epoch);
   assertVector(relative.position, [10, 20, 30]);
   assertVector(relative.velocity, [1, 2, 3]);
-  const [root2, root3] = engine.statesAt([id2, id3], epoch, ROOT_REFERENCE_FRAME_ID);
+  const roots = engine.statesAt([id2, id3], epoch, ROOT_REFERENCE_FRAME_ID);
+  const root2 = roots[0]!;
+  const root3 = roots[1]!;
   assertVector(root2.position, [110, 20, 30]);
   assertVector(root2.velocity, [3, 2, 3]);
   assertVector(root3.position, [90, -20, -30]);
@@ -284,7 +288,7 @@ export async function assertOepRuntime(engine: OrbitEngine): Promise<void> {
   );
   const analytical: PropagationModel = Object.freeze({
     declaration: analyticalDeclaration,
-    evaluate: (target) => propagationState({ ...divergedState, epoch: target }),
+    evaluate: (target: ReturnType<typeof simulationInstant>) => propagationState({ ...divergedState, epoch: target }),
   });
   engine.bindMotionModel(id2, analytical);
   const afterDivergence = engine.stateAt(id2, simulationInstant(1));
