@@ -12,7 +12,7 @@ const PICK_DEPTH_EPSILON = 1e-7;
 const FALLBACK_MARKER_COLOR = 0x9aa7b5;
 
 const MARKER_VERTEX_SHADER = `
-uniform float uSize;
+attribute float markerSize;
 attribute vec3 color;
 varying vec3 vColor;
 
@@ -20,7 +20,7 @@ void main() {
   vColor = color;
   vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * modelViewPosition;
-  gl_PointSize = uSize;
+  gl_PointSize = markerSize;
 }
 `;
 
@@ -66,14 +66,12 @@ export class BatchedMarkerLayer {
   #objectIds: readonly ObjectId[] = [];
   #positions = new Float32Array();
   #colors = new Float32Array();
+  #sizes = new Float32Array();
 
   constructor(scene: THREE.Scene) {
     this.#scene = scene;
     const geometry = new THREE.BufferGeometry();
     const material = new THREE.ShaderMaterial({
-      uniforms: {
-        uSize: { value: MARKER_PIXEL_SIZE },
-      },
       vertexShader: MARKER_VERTEX_SHADER,
       fragmentShader: MARKER_FRAGMENT_SHADER,
       transparent: true,
@@ -96,6 +94,8 @@ export class BatchedMarkerLayer {
     this.#objectIds = Object.freeze(bodies.map((body) => body.definition.id));
     this.#positions = new Float32Array(this.#objectIds.length * 3);
     this.#colors = new Float32Array(this.#objectIds.length * 3);
+    this.#sizes = new Float32Array(this.#objectIds.length);
+    this.#sizes.fill(MARKER_PIXEL_SIZE);
     bodies.forEach((body, index) => {
       const objectId = body.definition.id;
       const offset = index * 3;
@@ -114,6 +114,7 @@ export class BatchedMarkerLayer {
     });
     this.#points.geometry.setAttribute("position", new THREE.BufferAttribute(this.#positions, 3));
     this.#points.geometry.setAttribute("color", new THREE.BufferAttribute(this.#colors, 3));
+    this.#points.geometry.setAttribute("markerSize", new THREE.BufferAttribute(this.#sizes, 1));
     this.#points.geometry.setDrawRange(0, this.#objectIds.length);
     this.#points.userData.objectIds = this.#objectIds;
     this.#points.visible = this.#objectIds.length > 0;
@@ -133,6 +134,21 @@ export class BatchedMarkerLayer {
     positions.needsUpdate = true;
   }
 
+  /** Updates visual body diameters without requiring marker membership or physics state to change. */
+  updateSizes(sizePixelsById: ReadonlyMap<ObjectId, number>): void {
+    const sizes = this.#points.geometry.getAttribute("markerSize");
+    if (!(sizes instanceof THREE.BufferAttribute)) return;
+    this.#objectIds.forEach((objectId, index) => {
+      const size = sizePixelsById.get(objectId);
+      if (size === undefined) return;
+      if (!Number.isFinite(size) || size < 0) {
+        throw new RangeError(`Marker size for ${objectId} must be finite and non-negative`);
+      }
+      sizes.setX(index, size);
+    });
+    sizes.needsUpdate = true;
+  }
+
   contains(objectId: ObjectId): boolean {
     return this.#objectIds.includes(objectId);
   }
@@ -145,10 +161,20 @@ export class BatchedMarkerLayer {
     return new THREE.Vector3(positions.getX(index), positions.getY(index), positions.getZ(index));
   }
 
+  sizeFor(objectId: ObjectId): number | undefined {
+    const index = this.#objectIds.indexOf(objectId);
+    if (index < 0) return undefined;
+    const sizes = this.#points.geometry.getAttribute("markerSize");
+    if (!(sizes instanceof THREE.BufferAttribute)) return undefined;
+    return sizes.getX(index);
+  }
+
   /**
-   * Marker hit testing is screen-space based because the rendered marker is a
-   * fixed-size point sprite. A world-space Raycaster Points threshold makes
-   * the invisible hit area explode in compact local systems.
+   * Marker hit testing keeps a bounded screen-space interaction footprint even
+   * when physical-mode rendering makes the visible body sub-pixel. A world-
+   * space Raycaster Points threshold would make the hit area explode in compact
+   * local systems, while tying picking to physical pixels would make navigation
+   * impractical for legitimate distant bodies.
    */
   pick(
     normalizedDeviceX: number,
@@ -228,6 +254,7 @@ export class BatchedMarkerLayer {
     this.#objectIds = [];
     this.#positions = new Float32Array();
     this.#colors = new Float32Array();
+    this.#sizes = new Float32Array();
   }
 }
 
