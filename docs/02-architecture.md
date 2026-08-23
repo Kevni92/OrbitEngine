@@ -2,16 +2,19 @@
 
 ## High-level structure
 
-OrbitEngine should be designed as a reusable library with strict boundaries between simulation, data ingestion, consuming applications, and game systems.
+OrbitEngine is designed with strict boundaries between authoritative simulation, data ingestion, optional reusable presentation, consuming applications, and game systems.
 
 ```text
-Game / domain layers                  Reference/demo applications
-(population, economy, stations,       (browser Solar-System demo etc.)
- ships, combat, resources)                       |
-                    \                           /
-                     \   stable public API     /
-                      \          |             /
-                         TypeScript public API
+Game / domain layers                    Reference/demo applications
+(population, economy, stations,         (browser Solar-System demo etc.)
+ ships, combat, resources)                         |
+                    \                             /
+                     \     stable public APIs    /
+                      \            |             /
+                       orbit-engine-three (optional)
+                         presentation / Three.js
+                                  |
+                         orbit-engine TypeScript API
                                   |
                          OrbitEngine facade
                                   |
@@ -33,6 +36,8 @@ versioned solar-system dataset
         |
 OrbitEngine registration/configuration
 ```
+
+Applications that do not need Three.js consume `orbit-engine` directly. The optional companion is downstream-only: `orbit-engine` and the portable core never depend on it.
 
 ## Proposed engine subsystems
 
@@ -75,15 +80,23 @@ Provides read-only derived trajectory analysis over authoritative moving-object 
 
 Planning never makes a trajectory authoritative. A selected plan enters simulation only through an explicit maneuver application transaction using the normal Force/Maneuver System.
 
+## Optional visualization companion
+
+[27 — Optional Reusable Three.js Visualization Package](27-optional-threejs-visualization-package.md) defines a separate public `orbit-engine-three` package downstream of the public simulation facade.
+
+It owns reusable renderer-neutral presentation derivation plus Three.js resources such as celestial surfaces, atmospheres, orbit paths, adaptive representation LOD, batched markers, picking and selection indicators. It consumes immutable snapshots or bounded public read APIs and never becomes a simulation subsystem.
+
+The companion does not own engine time, propagation, object lifecycle, fidelity, maneuvers, scene/camera/render-loop ownership, or game UI. Visual/adaptive radii, render origins, marker positions, shaders and selection state remain presentation values only.
+
 ## Reference/demo applications
 
-Reference applications are consumers of OrbitEngine, not engine subsystems.
+Reference applications are consumers of OrbitEngine, not authoritative engine subsystems.
 
-The canonical first reference application is the browser Solar-System demo defined by [16 — Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md). It lives in `apps/`, consumes the same public `orbit-engine` TypeScript package as an external application, explicitly exercises the WASM backend in a browser, and renders state with Three.js.
+The canonical first reference application is the browser Solar-System demo defined by [16 — Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md). It lives in `apps/`, consumes the public `orbit-engine` TypeScript package, explicitly exercises the WASM backend in a browser, and will use the public `orbit-engine-three` companion for reusable visualization under document 27.
 
-Reference applications may own UI, camera state, render scaling, labels, visual metadata, and application-specific scenarios. They must not own authoritative physical state or implement replacement orbital physics.
+Reference applications continue to own scenario/application data, UI, camera navigation, render loop, top-level scene/renderer, and application-specific presentation policy. They must not own authoritative physical state or implement replacement orbital physics.
 
-A reference application is allowed to reveal a missing public consumer capability. The fix belongs in the appropriate public/backend OrbitEngine contract rather than through an application-only import of package internals.
+A reference application is allowed to reveal a missing public consumer capability. Simulation deficiencies belong in the appropriate `orbit-engine` public/backend contract; generic reusable Three.js presentation deficiencies belong in `orbit-engine-three`; game/demo-specific UI remains application code.
 
 ## Separation rules
 
@@ -95,7 +108,8 @@ A reference application is allowed to reveal a missing public consumer capabilit
 6. Propagation model, fidelity, `ObjectType`, and reference-divergence status are separate concepts.
 7. Numerical force providers may depend on normalized deterministic engine data; arbitrary game logic is not executed as portable-core hot-loop physics implicitly.
 8. A game layer may attach arbitrary metadata to an OrbitEngine ID outside the engine.
-9. Reference/demo applications may attach presentation metadata to an OrbitEngine ID outside the engine, but Three.js/Vite/DOM/WebGL/render-space concepts must not leak into the engine package or portable core.
-10. Browser animation/render cadence must not become an authoritative physics tick; browser consumers request engine state at explicit simulation instants.
-11. Planner queries are derived/read-only; only explicit maneuver application may turn a selected plan into future authoritative physical work.
-12. Architectural changes require documentation updates in the same PR.
+9. `orbit-engine` and the portable core contain no Three.js/Vite/DOM/WebGL/render-space concepts. Those may exist only in the optional downstream companion or consuming application.
+10. `orbit-engine-three` may consume public simulation snapshots/state but must never advance engine time or treat rendering state as authoritative physics.
+11. Browser animation/render cadence must not become an authoritative physics tick; browser consumers request/prepare engine state at explicit simulation instants.
+12. Planner queries are derived/read-only; only explicit maneuver application may turn a selected plan into future authoritative physical work.
+13. Architectural changes require documentation updates in the same PR.

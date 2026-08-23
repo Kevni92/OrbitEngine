@@ -5,12 +5,12 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 ## Contents
 
 1. [Vision and Scope](01-vision-and-scope.md) — goals, boundaries, realism target, and non-goals.
-2. [Architecture](02-architecture.md) — major subsystems and separation between engine, data ingestion, and game layers.
+2. [Architecture](02-architecture.md) — major subsystems and separation between engine, data ingestion, presentation, and game layers.
 3. [Object Model and Interactions](03-object-model-and-interactions.md) — object/interaction summary and links to the canonical object contract.
 4. [Propagation, Fidelity, and Events](04-propagation-fidelity-and-events.md) — propagation/fidelity overview, encounters, events, and time warp.
 5. [Coordinates and Reference Frames](05-coordinates-and-reference-frames.md) — reference-frame overview and links to the canonical frame contract.
 6. [Solar-System Data](06-solar-system-data.md) — external astronomical data boundary and reproducible import strategy.
-7. [TypeScript, Native C++, and WebAssembly](07-typescript-native-wasm.md) — npm API and dual C++ backend strategy.
+7. [TypeScript, Native C++, and WebAssembly](07-typescript-native-wasm.md) — simulation npm API and dual C++ backend strategy.
 8. [Development Workflow](08-development-workflow.md) — mandatory issue/branch/PR/CI/merge workflow.
 9. [Glossary](09-glossary.md) — shared terminology.
 10. [Task Types and Agent Routing](10-task-types-and-agent-routing.md) — Architecture, Implementation, Spike, Codex refusal/confirmation rules, and escalation.
@@ -19,10 +19,10 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 13. [Physical Object and State Model](13-physical-object-and-state-model.md) — exact object identity/type contract, canonical Cartesian state, optional physical properties, divergence semantics, lifecycle, and backend representation.
 14. [Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md) — SSB/ICRS root, frame identity/graph, rigid-state transforms, quaternion convention, local/relative precision, surface attachment, lifecycle, caching, and backend contract.
 15. [Propagation Contract and Model Switching](15-propagation-contract-and-model-switching.md) — motion authority/segments, common state-at-time contract, model taxonomy, permanent divergence, safe switching, fidelity boundary, forces/mass, caching, and backend ownership.
-16. [Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md) — private Vite/Three.js reference application, browser-WASM loading contract, engine-driven animation, render-space precision, scenario data, CI, and staged demo implementation.
+16. [Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md) — private browser reference application, browser-WASM loading contract, engine-driven animation, render-space precision, scenario data, CI, and staged demo implementation.
 17. [Adaptive Demo Rendering and Runtime Populations](17-adaptive-demo-rendering-and-runtime-populations.md) — runtime synthetic asteroid overlays, camera-aware screen-space sizing, separation-aware enhancement, hierarchical LOD, and batched large-population rendering.
 18. [Global Solar-System Context Presentation](18-global-solar-system-context-presentation.md) — persistent major-body context across local focus, marker floors, and same-frame renderer-state invariants.
-19. [Celestial Appearance, Atmospheres, and Stellar Lighting](19-celestial-appearance-atmospheres-and-lighting.md) — application-owned surface/atmosphere appearance data, optical derivation, stellar illumination, shader semantics, lighting modes, provenance, and LOD integration.
+19. [Celestial Appearance, Atmospheres, and Stellar Lighting](19-celestial-appearance-atmospheres-and-lighting.md) — presentation-owned surface/atmosphere appearance data, optical derivation, stellar illumination, shader semantics, lighting modes, provenance, and LOD integration.
 20. [Reference Ephemeris Data and Pipeline](20-reference-ephemeris-data-and-pipeline.md) — DE441 source strategy, JPL/NAIF offline acquisition, OrbitEngine Ephemeris Pack (OEP), source-center/barycenter semantics, bounded reference evaluation, packaging, versioning, and validation.
 21. [Numerical Propagation, Force Models, and Coupled N-Body Integration](21-numerical-propagation-force-models-and-coupled-nbody.md) — DOP853 integration, error control, deterministic forces/gravity sources, numerical caches, coupled local systems, mass authority, frame dynamics, and backend parity.
 22. [Event-Driven Advancement and Fidelity Management](22-event-driven-advancement-and-fidelity-management.md) — exact mutable time, deterministic scheduled work, atomic advancement transactions, semantic fidelity requirements, promotion/demotion, invalidation, time warp, and parity.
@@ -30,6 +30,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 24. [Collision Policy, Continuous Detection, and Physical Response](24-collision-policy-detection-and-response.md) — explicit collision relevance/geometry, continuous sphere contact, exact records, detect-only or frictionless impulse response, simultaneous-contact limits and invalidation.
 25. [Active Spacecraft Thrust, Mass Flow, and Maneuver Execution](25-active-spacecraft-thrust-mass-flow-and-maneuvers.md) — exact impulses, bounded finite-thrust stages, frame/body direction, prescribed attitude, integrated physical mass flow, maneuver editing, Fidelity handoff and parity.
 26. [Trajectory Planning, Transfers, Rendezvous, and Intercepts](26-trajectory-planning-transfers-rendezvous-and-intercepts.md) — read-only zero-revolution Lambert planning, moving targets, explicit central-body/frame assumptions, bounded search, stale-plan validation, maneuver application and numerical analysis.
+27. [Optional Reusable Three.js Visualization Package](27-optional-threejs-visualization-package.md) — separate `orbit-engine-three` package, snapshot-driven rendering, semantic appearance/lighting, render-space precision, LOD/batching, resource ownership, demo migration, packaging and CI.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -55,11 +56,12 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - Canonical dynamic translational handoff state is Cartesian position/velocity at an exact epoch in a defined frame.
 - The canonical root is SSB-centered and ICRS/ICRF-aligned; local/reference-frame state is preserved so precision-sensitive work is not forced through giant root coordinates.
 - Frame transforms are geometric and same-epoch; propagation changes time, frame transforms do not.
-- Public behavior is exposed through TypeScript even when calculations execute in C++.
+- Public simulation behavior is exposed through TypeScript even when calculations execute in C++.
 - The portable C++ core must not depend on Node.js or Emscripten APIs.
 - Native and WASM backends must preserve equivalent public semantics.
-- Browser/reference applications consume the public package from outside the engine boundary; rendering frameworks never become engine dependencies or authoritative physics state.
-- Celestial composition, atmosphere appearance, optical derivation, stellar-rendering parameters, and inspection lighting remain application/dataset concerns unless a separately designed physical engine capability explicitly requires a subset.
+- `orbit-engine` and the portable core remain free of Three.js/WebGL/DOM/rendering dependencies. Optional reusable rendering lives in the separate `orbit-engine-three` companion package defined by document 27.
+- `orbit-engine-three` consumes authoritative snapshots/public read APIs and is never physical authority; visual size, camera, selection, shader state and render cadence cannot alter simulation semantics.
+- Appearance/atmosphere/stellar-rendering metadata remains presentation/dataset data rather than `orbit-engine` physical state unless a separately designed physical engine capability explicitly requires equivalent physical information.
 - Production reference ephemerides are pinned, offline-normalized scenario data evaluated by the shared portable core; live astronomy services and mutable external kernels never define normal runtime state.
 - Every issue must declare exactly one authoritative task type before execution.
 
