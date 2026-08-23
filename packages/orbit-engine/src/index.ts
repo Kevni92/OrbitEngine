@@ -100,6 +100,14 @@ import {
   type EncounterUpcomingQuery,
 } from "./encounter-lifecycle.js";
 import {
+  CollisionPolicyManager,
+  type CollisionPair,
+  type CollisionPairFactsInput,
+  type CollisionPolicy,
+  type CollisionPolicyInput,
+  type CollisionPolicyResolution,
+} from "./collision.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -125,6 +133,7 @@ export * from "./broad-phase.js";
 export * from "./closest-approach.js";
 export * from "./encounter-scheduling.js";
 export * from "./encounter-lifecycle.js";
+export * from "./collision.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -190,6 +199,7 @@ export class OrbitEngine {
   readonly #encounterBroadPhaseIndex: EncounterBroadPhaseIndex;
   readonly #encounterSchedulingManager: EncounterSchedulingManager;
   readonly #encounterLifecycleManager: EncounterLifecycleManager;
+  readonly #collisionPolicyManager: CollisionPolicyManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -203,6 +213,12 @@ export class OrbitEngine {
       this.#invalidationManager.invalidate(dependency, this.currentTime);
       this.#encounterSchedulingManager.invalidateDependency(dependency, this.currentTime);
       this.#encounterLifecycleManager.invalidate(dependency, this.currentTime);
+    });
+    this.#collisionPolicyManager = new CollisionPolicyManager(undefined, (_previous, next) => {
+      this.#invalidationManager.invalidate(
+        { kind: "interactionPolicy", id: "collision-policy", revision: next.revision },
+        this.currentTime,
+      );
     });
     this.#encounterDomainRegistry = new EncounterDomainRegistry();
     this.#encounterBroadPhaseIndex = new EncounterBroadPhaseIndex();
@@ -371,6 +387,21 @@ export class OrbitEngine {
     facts?: EncounterPairFactsInput,
   ): EncounterPolicyResolution {
     return this.#encounterPolicyManager.resolve(pair.objectA, pair.objectB, facts);
+  }
+
+  getCollisionPolicy(): CollisionPolicy {
+    return this.#collisionPolicyManager.policy;
+  }
+
+  configureCollisionPolicy(input: CollisionPolicyInput): CollisionPolicy {
+    return this.#collisionPolicyManager.setPolicy(input);
+  }
+
+  resolveCollisionPolicy(
+    pair: CollisionPair,
+    facts?: CollisionPairFactsInput,
+  ): CollisionPolicyResolution {
+    return this.#collisionPolicyManager.resolve(pair.objectA, pair.objectB, facts);
   }
 
   encounterDomains(): EncounterDomainRegistry {
