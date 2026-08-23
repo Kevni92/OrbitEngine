@@ -24,6 +24,7 @@ import { assertClosestApproachSolvers } from "../shared/closest-approach.js";
 import { assertEncounterScheduling } from "../shared/encounter-scheduling.js";
 import { assertEncounterLifecycle } from "../shared/encounter-lifecycle.js";
 import { assertCollisionPrimitives } from "../shared/collision.js";
+import { assertCollisionDetection } from "../shared/collision-detection.js";
 
 test("real native backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "native" });
@@ -59,4 +60,5 @@ test("real native backend initializes and reports the shared core health", async
   await assertEncounterScheduling(await OrbitEngine.create({ backend: "native" }));
   await assertEncounterLifecycle(await OrbitEngine.create({ backend: "native" }));
   await assertCollisionPrimitives(await OrbitEngine.create({ backend: "native" }));
+  await assertCollisionDetection(await OrbitEngine.create({ backend: "native" }));
 });

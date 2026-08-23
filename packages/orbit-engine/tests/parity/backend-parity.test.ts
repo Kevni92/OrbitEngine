@@ -23,6 +23,7 @@ import { assertClosestApproachSolvers } from "../shared/closest-approach.js";
 import { assertEncounterScheduling } from "../shared/encounter-scheduling.js";
 import { assertEncounterLifecycle } from "../shared/encounter-lifecycle.js";
 import { assertCollisionPrimitives } from "../shared/collision.js";
+import { assertCollisionDetection } from "../shared/collision-detection.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -93,5 +94,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`collision policy, shape and contact primitives have parity on ${name}`, async () => {
     await assertCollisionPrimitives(await OrbitEngine.create({ backend: name }));
+  });
+  test(`continuous collision detection has parity on ${name}`, async () => {
+    await assertCollisionDetection(await OrbitEngine.create({ backend: name }));
   });
 }
