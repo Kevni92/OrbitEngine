@@ -260,6 +260,24 @@ If either object was `followingReference`, a state-changing response marks it pe
 
 Any failure to validate both successor authorities, masses, frames, dependencies or continuity rolls back the complete collision timestamp transaction. One object is never bounced while the other remains pre-collision.
 
+The public TypeScript response surface is explicit and callback-free:
+
+```ts
+engine.resolveCollisionVelocityResponse({ contact, profile, massA, massB })
+engine.applyCollisionResponseAtomically({
+  contact,
+  profile,
+  massA,
+  massB,
+  referenceStatusA,
+  referenceStatusB,
+  successorValidation,
+})
+engine.collisionContactSuppression()
+```
+
+The first operation computes a response outcome without mutating caller-owned state. The atomic operation returns either `committed` post-contact states for both objects or `rolledBack` pre-contact states for both objects. `detectOnly` does not require masses and returns unchanged states. The suppression manager canonicalizes object pairs, releases them only after the configured hysteresis distance, and invalidates a record when the supplied motion-dependency revision digest changes.
+
 ## Lifecycle boundary
 
 A collision does not automatically remove, retire, merge, replace, fragment or create objects in v1.
