@@ -21,6 +21,7 @@ import { assertEncounterPrimitives } from "../shared/encounter.js";
 import { assertBroadPhasePrimitives } from "../shared/broad-phase.js";
 import { assertClosestApproachSolvers } from "../shared/closest-approach.js";
 import { assertEncounterScheduling } from "../shared/encounter-scheduling.js";
+import { assertEncounterLifecycle } from "../shared/encounter-lifecycle.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -85,5 +86,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`encounter scheduling and coupling have parity on ${name}`, async () => {
     await assertEncounterScheduling(await OrbitEngine.create({ backend: name }));
+  });
+  test(`encounter lifecycle, invalidation and scaling have parity on ${name}`, async () => {
+    await assertEncounterLifecycle(await OrbitEngine.create({ backend: name }));
   });
 }

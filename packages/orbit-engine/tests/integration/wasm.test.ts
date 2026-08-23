@@ -22,6 +22,7 @@ import { assertEncounterPrimitives } from "../shared/encounter.js";
 import { assertBroadPhasePrimitives } from "../shared/broad-phase.js";
 import { assertClosestApproachSolvers } from "../shared/closest-approach.js";
 import { assertEncounterScheduling } from "../shared/encounter-scheduling.js";
+import { assertEncounterLifecycle } from "../shared/encounter-lifecycle.js";
 
 test("real WASM backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "wasm" });
@@ -55,4 +56,5 @@ test("real WASM backend initializes and reports the shared core health", async (
   await assertBroadPhasePrimitives(await OrbitEngine.create({ backend: "wasm" }));
   await assertClosestApproachSolvers(await OrbitEngine.create({ backend: "wasm" }));
   await assertEncounterScheduling(await OrbitEngine.create({ backend: "wasm" }));
+  await assertEncounterLifecycle(await OrbitEngine.create({ backend: "wasm" }));
 });
