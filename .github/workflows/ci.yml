@@ -34,6 +34,26 @@ jobs:
       - run: pnpm build:ts
       - run: pnpm test:ts
 
+  oep-importer:
+    name: OEP importer + CSPICE oracle
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/oep-importer/requirements-spice.txt
+      - run: python -m pip install -r tools/oep-importer/requirements-spice.txt
+      - run: pnpm test:oep-importer
+      - run: pnpm test:oep-importer:spice
+
   portable-cpp:
     name: Portable C++ (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -76,6 +96,7 @@ jobs:
       - run: pnpm build:ts
       - run: pnpm build:native
       - run: pnpm test:native
+      - run: pnpm test:oep-importer:runtime:native
       - uses: actions/upload-artifact@v4
         if: matrix.node == 22
         with:
@@ -106,6 +127,7 @@ jobs:
       - run: pnpm build:ts
       - run: pnpm build:wasm
       - run: pnpm test:wasm
+      - run: pnpm test:oep-importer:runtime:wasm
 
   browser-wasm-smoke:
     name: Browser WASM consumer smoke
