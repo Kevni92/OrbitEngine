@@ -47,6 +47,7 @@ interface BrowserRenderBodyDiagnostics {
   readonly inViewport: boolean;
   readonly ndcX: number;
   readonly ndcY: number;
+  readonly markerSizePixels?: number;
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
   readonly physicalIrradianceWattsPerSquareMeter?: number;
@@ -502,6 +503,7 @@ async function bootstrap(): Promise<void> {
           inViewport: diagnostics?.inViewport ?? false,
           ndcX: diagnostics?.ndcX ?? 0,
           ndcY: diagnostics?.ndcY ?? 0,
+          markerSizePixels: diagnostics?.markerSizePixels,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
           surfaceReflectanceSource: diagnostics?.surfaceReflectanceSource,
           physicalIrradianceWattsPerSquareMeter: diagnostics?.physicalIrradianceWattsPerSquareMeter,
