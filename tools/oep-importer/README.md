@@ -11,7 +11,7 @@ The importer reads binary DAF/SPK files directly and supports the forms that map
 
 Both `LTL-IEEE` and `BIG-IEEE` DAF encodings are decoded explicitly. Unsupported SPK types fail with `unsupportedSpkType`; they are never silently sampled or fitted. Non-direct fitting policy belongs to Spike #125.
 
-Source-family labels such as `de441`, planetary/satellite SPK, and Pluto-system SPK are provenance only. Target, center, frame, type, coverage and DAF addresses always come from the actual segment descriptor.
+Source-family labels such as `de441`, planetary/satellite SPK, and Pluto-system SPK are provenance only. Target, center, frame, type, coverage and DAF addresses always come from the actual segment descriptor. Large SPKs are inspected and streamed from disk; they are never loaded into one JavaScript `Buffer`.
 
 ## Reproducible acquisition records
 
@@ -63,7 +63,7 @@ Manifest `sourceRecords` retain source target/center/frame/type/coverage, source
 
 ## CSPICE validation
 
-`requirements-spice.txt` pins the optional tooling dependency. With `--spice-python`, import queries geometric states through SpiceyPy/CSPICE and compares them with emitted OEP series at deterministic epochs: source-near start/end, J2000 when covered, fixed and deterministic seeded interior points, record boundaries/boundary-adjacent points, and plan-supplied named epochs such as modern-scenario and decades-away checks.
+`requirements-spice.txt` pins the optional tooling dependency. With `--spice-python`, import queries geometric states through SpiceyPy/CSPICE and compares them with emitted OEP series at deterministic epochs: source-near start/end, J2000 when covered, fixed and deterministic seeded interior points, representable points after record boundaries, and plan-supplied named epochs such as modern-scenario and decades-away checks. Exact OrbitEngine nanosecond instants are preserved when the absolute TDB value is passed to the oracle; the adapter applies the sub-ULP correction that binary64 CSPICE cannot represent at long horizons.
 
 The default direct-normalization ceiling is `1e-3 m` position and `1e-6 m/s` velocity. Import aborts if either ceiling is exceeded. Astronomical source uncertainty is recorded separately and does not relax representation correctness implicitly.
 
@@ -77,6 +77,8 @@ node tools/oep-importer/cli.mjs import path/to/import-plan.json .cache/orbit-eng
 
 python3 -m pip install -r tools/oep-importer/requirements-spice.txt
 node tools/oep-importer/cli.mjs import path/to/import-plan.json .cache/orbit-engine-ephemeris out/oep --spice-python python3
+node tools/oep-importer/cli.mjs import path/to/import-plan.json .cache/orbit-engine-ephemeris out/oep --spice-python python3 --spice-kernel path/to/independent-validation-kernel.bsp
+node tools/oep-importer/generate-eclipse-oracle.mjs path/to/import-plan.json path/to/kernel.bsp path/to/naif0012.tls out/eclipse-oracle.json python3
 ```
 
 The `import` command never performs network access; acquisition is a separate explicit step.
@@ -86,5 +88,6 @@ The `import` command never performs network access; acquisition is a separate ex
 - `importer.test.mjs`: deterministic DAF parser, checksum, Type 2/3, SI/frame/time normalization, graph, error-budget and output-determinism tests.
 - `spice-integration.test.mjs`: creates real Type 2/3 SPKs with CSPICE and validates direct OEP output against geometric `spkgeo` states for DE441-style, satellite-system and Pluto-system fixtures.
 - `runtime-compat.mjs`: passes importer output through the public #123 native/WASM OEP APIs.
+- `production-pack.test.mjs`: loads the committed #126 production manifest/shards through the public WASM API and checks the offline eclipse oracle and effective validity.
 
-Network-dependent production downloads are intentionally not routine CI inputs. Production source pins and released OEP assets are owned by follow-up dataset issue #126; this issue provides the reproducible acquisition/direct-conversion mechanism.
+Network-dependent production downloads are intentionally not routine CI inputs. Production source pins and released OEP assets are owned by dataset issue #126; this importer remains a tooling-only dependency and is not used by runtime consumers.
