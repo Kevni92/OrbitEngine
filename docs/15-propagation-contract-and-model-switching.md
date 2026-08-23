@@ -10,7 +10,9 @@ It builds on:
 - [13 — Physical Object and State Model](13-physical-object-and-state-model.md);
 - [14 — Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md).
 
-It does not implement a Kepler solver, numerical integrator, ephemeris importer, automatic fidelity manager, encounter/collision system, trajectory optimizer, or game propulsion model.
+The concrete production source contract for `referenceEphemeris` is defined by [20 — Reference Ephemeris Data and Pipeline](20-reference-ephemeris-data-and-pipeline.md).
+
+It does not implement a Kepler solver, numerical integrator, automatic fidelity manager, encounter/collision system, trajectory optimizer, or game propulsion model. Ephemeris acquisition/import and pack generation remain offline tooling concerns governed by document 20; this document defines how the resulting normalized source participates in motion authority.
 
 ## Decisions at a glance
 
@@ -19,6 +21,9 @@ It does not implement a Kepler solver, numerical integrator, ephemeris importer,
 - Every model answers the same pure question: produce a canonical geometric `CartesianState` at an exact requested `SimulationInstant` in the model's declared propagation frame.
 - Propagation changes time; reference-frame transformation does not. A state-at-time query evaluates motion first and performs any requested frame transform second, at the same exact target instant.
 - Initial model kinds are `referenceEphemeris`, `twoBodyAnalytical`, `numerical`, and `attached`. `ObjectType` does not select a model.
+- Production `referenceEphemeris` sources use immutable versioned OrbitEngine Ephemeris Pack (OEP) data from document 20; runtime does not contact JPL/NAIF/Horizons or require CSPICE.
+- A pack-backed reference source is bounded by the exact intersection of target-series and source-center/frame dependency validity; it never silently extrapolates or falls back to another model.
+- Ephemeris source-center hierarchy is independent from physical `centralBody` hierarchy and may use non-selectable source-center frame providers such as planetary-system barycenters.
 - Active thrust is numerical propagation plus deterministic force/mass inputs, not a game-specific propagator kind.
 - Orbital elements, spline coefficients, integrator histories, numerical checkpoints, and ephemeris handles are model-specific derived/configuration data. Canonical Cartesian state remains the universal handoff representation.
 - `followingReference -> diverged` is an atomic, one-way runtime transition. The original ephemeris can remain as provenance/history but never silently regains future authority.
@@ -29,7 +34,7 @@ It does not implement a Kepler solver, numerical integrator, ephemeris importer,
 - Time-varying mass is one explicit physical-property authority queried by propagation; a numerical integrator must not maintain a hidden second spacecraft-mass truth.
 - State-affecting changes at `T` invalidate future propagated predictions/checkpoints from `T` onward while earlier history may remain valid.
 - The combined object-motion/frame dependency graph is acyclic.
-- The portable C++ core owns authoritative motion segments, model execution contracts, switching/divergence transactions, force ordering, and propagation cache revisions. TypeScript exposes stable high-level operations and does not maintain a second authoritative motion state machine.
+- The portable C++ core owns authoritative motion segments, model execution contracts, switching/divergence transactions, OEP reference evaluation, force ordering, and propagation cache revisions. TypeScript exposes stable high-level operations and does not maintain a second authoritative motion state machine.
 
 ## Motion authority and exact-time segments
 
@@ -121,17 +126,19 @@ Each installed model/configuration declares at least:
 
 Registration/switching validates those requirements before a model becomes authoritative.
 
+For OEP-backed reference sources, validity includes all source-center/frame dependencies from document 20. Registration must not advertise a wider segment than the loaded pack can actually resolve.
+
 ### Direction capability
 
 The common contract supports explicit direction capabilities rather than assuming every model can propagate both ways:
 
 - `forwardOnly` — targets must be at or after the model anchor/start according to its contract;
-- `bidirectional` — either temporal direction is supported inside the validity domain;
+- `bidirectional` — either temporal direction is supported inside its documented validity domain;
 - `bounded` — querying is supported only inside an explicitly declared interval, with direction rules defined by the model.
 
 Expected initial behavior:
 
-- reference ephemeris: normally bounded and bidirectional inside source validity;
+- reference ephemeris: bounded and bidirectional inside the selected source's effective validity;
 - two-body analytical: bidirectional inside its documented validity/error domain;
 - attached: queryable wherever all parent/frame/orientation dependencies are valid;
 - numerical: backward evaluation is supported only when the concrete integrator, force inputs, discontinuity history, and mass inputs explicitly guarantee it. It is never assumed automatically.
@@ -147,6 +154,7 @@ State-at-time evaluation must distinguish at least:
 - dependency cycle;
 - missing required physical property;
 - missing/out-of-range ephemeris/orientation/force/mass source;
+- invalid/corrupt/unloaded ephemeris pack or missing required shard/source node;
 - numerical non-convergence or step failure;
 - model representation invalid for the requested state/domain;
 - generated non-finite/invalid canonical state.
@@ -173,10 +181,13 @@ Every model states which frame dynamics it mathematically supports.
 
 Initial expectations:
 
-- an external reference source declares the frame in which its source state is normalized and produces canonical state in that frame;
+- an external/reference source declares the frame in which its source state is normalized and produces canonical state in that frame;
+- an OEP source may use a pack-backed non-rotating source-center frame from document 20 when JPL source geometry is naturally relative to a planetary-system barycenter or other non-physical source node;
 - a two-body analytical model normally evolves **relative state** in a declared body/central-object-centered non-rotating frame, with explicit central-body state/`mu` dependencies;
 - a generic numerical force integration in the SSB/ICRS root can use ordinary inertial equations directly;
 - `attached` motion is constant/configured relative to its declared non-root frame and relies on the frame system to generate outward translational/rotational motion.
+
+The physical `centralBody` relation never rewrites an ephemeris source center implicitly. If an importer changes center, it is an explicit normalization operation validated under document 20.
 
 ### Numerical integration in non-inertial frames
 
@@ -212,9 +223,42 @@ The taxonomy may gain later explicitly architected categories such as semi-analy
 
 ### Reference ephemeris
 
-Reference ephemeris configuration owns only source/model metadata, such as a normalized source handle, validity interval, source revision/provenance, and output frame.
+`referenceEphemeris` is the model kind for a selected immutable external/reference trajectory while it remains authoritative.
 
-The source returns the same canonical geometric Cartesian state contract. Source-specific Chebyshev coefficients, kernel records, tables, or interpolation caches are not public physical state.
+The production source implementation is the OrbitEngine Ephemeris Pack defined by document 20. Reference model configuration owns source/model metadata and handles only, conceptually including:
+
+```text
+pack/dataset identity + revision
+source series/node binding
+propagation frame
+exact effective validity
+normalization/error metadata handle
+```
+
+Chebyshev coefficients, source-center graph records, binary shard offsets, import-kernel details, and hot-record caches remain source-private implementation/data and are not canonical public object state.
+
+An OEP-backed evaluation:
+
+1. verifies the exact target instant is inside effective validity;
+2. resolves required source-center frame/provider dependencies at the same instant;
+3. evaluates the applicable normalized Chebyshev record in portable C++;
+4. returns finite SI geometric state in the declared propagation frame with exact target epoch;
+5. only then participates in ordinary output-frame transformation.
+
+The model never performs any of the following implicitly:
+
+- live source/network access;
+- source-version refresh;
+- last-record extrapolation;
+- clamp-to-validity behavior;
+- automatic analytical fallback;
+- date-dependent DE440/DE441 source switching.
+
+A request outside validity fails. Broader scenario coverage requires an explicit adjacent motion segment/source/model under the normal switching/continuity contract.
+
+Reference-source quality means reproduction of the selected source within the pack's normalization error budget. Source trajectory uncertainty is separate provenance and must not be represented as a tighter model guarantee merely because coefficient evaluation is numerically precise.
+
+Source-specific coefficients, kernel records, tables, or interpolation caches are not public physical state.
 
 ### Two-body analytical
 
@@ -265,6 +309,7 @@ Examples that do **not** replace canonical physical state include:
 
 - orbital elements;
 - ephemeris source handles/record indexes;
+- OEP source-node/record indexes and Chebyshev coefficients;
 - interpolation polynomials;
 - perturbation coefficients;
 - force-provider work buffers;
@@ -273,7 +318,7 @@ Examples that do **not** replace canonical physical state include:
 - integration checkpoints;
 - cached state-at-time results.
 
-Such data is namespaced to the model/segment revision and can be discarded/rebuilt without changing `ObjectId` or the physical meaning of the canonical state.
+Such data is namespaced to the model/segment/source revision and can be discarded/rebuilt without changing `ObjectId` or the physical meaning of the canonical state.
 
 ### Attitude is a separate authority
 
@@ -313,6 +358,8 @@ If constructing/validating the replacement model fails, the transition operation
 
 Once committed, normal runtime never changes `diverged` back to `followingReference`. Later use of `twoBodyAnalytical` or another cheap model continues from the new simulated trajectory and does not restore source-ephemeris authority.
 
+Changing the loaded dataset version is likewise not a back door for restoring the reference future of a diverged object. Dataset substitution affects only objects/segments that are explicitly rebound under allowed scenario/history semantics.
+
 ## Safe model switching
 
 ### Atomic switch transaction
@@ -324,7 +371,7 @@ A switch from model `A` to candidate model `B` at exact instant `T` proceeds con
 3. same-epoch transform the handoff into a mutually supported/candidate propagation frame;
 4. construct/configure candidate `B` from that handoff and explicit dependencies;
 5. evaluate `B` at exactly `T`;
-6. compare candidate state with the handoff using explicit switch tolerances;
+6. compare candidate state with the handoff using explicit position/velocity absolute+relative `SwitchTolerance`;
 7. perform any requested representability/fidelity acceptance check;
 8. if all checks pass, close `A`'s segment at `T` and install `B` starting at `T` atomically;
 9. invalidate old future caches/predictions from `T` onward.
@@ -470,6 +517,8 @@ A propagated-state cache entry is keyed at minimum by:
 - model configuration revision;
 - relevant dependency/source/property revisions.
 
+For pack-backed reference state, source revisions include the OEP dataset/manifest identity and all source-center series/shard revisions required by the query.
+
 The native cached result is the model's canonical propagation-frame state. Frame-transformed output caching belongs to the frame subsystem and includes the corresponding frame dependency revisions.
 
 ### Invalidation from exact time
@@ -495,6 +544,8 @@ A new segment starts from its validated handoff/anchor and builds its own derive
 
 State-at-time queries may target many arbitrary instants. OrbitEngine does not require unbounded retention of every query. Caches/checkpoint policies must be bounded and performance-driven while preserving the exact revision/invalidation semantics above.
 
+OEP evaluators may keep bounded hot-record/source-node caches. Pack bytes and decoded immutable indices are source data, not propagated-state cache entries.
+
 ## Dependency graph and state resolution
 
 Every model/provider declares its structural dependencies before installation. Dependencies may include:
@@ -502,16 +553,18 @@ Every model/provider declares its structural dependencies before installation. D
 - central/gravitating `ObjectId` values;
 - `ReferenceFrameId` values;
 - ephemeris/orientation/force sources;
+- OEP pack/source-node/frame-provider dependencies;
 - physical properties such as `mu`/mass;
 - attitude/mass authorities.
 
-Together with document 14's frame dependencies these form one acyclic motion/frame dependency graph.
+Together with document 14's frame dependencies these form one acyclic motion/frame dependency graph. Document 20 additionally requires the dataset-local source-center graph itself to be acyclic.
 
 Examples:
 
 - valid: satellite two-body model depends on Earth state/`mu`; Earth root motion does not depend on that satellite;
+- valid: Europa reference series and Jupiter center reference series share a pack-backed Jupiter-system-barycenter frame provider whose translation resolves from DE441;
 - invalid: Earth-centered frame depends on Earth's state while Earth's own authoritative motion model depends on that same Earth-centered frame;
-- invalid: object A state resolver recursively depends on B while B depends back on A through active model/frame providers without a separately defined jointly integrated-system authority.
+- invalid: object A state resolver recursively depends on B while B depends back to A through active model/frame providers without a separately defined jointly integrated-system authority.
 
 Registration/switching rejects dependency cycles atomically. State-at-time resolution must detect/report cycles rather than recursing indefinitely.
 
@@ -523,16 +576,19 @@ A future jointly integrated multi-object dynamic system may own a set of objects
 
 Normal consumers interact with high-level engine operations such as:
 
-- register/configure an object's initial motion authority;
+- load/register immutable OEP bytes/manifest metadata through a browser-safe public API;
+- register/configure an object's initial motion authority and pack/source binding;
 - query object state at exact `SimulationInstant`, optionally in a requested output frame;
 - request an explicit model switch/configuration change at exact simulation time;
 - apply an engine-level physical impulse/state change;
 - configure deterministic maneuver/force/mass definitions through supported physical APIs;
-- inspect current model kind/reference-divergence/provenance metadata where intentionally exposed.
+- inspect current model kind/reference-divergence/dataset/provenance metadata where intentionally exposed.
 
 TypeScript exposes named `PropagationModelKind` values and backend-neutral configuration/value shapes. It owns public validation and error normalization.
 
-It does not expose raw C++ propagator pointers/vtables, integrator work buffers, cache handles, Emscripten objects, or a second mutable authoritative segment graph.
+Dataset byte acquisition is consumer-owned. The engine accepts immutable bytes/data; it does not embed Node filesystem or browser network policy into the portable core.
+
+TypeScript does not expose raw C++ propagator pointers/vtables, OEP coefficient pointers, integrator work buffers, cache handles, Emscripten objects, or a second mutable authoritative segment graph.
 
 ### Portable C++ core
 
@@ -540,6 +596,8 @@ The portable core owns:
 
 - authoritative motion segments and active segment selection;
 - propagation-model execution interfaces;
+- OEP manifest/binary validation needed by runtime and immutable pack/source handles;
+- deterministic Chebyshev/source-center reference evaluation;
 - exact model-kind/discrete state;
 - dependency validation with the frame/object systems;
 - reference-divergence transaction;
@@ -547,6 +605,8 @@ The portable core owns:
 - deterministic force-provider execution order;
 - propagation cache/checkpoint revisions/invalidation;
 - authoritative model evaluation errors.
+
+CSPICE/source kernel acquisition and conversion do not belong here.
 
 ### Native/WASM transfer
 
@@ -556,26 +616,28 @@ Adapters preserve:
 - exact `SimulationInstant`/`Duration` fields;
 - stable compact model-kind codes;
 - exact segment/switch/discrete outcome semantics;
+- OEP dataset/source handle identity and validated byte-transfer semantics;
 - f64 canonical state/configuration/tolerance values;
 - explicit optional/presence fields.
 
-High-volume state-at-time queries should be batch-oriented, especially for common target epochs, so the portable core can reuse dependencies/frame evaluations efficiently.
+High-volume state-at-time queries should be batch-oriented, especially for common target epochs, so the portable core can reuse source-center dependencies/frame evaluations efficiently.
 
-Native and WASM must not implement different propagation state machines or separate numerical semantics at the adapter level.
+Native and WASM must not implement different propagation state machines, different OEP interpolation rules, or separate numerical semantics at the adapter level.
 
 ## Determinism and partition independence
 
-For the same initial normalized dataset, ordered events/external commands, model configurations, dependencies, and compiler-supported numerical contract:
+For the same initial normalized dataset, OEP bytes/version, ordered events/external commands, model configurations, dependencies, and compiler-supported numerical contract:
 
-- active segment/model selection and switch success/failure are exact deterministic discrete outcomes;
+- active segment/model/source selection and switch success/failure are exact deterministic discrete outcomes;
+- OEP source/record selection is deterministic;
 - force providers execute in stable configured order;
 - event timestamps/segment boundaries use exact `SimulationInstant` values;
-- floating physical results satisfy model-specific documented tolerances;
+- floating physical results satisfy model-specific/source-specific documented tolerances;
 - native/WASM parity follows document 12's tolerance policy rather than demanding universal bit identity.
 
 Public/UI call partitioning must not define a different physical model. With no additional state-changing commands between `A` and `B`, one request to advance/query across the interval versus caller partitioning must obey the same event/model semantics and agree within the owning numerical tolerance.
 
-Internal numerical integration step selection may differ from UI/game update frequency.
+Internal numerical integration step selection may differ from UI/game update frequency. Reference ephemeris evaluation is direct at the requested instant and has no caller-defined integration steps.
 
 ## Rejected alternatives
 
@@ -592,21 +654,27 @@ Internal numerical integration step selection may differ from UI/game update fre
 - Modeling instantaneous impulses as very short continuous forces by default: rejected because the result would depend on integration timestep and blur exact event semantics.
 - Unbounded arbitrary-time propagation caches: rejected because revision-correct bounded caches are sufficient and scalable.
 - Silently allowing cyclic object/frame dependencies: rejected because recursive state resolution would be ambiguous; joint integration requires an explicit authority model.
+- Runtime CSPICE/kernel-pool evaluation as the production reference source: rejected by document 20 in favor of normalized immutable OEP data evaluated by the portable core.
+- Live Horizons/JPL lookup or automatic source refresh: rejected because it breaks deterministic dataset identity and offline runtime behavior.
+- Automatic DE440/DE441 date switching: rejected because source/profile selection belongs to versioned scenario data, not hidden time-dependent model behavior.
 
 ## Constraints on follow-up implementation
 
-Fundamental propagation implementation must not invent new architecture beyond this document. In particular:
+Fundamental propagation implementation must not invent new architecture beyond this document and document 20. In particular:
 
-- implement the shared model-kind/state-at-time/motion-segment/switch contracts before a concrete Kepler solver;
+- preserve the shared model-kind/state-at-time/motion-segment/switch contracts;
 - integrate with document 13 object/reference lifecycle and document 14 frame/dependency semantics;
-- implement `referenceEphemeris` and `attached` only when their required normalized source/frame providers exist;
+- implement OEP-backed `referenceEphemeris` using the exact source/pack/validity rules from document 20;
+- keep acquisition/import/CSPICE tooling outside the portable runtime;
+- reject missing/corrupt/unloaded/out-of-validity pack data explicitly;
+- preserve source-center locality through explicit frame/source providers rather than rewriting physical hierarchy;
 - numerical interfaces may be introduced before a production integrator, but deterministic force/dependency/mass contracts must match this document;
-- a concrete two-body implementation is a separate issue and validates known/reference cases over an explicitly documented domain/tolerance;
+- a concrete two-body implementation remains valid and validates known/reference cases over an explicitly documented domain/tolerance;
 - automatic Fidelity Manager/encounter-triggered model selection remains separate work.
 
 ## Validation requirements for implementation
 
-Base propagation-contract implementation must test at least:
+Base propagation-contract/reference implementation must test at least:
 
 - stable model-kind codes and unknown-code rejection;
 - exact half-open segment boundary behavior at switch time `T`;
@@ -614,11 +682,15 @@ Base propagation-contract implementation must test at least:
 - exact result epoch/frame invariants;
 - supported/unsupported forward/backward behavior;
 - propagation-before-same-epoch-frame-transform ordering;
+- OEP exact validity boundaries and no clamp/extrapolation;
+- corrupt/missing shard/source-node rejection;
+- deterministic source-center dependency resolution;
+- OEP source-vector agreement and native/WASM parity under document-20 budgets;
 - model switch success with explicit continuity tolerances;
 - model switch failure leaves old authority/revisions unchanged;
-- permanent reference divergence with no snap-back after analytical demotion;
+- permanent reference divergence with no snap-back after analytical demotion or dataset changes;
 - future cache/checkpoint invalidation from exact state-change epoch;
-- dependency-cycle rejection across object-motion/frame graph;
+- dependency-cycle rejection across object-motion/frame/source graph;
 - deterministic force-provider ordering;
 - instantaneous impulse creates an exact new handoff/segment rather than timestep-dependent force behavior;
 - absent/zero mass semantics for mass-dependent versus mass-independent providers;
