@@ -28,6 +28,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 22. [Event-Driven Advancement and Fidelity Management](22-event-driven-advancement-and-fidelity-management.md) — exact mutable time, deterministic scheduled work, atomic advancement transactions, semantic fidelity requirements, promotion/demotion, invalidation, time warp, and parity.
 23. [Predictive Encounters and Close-Approach Scheduling](23-predictive-encounters-and-close-approach-scheduling.md) — explicit encounter policy, hierarchy-aware swept-bound broad phase, coarse/refined closest approach, fidelity/coupled scheduling, invalidation and scaling.
 24. [Collision Policy, Continuous Detection, and Physical Response](24-collision-policy-detection-and-response.md) — explicit collision relevance/geometry, continuous sphere contact, exact records, detect-only or frictionless impulse response, simultaneous-contact limits and invalidation.
+25. [Active Spacecraft Thrust, Mass Flow, and Maneuver Execution](25-active-spacecraft-thrust-mass-flow-and-maneuvers.md) — exact impulses, bounded finite-thrust stages, frame/body direction, prescribed attitude, integrated physical mass flow, maneuver editing, Fidelity handoff and parity.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -47,6 +48,7 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - Fidelity is a semantic accuracy/interaction requirement, not a rendering signal and not a direct propagator enum; promotion/demotion uses explicit exact-time authority transactions and anti-thrashing validation.
 - Encounter prediction is revision-aware derived scheduling data built from explicit policy, conservative broad-phase bounds and bounded refinement; it never becomes motion authority or a second global pair loop.
 - Collision relevance is a separate revisioned policy; v1 continuous sphere contact reuses encounter broad phase and any physical response is an explicit exact-time engine transaction rather than a gameplay outcome.
+- Maneuvers are physical commands, not game propulsion models: exact impulses and bounded finite-burn stages feed the numerical force/mass authority with explicit frame/attitude semantics and exact event boundaries.
 - Canonical physical values use SI units; absolute simulation time uses the exact TDB/J2000 representation defined in document 12 rather than wall-clock/civil time.
 - Canonical dynamic translational handoff state is Cartesian position/velocity at an exact epoch in a defined frame.
 - The canonical root is SSB-centered and ICRS/ICRF-aligned; local/reference-frame state is preserved so precision-sensitive work is not forced through giant root coordinates.
