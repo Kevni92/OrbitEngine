@@ -29,6 +29,12 @@ enum class FailureCode : std::uint16_t {
   derivative_failure = 9,
 };
 
+enum class ComponentKind : std::uint8_t {
+  position = 0,
+  velocity = 1,
+  mass = 2,
+};
+
 struct Failure {
   FailureCode code = FailureCode::none;
   std::string message;
@@ -40,6 +46,10 @@ struct Configuration {
   double velocity_absolute_tolerance_meters_per_second = 1e-6;
   double mass_absolute_tolerance_kilograms = 1e-6;
   bool has_mass_component = false;
+  // Empty preserves the single-object [position, velocity, (mass)] layout.
+  // Coupled authorities provide one kind for every flattened component so
+  // each member block keeps quantity-specific error scaling.
+  std::vector<ComponentKind> component_kinds;
   time::Duration min_step{0, 1};
   time::Duration max_step{86'400, 0};
   std::size_t checkpoint_stride_accepted_steps = 32;

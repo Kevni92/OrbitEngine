@@ -139,6 +139,13 @@ bool Configuration::validate(Failure& failure) const noexcept {
       || time::compare(min_step, time::Duration{0, 1}) < 0
       || time::compare(max_step, min_step) < 0) return invalid("step bounds are invalid");
   if (checkpoint_stride_accepted_steps == 0 || max_checkpoint_count == 0 || max_dense_step_count == 0 || max_accepted_steps_per_extension == 0 || max_rejected_steps_per_extension == 0) return invalid("cache and work budgets must be positive");
+  for (const auto component : component_kinds) {
+    if (component != ComponentKind::position
+        && component != ComponentKind::velocity
+        && component != ComponentKind::mass) {
+      return invalid("component tolerance layout contains an unknown component kind");
+    }
+  }
   return true;
 }
 
@@ -167,6 +174,13 @@ const Failure& DOP853Tape::construction_failure() const noexcept { return constr
 void DOP853Tape::fail(Failure& failure, FailureCode code, const char* message) const noexcept { failure = Failure{code, message}; }
 
 double DOP853Tape::component_absolute_tolerance(std::size_t index) const noexcept {
+  if (index < configuration_.component_kinds.size()) {
+    switch (configuration_.component_kinds[index]) {
+      case ComponentKind::position: return configuration_.position_absolute_tolerance_meters;
+      case ComponentKind::velocity: return configuration_.velocity_absolute_tolerance_meters_per_second;
+      case ComponentKind::mass: return configuration_.mass_absolute_tolerance_kilograms;
+    }
+  }
   if (index < 3) return configuration_.position_absolute_tolerance_meters;
   if (index < 6) return configuration_.velocity_absolute_tolerance_meters_per_second;
   if (configuration_.has_mass_component && index == 6) return configuration_.mass_absolute_tolerance_kilograms;
