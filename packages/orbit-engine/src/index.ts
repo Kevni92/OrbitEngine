@@ -124,6 +124,20 @@ import {
   type CollisionVelocityResponseOutcome,
 } from "./collision-response.js";
 import {
+  CollisionContactLifecycleManager,
+  groupCollisionContactsByInstant,
+  resolveSimultaneousCollisionContacts,
+  validateCollisionRemovalDependencies,
+  type CollisionContactDiagnostic,
+  type CollisionContactInvalidationResult,
+  type CollisionContactQuery,
+  type CollisionContactRegistrationInput,
+  type CollisionRemovalDependency,
+  type CollisionRemovalDependencyCheck,
+  type CollisionSimultaneousContactInput,
+  type CollisionSimultaneousContactResult,
+} from "./collision-lifecycle.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -152,6 +166,7 @@ export * from "./encounter-lifecycle.js";
 export * from "./collision.js";
 export * from "./collision-detection.js";
 export * from "./collision-response.js";
+export * from "./collision-lifecycle.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -219,6 +234,7 @@ export class OrbitEngine {
   readonly #encounterLifecycleManager: EncounterLifecycleManager;
   readonly #collisionPolicyManager: CollisionPolicyManager;
   readonly #collisionSuppressionManager: CollisionContactSuppressionManager;
+  readonly #collisionContactLifecycleManager: CollisionContactLifecycleManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -227,6 +243,10 @@ export class OrbitEngine {
     this.#scheduledWorkQueue = new ScheduledWorkQueue(backend, scheduler);
     this.#fidelityManager = new FidelityManager();
     this.#invalidationManager = new RevisionInvalidationManager(this.#scheduledWorkQueue);
+    this.#collisionSuppressionManager = new CollisionContactSuppressionManager();
+    this.#collisionContactLifecycleManager = new CollisionContactLifecycleManager({
+      currentTime: () => this.currentTime,
+    });
     this.#encounterPolicyManager = new EncounterPolicyManager(undefined, (_previous, next) => {
       const dependency = { kind: "interactionPolicy" as const, id: "encounter-policy", revision: next.revision };
       this.#invalidationManager.invalidate(dependency, this.currentTime);
@@ -234,12 +254,11 @@ export class OrbitEngine {
       this.#encounterLifecycleManager.invalidate(dependency, this.currentTime);
     });
     this.#collisionPolicyManager = new CollisionPolicyManager(undefined, (_previous, next) => {
-      this.#invalidationManager.invalidate(
-        { kind: "interactionPolicy", id: "collision-policy", revision: next.revision },
-        this.currentTime,
-      );
+      const dependency = { kind: "interactionPolicy" as const, id: "collision-policy", revision: next.revision };
+      this.#invalidationManager.invalidate(dependency, this.currentTime);
+      this.#collisionContactLifecycleManager.invalidate(dependency, this.currentTime);
+      this.#collisionSuppressionManager.clear();
     });
-    this.#collisionSuppressionManager = new CollisionContactSuppressionManager();
     this.#encounterDomainRegistry = new EncounterDomainRegistry();
     this.#encounterBroadPhaseIndex = new EncounterBroadPhaseIndex();
     this.#encounterSchedulingManager = new EncounterSchedulingManager({
@@ -379,6 +398,7 @@ export class OrbitEngine {
     const report = this.#invalidationManager.invalidate(dependency, effectiveFrom, options);
     this.#encounterSchedulingManager.invalidateDependency(dependency, effectiveFrom);
     this.#encounterLifecycleManager.invalidate(dependency, effectiveFrom);
+    this.#collisionContactLifecycleManager.invalidate(dependency, effectiveFrom);
     return report;
   }
 
@@ -442,6 +462,66 @@ export class OrbitEngine {
 
   collisionContactSuppression(): CollisionContactSuppressionManager {
     return this.#collisionSuppressionManager;
+  }
+
+  registerCollisionContact(input: CollisionContactRegistrationInput): ReturnType<CollisionContactLifecycleManager["register"]> {
+    return this.#collisionContactLifecycleManager.register(input);
+  }
+
+  getCollisionContact(contactId: string): ReturnType<CollisionContactLifecycleManager["get"]> {
+    return this.#collisionContactLifecycleManager.get(contactId);
+  }
+
+  listCollisionContacts(input: CollisionContactQuery): ReturnType<CollisionContactLifecycleManager["list"]> {
+    return this.#collisionContactLifecycleManager.list(input);
+  }
+
+  getCollisionDiagnostics(contactId: string): CollisionContactDiagnostic | undefined {
+    return this.#collisionContactLifecycleManager.diagnostics(contactId);
+  }
+
+  invalidateCollisionDependency(
+    dependency: DependencyInvalidationTarget,
+    effectiveFrom: SimulationInstant,
+  ): CollisionContactInvalidationResult {
+    return this.#collisionContactLifecycleManager.invalidate(dependency, effectiveFrom);
+  }
+
+  groupCollisionContactsByInstant(
+    records: Parameters<typeof groupCollisionContactsByInstant>[0],
+  ): ReturnType<typeof groupCollisionContactsByInstant> {
+    return groupCollisionContactsByInstant(records);
+  }
+
+  resolveSimultaneousCollisionContacts(
+    input: readonly CollisionSimultaneousContactInput[],
+  ): CollisionSimultaneousContactResult {
+    return resolveSimultaneousCollisionContacts(input);
+  }
+
+  executeSimultaneousCollisionContacts(
+    input: readonly CollisionSimultaneousContactInput[],
+  ): CollisionSimultaneousContactResult {
+    return this.#collisionContactLifecycleManager.executeSimultaneous(input);
+  }
+
+  isCollisionContactGenerationCurrent(
+    contact: Parameters<CollisionContactLifecycleManager["isCurrentGeneration"]>[0],
+  ): boolean {
+    return this.#collisionContactLifecycleManager.isCurrentGeneration(contact);
+  }
+
+  validateCollisionRemovalDependencies(
+    input: Parameters<typeof validateCollisionRemovalDependencies>[0],
+  ): ReturnType<typeof validateCollisionRemovalDependencies> {
+    return validateCollisionRemovalDependencies(input);
+  }
+
+  checkCollisionRemovalDependencies(
+    objectId: ObjectId,
+    dependencies?: readonly CollisionRemovalDependency[],
+  ): CollisionRemovalDependencyCheck {
+    return this.#collisionContactLifecycleManager.checkRemovalDependencies(objectId, dependencies);
   }
 
   encounterDomains(): EncounterDomainRegistry {
