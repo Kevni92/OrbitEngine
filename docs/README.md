@@ -24,6 +24,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 18. [Global Solar-System Context Presentation](18-global-solar-system-context-presentation.md) — persistent major-body context across local focus, marker floors, and same-frame renderer-state invariants.
 19. [Celestial Appearance, Atmospheres, and Stellar Lighting](19-celestial-appearance-atmospheres-and-lighting.md) — application-owned surface/atmosphere appearance data, optical derivation, stellar illumination, shader semantics, lighting modes, provenance, and LOD integration.
 20. [Reference Ephemeris Data and Pipeline](20-reference-ephemeris-data-and-pipeline.md) — DE441 source strategy, JPL/NAIF offline acquisition, OrbitEngine Ephemeris Pack (OEP), source-center/barycenter semantics, bounded reference evaluation, packaging, versioning, and validation.
+21. [Numerical Propagation, Force Models, and Coupled N-Body Integration](21-numerical-propagation-force-models-and-coupled-nbody.md) — DOP853 integration, error control, deterministic forces/gravity sources, numerical caches, coupled local systems, mass authority, frame dynamics, and backend parity.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -38,6 +39,7 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - Model switching is an explicit exact-time transaction and cannot create an unphysical state jump or silently restore an original reference trajectory after divergence.
 - Stable astronomical trajectories should be cheap to query across large time jumps.
 - Expensive simulation is activated only where interaction, perturbation, maneuvering, or collision risk requires it.
+- Production numerical translation uses local adaptive DOP853 authorities with explicit force/source configuration; true mutual interaction is represented by bounded coupled authorities rather than global ticking or cyclic single-object dependencies.
 - Canonical physical values use SI units; absolute simulation time uses the exact TDB/J2000 representation defined in document 12 rather than wall-clock/civil time.
 - Canonical dynamic translational handoff state is Cartesian position/velocity at an exact epoch in a defined frame.
 - The canonical root is SSB-centered and ICRS/ICRF-aligned; local/reference-frame state is preserved so precision-sensitive work is not forced through giant root coordinates.
