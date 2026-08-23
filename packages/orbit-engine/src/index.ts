@@ -117,17 +117,18 @@ export class OrbitEngine {
       const frame = this.frames().register({ id, parent: this.frames().root(), provider: handle.provider });
       registered = true;
       let closed = false;
+      const close = () => {
+        if (closed) return;
+        this.frames().remove(id);
+        handle.release();
+        closed = true;
+      };
       return Object.freeze({
         identity: handle.identity,
         provider: handle.provider,
         frame,
-        release: handle.release,
-        unregister: () => {
-          if (closed) return;
-          this.frames().remove(id);
-          handle.release();
-          closed = true;
-        },
+        release: close,
+        unregister: close,
       });
     } catch (error) {
       if (!registered) handle.release();
