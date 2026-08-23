@@ -8,10 +8,9 @@ import type {
 const DATASET_ROOT = "./data/solar-system-oep";
 const MANIFEST_FILE = "solar-system-reference-1.0.0-de441-major.oep.json";
 const ECLIPSE_ORACLE_FILE = "eclipse-oracle.json";
-// The browser pins the bytes that are actually bundled. The OEP identity
-// passed to the public loader remains the manifest identity committed by the
-// production pack (#126).
-const EXPECTED_MANIFEST_ASSET_SHA256 = "e49b612740bb0566d29921fc0d24ebd010751521e208360948ada90638a9f62e";
+// The manifest identity is defined over canonical UTF-8 JSON text. Normalizing
+// line endings keeps the browser check stable across Git's Windows and Linux
+// checkout modes while retaining the production pack identity from #126.
 const OEP_MANIFEST_IDENTITY_SHA256 = "302dafc2d4091a6047e1a9026a9308ece1baead7f46891e43040f4de666c8640";
 
 export interface EclipseOracleAsset {
@@ -40,6 +39,11 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
+async function canonicalManifestSha256(bytes: Uint8Array): Promise<string> {
+  const text = new TextDecoder().decode(bytes).replace(/\r\n?/g, "\n");
+  return sha256Hex(new TextEncoder().encode(text));
+}
+
 async function readAsset(file: string): Promise<Uint8Array> {
   const response = await fetch(`${DATASET_ROOT}/${file}`, { cache: "no-store" });
   if (!response.ok) throw new Error(`Static OEP asset ${file} failed to load (${response.status})`);
@@ -65,9 +69,9 @@ function assertManifest(manifest: OepManifestV1): void {
 export async function loadSolarSystemReferenceDataset(engine: OrbitEngine): Promise<SolarSystemReferenceDataset> {
   try {
     const manifestBytes = await readAsset(MANIFEST_FILE);
-    const manifestAssetSha256 = await sha256Hex(manifestBytes);
-    if (manifestAssetSha256 !== EXPECTED_MANIFEST_ASSET_SHA256) {
-      throw new Error(`Manifest checksum mismatch: expected ${EXPECTED_MANIFEST_ASSET_SHA256}, received ${manifestAssetSha256}`);
+    const manifestAssetSha256 = await canonicalManifestSha256(manifestBytes);
+    if (manifestAssetSha256 !== OEP_MANIFEST_IDENTITY_SHA256) {
+      throw new Error(`Manifest checksum mismatch: expected ${OEP_MANIFEST_IDENTITY_SHA256}, received ${manifestAssetSha256}`);
     }
     const manifest = parseJson<OepManifestV1>(manifestBytes, MANIFEST_FILE);
     assertManifest(manifest);
