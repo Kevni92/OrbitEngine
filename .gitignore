@@ -13,4 +13,6 @@ packages/orbit-engine/wasm/*
 *.wasm
 *.tgz
 
+.cache/orbit-engine-ephemeris/
+
 .DS_Store
