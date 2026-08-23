@@ -349,8 +349,9 @@ void u64_to_words(std::uint64_t value, std::uint32_t& high, std::uint32_t& low) 
     }
 
     const double midpoint_floor_double = std::floor(midpoint_seconds);
-    if (midpoint_floor_double < static_cast<double>(std::numeric_limits<std::int64_t>::min())
-        || midpoint_floor_double > static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+    constexpr double kInt64MinAsDouble = -9223372036854775808.0;
+    constexpr double kInt64MaxExclusiveAsDouble = 9223372036854775808.0;
+    if (midpoint_floor_double < kInt64MinAsDouble || midpoint_floor_double >= kInt64MaxExclusiveAsDouble) {
       return ResultCode::out_of_bounds;
     }
     const auto midpoint_floor = static_cast<std::int64_t>(midpoint_floor_double);
@@ -590,9 +591,8 @@ DatasetInfoWire Registry::load(std::span<const std::uint8_t> payload) noexcept {
           || !time_offset_from_midpoint(record.end, record, end_offset)) {
         return dataset_result(ResultCode::malformed_records, 0, 0, 0);
       }
-      const double tolerance = std::max(1.0e-9, record.radius_seconds * 1.0e-12);
-      if (start_offset < -record.radius_seconds - tolerance || start_offset > record.radius_seconds + tolerance
-          || end_offset < -record.radius_seconds - tolerance || end_offset > record.radius_seconds + tolerance) {
+      if (start_offset < -record.radius_seconds || start_offset > record.radius_seconds
+          || end_offset < -record.radius_seconds || end_offset > record.radius_seconds) {
         return dataset_result(ResultCode::malformed_records, 0, 0, 0);
       }
     }
@@ -718,9 +718,7 @@ ResultCode Registry::evaluate_relative(
   double time_offset = 0.0;
   if (!time_offset_from_midpoint(target, record, time_offset)) return ResultCode::malformed_records;
   const double x = time_offset / record.radius_seconds;
-  const double tolerance = 1.0e-12;
-  if (!std::isfinite(x) || x < -1.0 - tolerance || x > 1.0 + tolerance) return ResultCode::malformed_records;
-  const double bounded_x = std::clamp(x, -1.0, 1.0);
+  if (!std::isfinite(x) || x < -1.0 || x > 1.0) return ResultCode::malformed_records;
   const auto& shard = dataset.shards[record.shard_index];
   const auto component_stride = static_cast<std::size_t>(record.coefficient_count) * 8U;
   std::array<double, 6> values{};
@@ -732,7 +730,7 @@ ResultCode Registry::evaluate_relative(
           std::span<const std::uint8_t>(shard.data(), shard.size()),
           static_cast<std::size_t>(record.coefficient_offset) + static_cast<std::size_t>(component) * component_stride,
           record.coefficient_count,
-          bounded_x,
+          x,
           values[component],
           component < 3U ? &derivative : nullptr)) {
       return ResultCode::non_finite;
