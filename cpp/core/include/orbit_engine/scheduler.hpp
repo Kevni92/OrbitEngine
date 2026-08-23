@@ -15,7 +15,7 @@ inline constexpr std::uint32_t kDefaultMaxTimestampTransactionsPerAdvance = 1'00
 inline constexpr std::size_t kMaxDiagnostics = 64;
 inline constexpr std::size_t kWorkWords = 23;
 inline constexpr std::size_t kInputWords = 41;
-inline constexpr std::size_t kOutputWords = 2 + 3 + 2 + 2 + 1 + kWorkWords + 1 + kMaxDiagnostics * kWorkWords;
+inline constexpr std::size_t kOutputWords = 2 + 3 + 2 + 2 + 1 + kWorkWords + 1 + kMaxDiagnostics * kWorkWords + 2 + 2 + 1 + 1 + 2 + 2;
 
 enum class Operation : std::uint16_t {
   reset = 0,
@@ -24,6 +24,8 @@ enum class Operation : std::uint16_t {
   cancel = 3,
   replace = 4,
   list = 5,
+  advance_to = 6,
+  advance_by = 7,
 };
 
 enum class ResultCode : std::uint16_t {
@@ -37,6 +39,13 @@ enum class ResultCode : std::uint16_t {
   invalid_phase = 7,
   invalid_payload = 8,
   invalid_operation = 9,
+  target_before_current = 10,
+  advance_budget_exceeded = 11,
+  timestamp_budget_exceeded = 12,
+  transaction_failed = 13,
+  retroactive_earlier_phase = 14,
+  payload_failed = 15,
+  invalid_duration = 16,
 };
 
 struct WorkWire {
@@ -87,6 +96,16 @@ struct SchedulerWire {
   WorkWire result_work{};
   std::uint32_t result_count = 0;
   std::array<WorkWire, kMaxDiagnostics> results{};
+  std::uint32_t processed_timestamp_count = 0;
+  std::uint32_t processed_work_count = 0;
+  bool reached_target = false;
+  bool failure_present = false;
+  std::uint32_t failure_id_high = 0;
+  std::uint32_t failure_id_low = 0;
+  std::uint32_t failure_generation_high = 0;
+  std::uint32_t failure_generation_low = 0;
+  std::uint16_t failure_phase = 0;
+  std::uint16_t failure_source_kind = 0;
 };
 
 [[nodiscard]] bool decode_packet(std::span<const double> values, SchedulerWire& output) noexcept;
@@ -146,6 +165,8 @@ private:
   [[nodiscard]] SchedulerWire schedule(SchedulerWire input, bool replacing) noexcept;
   [[nodiscard]] SchedulerWire cancel(SchedulerWire input) noexcept;
   [[nodiscard]] SchedulerWire list(SchedulerWire input) const noexcept;
+  [[nodiscard]] SchedulerWire advance(SchedulerWire input, bool by_duration) noexcept;
+  [[nodiscard]] SchedulerWire execute_timestamp(SchedulerWire input, const time::SimulationInstant& instant) noexcept;
 };
 
 }  // namespace orbit_engine::scheduler

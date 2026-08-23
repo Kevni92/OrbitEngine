@@ -40,5 +40,5 @@ test("real WASM backend initializes and reports the shared core health", async (
   await assertOepRuntime(engine);
   await assertNumericalMotion("wasm");
   await assertCoupledMotion("wasm");
-  assertScheduledWorkQueue(engine);
+  await assertScheduledWorkQueue(engine);
 });

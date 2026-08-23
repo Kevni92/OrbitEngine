@@ -9,7 +9,7 @@ const UINT32_MAX = 4_294_967_295;
 export const SCHEDULER_MAX_DIAGNOSTICS = 64;
 export const SCHEDULER_INPUT_WORDS = 41;
 export const SCHEDULER_WORK_WORDS = 23;
-export const SCHEDULER_OUTPUT_WORDS = 2 + 3 + 2 + 2 + 1 + SCHEDULER_WORK_WORDS + 1 + SCHEDULER_MAX_DIAGNOSTICS * SCHEDULER_WORK_WORDS;
+export const SCHEDULER_OUTPUT_WORDS = 2 + 3 + 2 + 2 + 1 + SCHEDULER_WORK_WORDS + 1 + SCHEDULER_MAX_DIAGNOSTICS * SCHEDULER_WORK_WORDS + 2 + 2 + 1 + 1 + 2 + 2;
 
 export const SchedulerOperationCode = Object.freeze({
   reset: 0,
@@ -18,6 +18,8 @@ export const SchedulerOperationCode = Object.freeze({
   cancel: 3,
   replace: 4,
   list: 5,
+  advanceTo: 6,
+  advanceBy: 7,
 } as const);
 
 export const SchedulerResultCode = Object.freeze({
@@ -31,6 +33,13 @@ export const SchedulerResultCode = Object.freeze({
   invalidPhase: 7,
   invalidPayload: 8,
   invalidOperation: 9,
+  targetBeforeCurrent: 10,
+  advanceBudgetExceeded: 11,
+  timestampBudgetExceeded: 12,
+  transactionFailed: 13,
+  retroactiveEarlierPhase: 14,
+  payloadFailed: 15,
+  invalidDuration: 16,
 } as const);
 
 export interface SchedulerWorkWire {
@@ -81,6 +90,16 @@ export interface SchedulerWire {
   readonly resultWork: SchedulerWorkWire;
   readonly resultCount: number;
   readonly results: readonly SchedulerWorkWire[];
+  readonly processedTimestampCount: number;
+  readonly processedWorkCount: number;
+  readonly reachedTarget: boolean;
+  readonly failurePresent: boolean;
+  readonly failureIdHigh: number;
+  readonly failureIdLow: number;
+  readonly failureGenerationHigh: number;
+  readonly failureGenerationLow: number;
+  readonly failurePhase: number;
+  readonly failureSourceKind: number;
 }
 
 export interface SchedulerWorkValue {
@@ -188,8 +207,8 @@ export function validateSchedulerWire(value: unknown): SchedulerWire {
   const candidate = value as Record<string, unknown>;
   const operationCode = uint16(candidate.operationCode, "operationCode");
   const resultCode = uint16(candidate.resultCode, "resultCode");
-  if (operationCode > SchedulerOperationCode.list) throw new RangeError("Unknown scheduler operation code");
-  if (resultCode > SchedulerResultCode.invalidOperation) throw new RangeError("Unknown scheduler result code");
+  if (operationCode > SchedulerOperationCode.advanceBy) throw new RangeError("Unknown scheduler operation code");
+  if (resultCode > SchedulerResultCode.invalidDuration) throw new RangeError("Unknown scheduler result code");
   const resultsValue = candidate.results;
   if (!Array.isArray(resultsValue) || resultsValue.length !== SCHEDULER_MAX_DIAGNOSTICS) throw new RangeError("scheduler results must contain 64 entries");
   const resultCount = uint32(candidate.resultCount, "resultCount");
@@ -207,6 +226,13 @@ export function validateSchedulerWire(value: unknown): SchedulerWire {
     nextWorkIdHigh: uint32(candidate.nextWorkIdHigh, "nextWorkIdHigh"), nextWorkIdLow: uint32(candidate.nextWorkIdLow, "nextWorkIdLow"),
     resultWorkPresent: boolean(candidate.resultWorkPresent, "resultWorkPresent"), resultWork: work(candidate.resultWork, "resultWork"),
     resultCount, results: Object.freeze(resultsValue.map((item, index) => work(item, `results[${index}]`))),
+    processedTimestampCount: uint32(candidate.processedTimestampCount, "processedTimestampCount"),
+    processedWorkCount: uint32(candidate.processedWorkCount, "processedWorkCount"),
+    reachedTarget: boolean(candidate.reachedTarget, "reachedTarget"),
+    failurePresent: boolean(candidate.failurePresent, "failurePresent"),
+    failureIdHigh: uint32(candidate.failureIdHigh, "failureIdHigh"), failureIdLow: uint32(candidate.failureIdLow, "failureIdLow"),
+    failureGenerationHigh: uint32(candidate.failureGenerationHigh, "failureGenerationHigh"), failureGenerationLow: uint32(candidate.failureGenerationLow, "failureGenerationLow"),
+    failurePhase: uint16(candidate.failurePhase, "failurePhase"), failureSourceKind: uint16(candidate.failureSourceKind, "failureSourceKind"),
   });
 }
 
@@ -216,7 +242,7 @@ function emptyWork(): SchedulerWorkWire {
 
 export function emptySchedulerWire(operationCode: number): SchedulerWire {
   const empty = emptyWork();
-  return validateSchedulerWire({ operationCode, resultCode: 0, currentTime: { secondsHigh: 0, secondsLow: 0, nanoseconds: 0 }, targetTime: { secondsHigh: 0, secondsLow: 0, nanoseconds: 0 }, expectedIdHigh: 0, expectedIdLow: 0, expectedGenerationHigh: 0, expectedGenerationLow: 0, listOffset: 0, listLimit: 0, allowCurrentTime: false, maxScheduledWorkItems: 0, maxWorkItemsPerTimestamp: 0, maxTimestampTransactionsPerAdvance: 0, work: empty, clockRevisionHigh: 0, clockRevisionLow: 0, nextWorkIdHigh: 0, nextWorkIdLow: 0, resultWorkPresent: false, resultWork: empty, resultCount: 0, results: Array.from({ length: SCHEDULER_MAX_DIAGNOSTICS }, () => empty) });
+  return validateSchedulerWire({ operationCode, resultCode: 0, currentTime: { secondsHigh: 0, secondsLow: 0, nanoseconds: 0 }, targetTime: { secondsHigh: 0, secondsLow: 0, nanoseconds: 0 }, expectedIdHigh: 0, expectedIdLow: 0, expectedGenerationHigh: 0, expectedGenerationLow: 0, listOffset: 0, listLimit: 0, allowCurrentTime: false, maxScheduledWorkItems: 0, maxWorkItemsPerTimestamp: 0, maxTimestampTransactionsPerAdvance: 0, work: empty, clockRevisionHigh: 0, clockRevisionLow: 0, nextWorkIdHigh: 0, nextWorkIdLow: 0, resultWorkPresent: false, resultWork: empty, resultCount: 0, results: Array.from({ length: SCHEDULER_MAX_DIAGNOSTICS }, () => empty), processedTimestampCount: 0, processedWorkCount: 0, reachedTarget: false, failurePresent: false, failureIdHigh: 0, failureIdLow: 0, failureGenerationHigh: 0, failureGenerationLow: 0, failurePhase: 0, failureSourceKind: 0 });
 }
 
 export function encodeWork(value: SchedulerWorkValue, allowZeroId = false): SchedulerWorkWire {
@@ -263,7 +289,8 @@ export function decodeSchedulerPacket(input: SchedulerWire, values: Float64Array
   };
   const readWork = (): SchedulerWorkWire => ({ idHigh: next(), idLow: next(), generationHigh: next(), generationLow: next(), instant: { secondsHigh: next(), secondsLow: next(), nanoseconds: next() }, phase: next(), sourceKind: next(), sourceIdHigh: next(), sourceIdLow: next(), sourceOrdinalHigh: next(), sourceOrdinalLow: next(), dependencyDigestHigh: next(), dependencyDigestLow: next(), payloadKind: next(), payloadObjectIdHigh: next(), payloadObjectIdLow: next(), relatedWorkIdHigh: next(), relatedWorkIdLow: next(), relatedGenerationHigh: next(), relatedGenerationLow: next(), payloadValue: next() });
   const resultCode = next(); const operationCode = next(); const currentTime = { secondsHigh: next(), secondsLow: next(), nanoseconds: next() }; const clockRevisionHigh = next(); const clockRevisionLow = next(); const nextWorkIdHigh = next(); const nextWorkIdLow = next(); const resultWorkPresent = next() !== 0; const resultWork = readWork(); const resultCount = next(); const results = Array.from({ length: SCHEDULER_MAX_DIAGNOSTICS }, readWork);
-  return validateSchedulerWire({ ...input, resultCode, operationCode, currentTime, clockRevisionHigh, clockRevisionLow, nextWorkIdHigh, nextWorkIdLow, resultWorkPresent, resultWork, resultCount, results });
+  const processedTimestampCount = next(); const processedWorkCount = next(); const reachedTarget = next() !== 0; const failurePresent = next() !== 0; const failureIdHigh = next(); const failureIdLow = next(); const failureGenerationHigh = next(); const failureGenerationLow = next(); const failurePhase = next(); const failureSourceKind = next();
+  return validateSchedulerWire({ ...input, resultCode, operationCode, currentTime, clockRevisionHigh, clockRevisionLow, nextWorkIdHigh, nextWorkIdLow, resultWorkPresent, resultWork, resultCount, results, processedTimestampCount, processedWorkCount, reachedTarget, failurePresent, failureIdHigh, failureIdLow, failureGenerationHigh, failureGenerationLow, failurePhase, failureSourceKind });
 }
 
 export function schedulerInstant(value: SchedulerWorkWire): SimulationInstant { return decodeSimulationInstant(value.instant); }
