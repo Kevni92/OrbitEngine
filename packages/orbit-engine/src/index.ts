@@ -115,6 +115,15 @@ import {
   type CollisionSweptBoundBuildInput,
 } from "./collision-detection.js";
 import {
+  applyCollisionResponseAtomically,
+  CollisionContactSuppressionManager,
+  resolveCollisionVelocityResponse,
+  type CollisionAtomicHandoffInput,
+  type CollisionAtomicHandoffResult,
+  type CollisionVelocityResponseInput,
+  type CollisionVelocityResponseOutcome,
+} from "./collision-response.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -142,6 +151,7 @@ export * from "./encounter-scheduling.js";
 export * from "./encounter-lifecycle.js";
 export * from "./collision.js";
 export * from "./collision-detection.js";
+export * from "./collision-response.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -208,6 +218,7 @@ export class OrbitEngine {
   readonly #encounterSchedulingManager: EncounterSchedulingManager;
   readonly #encounterLifecycleManager: EncounterLifecycleManager;
   readonly #collisionPolicyManager: CollisionPolicyManager;
+  readonly #collisionSuppressionManager: CollisionContactSuppressionManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -228,6 +239,7 @@ export class OrbitEngine {
         this.currentTime,
       );
     });
+    this.#collisionSuppressionManager = new CollisionContactSuppressionManager();
     this.#encounterDomainRegistry = new EncounterDomainRegistry();
     this.#encounterBroadPhaseIndex = new EncounterBroadPhaseIndex();
     this.#encounterSchedulingManager = new EncounterSchedulingManager({
@@ -418,6 +430,18 @@ export class OrbitEngine {
 
   predictCollisionContact(input: CollisionContactPredictionInput): CollisionContactPredictionResult {
     return predictCollisionContact(input);
+  }
+
+  resolveCollisionVelocityResponse(input: CollisionVelocityResponseInput): CollisionVelocityResponseOutcome {
+    return resolveCollisionVelocityResponse(input);
+  }
+
+  applyCollisionResponseAtomically(input: CollisionAtomicHandoffInput): CollisionAtomicHandoffResult {
+    return applyCollisionResponseAtomically(input);
+  }
+
+  collisionContactSuppression(): CollisionContactSuppressionManager {
+    return this.#collisionSuppressionManager;
   }
 
   encounterDomains(): EncounterDomainRegistry {
