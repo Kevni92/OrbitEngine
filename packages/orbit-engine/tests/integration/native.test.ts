@@ -20,6 +20,7 @@ import { assertFidelityTransitions } from "../shared/fidelity-transitions.js";
 import { assertRevisionInvalidation } from "../shared/invalidation.js";
 import { assertEncounterPrimitives } from "../shared/encounter.js";
 import { assertBroadPhasePrimitives } from "../shared/broad-phase.js";
+import { assertClosestApproachSolvers } from "../shared/closest-approach.js";
 
 test("real native backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "native" });
@@ -51,4 +52,5 @@ test("real native backend initializes and reports the shared core health", async
   await assertRevisionInvalidation(engine);
   await assertEncounterPrimitives(await OrbitEngine.create({ backend: "native" }));
   await assertBroadPhasePrimitives(await OrbitEngine.create({ backend: "native" }));
+  await assertClosestApproachSolvers(await OrbitEngine.create({ backend: "native" }));
 });

@@ -19,6 +19,7 @@ import { assertFidelityTransitions } from "../shared/fidelity-transitions.js";
 import { assertRevisionInvalidation } from "../shared/invalidation.js";
 import { assertEncounterPrimitives } from "../shared/encounter.js";
 import { assertBroadPhasePrimitives } from "../shared/broad-phase.js";
+import { assertClosestApproachSolvers } from "../shared/closest-approach.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -77,5 +78,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`encounter broad phase primitives have parity on ${name}`, async () => {
     await assertBroadPhasePrimitives(await OrbitEngine.create({ backend: name }));
+  });
+  test(`closest-approach solver primitives have parity on ${name}`, async () => {
+    await assertClosestApproachSolvers(await OrbitEngine.create({ backend: name }));
   });
 }
