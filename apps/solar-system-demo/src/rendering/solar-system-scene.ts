@@ -648,6 +648,7 @@ export class SolarSystemScene {
         material = new THREE.MeshLambertMaterial({
           color: new THREE.Color(1, 1, 1),
           map: texture,
+          emissiveMap: texture,
           dithering: true,
         });
       } else {
@@ -682,6 +683,8 @@ export class SolarSystemScene {
   #updateInspectionFill(camera: THREE.Camera): void {
     for (const body of this.#bodies.values()) body.mesh.layers.disable(INSPECTION_FILL_LAYER);
     for (const mesh of this.#runtimeSphereMeshes.values()) mesh.layers.disable(INSPECTION_FILL_LAYER);
+    for (const body of this.#bodies.values()) this.#clearEnhancedMaterialAssist(body.mesh);
+    for (const mesh of this.#runtimeSphereMeshes.values()) this.#clearEnhancedMaterialAssist(mesh);
     this.#inspectionFillTargets.clear();
     if (this.#lightingMode !== "enhanced") {
       this.#inspectionFillLight.visible = false;
@@ -694,6 +697,7 @@ export class SolarSystemScene {
       const mesh = this.meshFor(objectId);
       if (mesh === undefined || !mesh.visible) continue;
       mesh.layers.enable(INSPECTION_FILL_LAYER);
+      this.#applyEnhancedMaterialAssist(mesh, inspectionFillContribution(this.#lightingMode));
       this.#inspectionFillTargets.add(objectId);
     }
     this.#inspectionFillLight.position.copy(camera.position);
@@ -701,6 +705,30 @@ export class SolarSystemScene {
       inspectionFillContribution(this.#lightingMode),
     );
     this.#inspectionFillLight.visible = this.#inspectionFillTargets.size > 0;
+  }
+
+  /**
+   * Keep Enhanced readable on renderers whose clustered/light-list path does
+   * not apply a camera-local point light to a second object layer. This is a
+   * presentation-only material assist; the normalized inspection light above
+   * remains the canonical scene-light contribution and diagnostics path.
+   */
+  #applyEnhancedMaterialAssist(mesh: THREE.Mesh, contribution: number): void {
+    const material = mesh.material;
+    if (!(material instanceof THREE.MeshLambertMaterial)) return;
+    if (material.map !== null) {
+      material.emissive.setRGB(1, 1, 1);
+    } else {
+      material.emissive.copy(material.color);
+    }
+    material.emissiveIntensity = Math.min(1, contribution * 5);
+  }
+
+  #clearEnhancedMaterialAssist(mesh: THREE.Mesh): void {
+    const material = mesh.material;
+    if (!(material instanceof THREE.MeshLambertMaterial)) return;
+    material.emissiveIntensity = 0;
+    material.emissive.setRGB(0, 0, 0);
   }
 
   #ensureRuntimeSphere(objectId: ObjectId): THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial> {

@@ -14,9 +14,11 @@ import type { StellarIlluminationSet } from "./celestial-appearance-rendering.js
 export const ATMOSPHERE_VIEW_SAMPLES = 8;
 export const ATMOSPHERE_ENTER_DIAMETER_PIXELS = 12;
 export const ATMOSPHERE_EXIT_DIAMETER_PIXELS = 10;
-export const ATMOSPHERE_RIM_THICKNESS_CSS_PIXELS = 2.5;
+export const ATMOSPHERE_RIM_THICKNESS_CSS_PIXELS = 4;
 export const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
 export const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
+export const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 25;
+export const ATMOSPHERE_LIMB_DISPLAY_GAIN = 1.7;
 
 export interface ResolvedAtmosphereOptics {
   readonly rayleighScattering: LinearRgb;
@@ -213,6 +215,9 @@ uniform float uLightIrradiances[${shaderLightCount}];
 const int VIEW_SAMPLES = ${ATMOSPHERE_VIEW_SAMPLES};
 const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
+const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
+const float LIMB_DISPLAY_GAIN = ${ATMOSPHERE_LIMB_DISPLAY_GAIN.toFixed(2)};
+const vec3 DISPLAY_CHROMATICITY = vec3(0.20, 0.60, 3.00);
 
 float rayleighPhase(float cosine) {
   return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
@@ -283,8 +288,9 @@ void main() {
       float absorptionMean = (uAbsorption.r + uAbsorption.g + uAbsorption.b) / 3.0;
       float transmittance = exp(-absorptionMean * verticalDepthAboveSample * lightPathFactor);
       float phaseCosine = dot(viewDirection, lightDirection);
-      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
-        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
+      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine) * 4.0
+        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy) * 0.3;
+      scatteringSource *= DISPLAY_CHROMATICITY;
       integratedScattering += scatteringSource
         * uLightChromaticities[lightIndex]
         * uLightIrradiances[lightIndex]
@@ -294,12 +300,16 @@ void main() {
     }
   }
 
-  float viewOpticalDepth = uReferenceVerticalOpticalDepth
-    * integratedDensityScaleHeights / verticalIntegral;
+  float densityPath = integratedDensityScaleHeights / verticalIntegral;
+  float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
   float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
-  vec3 radiance = integratedScattering * 1.75;
+  float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
+  vec3 radiance = integratedScattering * DISPLAY_GAIN * limbGain;
   radiance = radiance / (vec3(1.0) + radiance);
-  gl_FragColor = vec4(radiance, alpha);
+  // The material uses premultiplied-alpha blending. Emit premultiplied
+  // scattering so the transparent shell preserves the background instead of
+  // darkening it wherever the integrated source is below the clear color.
+  gl_FragColor = vec4(radiance * alpha, alpha);
 }
 `;
 }
@@ -361,7 +371,7 @@ function atmosphereMaterial(
     premultipliedAlpha: true,
     depthWrite: false,
     depthTest: true,
-    side: THREE.BackSide,
+    side: THREE.FrontSide,
     blending: THREE.NormalBlending,
     toneMapped: true,
   });
