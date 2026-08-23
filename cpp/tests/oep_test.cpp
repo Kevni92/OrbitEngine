@@ -42,6 +42,10 @@ void time_value(std::vector<std::uint8_t>& bytes, std::int64_t seconds, std::uin
   u32(bytes, wire.nanoseconds);
 }
 
+orbit_engine::time::TimeWire instant_wire(std::int64_t seconds) {
+  return orbit_engine::time::to_wire(orbit_engine::time::SimulationInstant{seconds, 0});
+}
+
 void raw(std::vector<std::uint8_t>& bytes, const char* value) {
   bytes.insert(bytes.end(), value, value + std::strlen(value));
 }
@@ -189,14 +193,14 @@ int main() {
   CHECK(effective_end.has_value() && effective_end->seconds == 5);
 
   const auto center = registry.evaluate(
-    handle(loaded), 1, EvaluationMode::relative_to_center, orbit_engine::time::to_wire({0, 0})
+    handle(loaded), 1, EvaluationMode::relative_to_center, instant_wire(0)
   );
   CHECK(center.result_code == static_cast<std::uint16_t>(ResultCode::success));
   CHECK(close(center.position_x, 100.0));
   CHECK(close(center.velocity_x, 2.0));
 
   const auto relative = registry.evaluate(
-    handle(loaded), 2, EvaluationMode::relative_to_center, orbit_engine::time::to_wire({0, 0})
+    handle(loaded), 2, EvaluationMode::relative_to_center, instant_wire(0)
   );
   CHECK(relative.result_code == static_cast<std::uint16_t>(ResultCode::success));
   CHECK(close(relative.position_x, 10.0));
@@ -207,7 +211,7 @@ int main() {
   CHECK(close(relative.velocity_z, 3.0));
 
   const auto root = registry.evaluate(
-    handle(loaded), 2, EvaluationMode::root_ssb, orbit_engine::time::to_wire({0, 0})
+    handle(loaded), 2, EvaluationMode::root_ssb, instant_wire(0)
   );
   CHECK(root.result_code == static_cast<std::uint16_t>(ResultCode::success));
   CHECK(close(root.position_x, 110.0));
@@ -216,14 +220,14 @@ int main() {
   CHECK(close(root.velocity_x, 3.0));
 
   const auto negative_boundary = registry.evaluate(
-    handle(loaded), 2, EvaluationMode::relative_to_center, orbit_engine::time::to_wire({-5, 0})
+    handle(loaded), 2, EvaluationMode::relative_to_center, instant_wire(-5)
   );
   CHECK(negative_boundary.result_code == static_cast<std::uint16_t>(ResultCode::success));
   CHECK(close(negative_boundary.position_x, 5.0));
   CHECK(close(negative_boundary.velocity_x, 0.5));
 
   const auto end_boundary = registry.evaluate(
-    handle(loaded), 2, EvaluationMode::relative_to_center, orbit_engine::time::to_wire({5, 0})
+    handle(loaded), 2, EvaluationMode::relative_to_center, instant_wire(5)
   );
   CHECK(end_boundary.result_code == static_cast<std::uint16_t>(ResultCode::source_out_of_range));
 
