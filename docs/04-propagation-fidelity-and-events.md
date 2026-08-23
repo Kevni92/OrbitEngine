@@ -8,7 +8,7 @@ A propagation model answers: “How is this object's state computed at time T?�
 
 Fidelity answers: “What error/interaction detail is required for the current situation?”
 
-The canonical architecture is [15 — Propagation Contract and Model Switching](15-propagation-contract-and-model-switching.md). Object identity/canonical handoff state/reference status are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md), while [14 — Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md) defines same-epoch frame transforms.
+The canonical architecture is [15 — Propagation Contract and Model Switching](15-propagation-contract-and-model-switching.md). Production numerical integration, force evaluation, and coupled N-body authority are defined by [21 — Numerical Propagation, Force Models, and Coupled N-Body Integration](21-numerical-propagation-force-models-and-coupled-nbody.md). Object identity/canonical handoff state/reference status are defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md), while [14 — Reference Frames and Coordinate System](14-reference-frames-and-coordinate-system.md) defines same-epoch frame transforms.
 
 A diverged asteroid may therefore use `twoBodyAnalytical` at low fidelity, temporarily switch to `numerical` treatment during an encounter, and later demote to a newly derived analytical representation without ever restoring its original reference future.
 
@@ -28,7 +28,7 @@ The initial model kinds are:
 
 - `referenceEphemeris` — normalized imported/reference state source;
 - `twoBodyAnalytical` — analytical relative two-body propagation from a canonical anchor;
-- `numerical` — deterministic numerical integration with explicit force/mass configuration;
+- `numerical` — adaptive DOP853 integration with explicit force/mass configuration and the production semantics from document 21;
 - `attached` — fixed/configured motion relative to a declared frame/provider.
 
 Semi-analytical/perturbed model kinds may be added later through explicit architecture without changing existing meanings.
@@ -55,6 +55,8 @@ If any check fails, the old model remains authoritative and no partial switch is
 
 Changing a model is not itself a physical event, so it may not create a state jump.
 
+A coupled numerical authority is still compatible with this rule: each member retains its own `ObjectId` and motion segment, while several member segments may reference one shared numerical authority that evaluates their state simultaneously.
+
 ## Fidelity concept
 
 A provisional fidelity ladder remains useful as planning terminology:
@@ -67,7 +69,7 @@ A provisional fidelity ladder remains useful as planning terminology:
 
 These labels/thresholds are not yet a committed public API.
 
-Fidelity may change without changing model kind, and model kind may change while the requested fidelity remains the same. A later Fidelity Manager chooses/configures models; document 15 defines only the acceptance/switch boundary.
+Fidelity may change without changing model kind, and model kind may change while the requested fidelity remains the same. A later Fidelity Manager chooses/configures models; documents 15 and 21 define the acceptance, numerical-runtime, and coupled-authority boundaries it must use.
 
 ## Promotion and demotion
 
@@ -84,6 +86,8 @@ After an interaction stabilizes, a cheaper candidate may be derived from the cur
 
 If the cheaper candidate cannot satisfy the requested fidelity, the engine keeps the current model.
 
+Promotion of mutually interacting bodies into one coupled numerical authority and demotion/removal from that authority are exact-time atomic transactions defined by document 21. They do not relax the acyclic single-object dependency rule.
+
 ## Reference divergence
 
 A `followingReference` object uses its normalized reference source as motion authority until a state-changing event affects it.
@@ -96,11 +100,13 @@ The original ephemeris remains only as provenance/history after divergence. No l
 
 `numerical` propagation consumes an explicit ordered set of deterministic physical force/acceleration providers. Providers declare validity, dependencies, frame requirements, and required physical properties.
 
+Document 21 fixes the production hot-loop semantics: providers execute in portable C++, provider order is part of configuration identity, gravity source sets are explicit rather than inferred from `ObjectType`, and source/member accumulation order is deterministic.
+
 Arbitrary per-step JavaScript callbacks are not part of the base hot-loop contract; portable C++ or normalized deterministic provider data preserve native/WASM semantics and performance.
 
 An instantaneous impulse is an exact-time state-changing event, not a force integrated over an arbitrary tiny timestep. It creates a new canonical handoff/segment and invalidates the affected future.
 
-Time-varying mass has one coherent physical authority. Numerical thrust/mass-flow integration may use mass as an auxiliary numerical state, but it cannot maintain a hidden second mass truth that disagrees with the object's physical mass timeline.
+Time-varying mass has one coherent physical authority. When document 21 integrates mass flow as part of a numerical state vector, that integrated component is the physical mass authority for the same segment rather than a hidden second mass truth.
 
 ## Frame/motion dependency safety
 
@@ -108,7 +114,7 @@ Object motion, frame providers, and propagation dependencies form one acyclic de
 
 A state resolver rejects cycles rather than recursively evaluating indefinitely. For example, an Earth-centered frame may depend on Earth's root state, but Earth's own authority cannot in turn depend on that same Earth-centered frame.
 
-A future jointly integrated multi-object authority may explicitly own a coupled set; it is not represented by silently allowing cyclic single-object dependencies.
+True mutual dynamics are the explicit exception in representation, not in dependency safety: document 21's coupled authority owns the whole mutually interacting set and evaluates one shared stage state. It is never represented by silently allowing cyclic single-object state dependencies.
 
 ## Encounter detection
 
@@ -123,6 +129,8 @@ The engine must not compare every object pair on every tick. Encounter detection
 
 Only pair types enabled by later interaction policy participate.
 
+The later Fidelity/Encounter system may choose numerical gravity sources or coupled-group membership, but it installs an explicit concrete configuration. The numerical runtime itself never discovers all registered objects and starts global all-pairs work.
+
 ## Event-driven time warp
 
 Large jumps do not require millions of fixed simulation ticks. Document 12 defines monotonic mutable advancement and exact event timing.
@@ -131,6 +139,8 @@ Advancing from `t0` to `t1` processes scheduled work in `(t0, t1]`, may jump dir
 
 Propagators may evaluate internal sample/integration times. Those do not become global ticks, and UI/game call frequency must not define a different physical model.
 
+Document 21's numerical integration tape is target-independent: arbitrary read-only query targets are normally answered through dense output rather than forcing a different accepted integration endpoint. A pure query may populate derived numerical cache but cannot advance engine time or commit events.
+
 A state-changing event at `T` creates/increments the affected motion revision and invalidates propagated caches, dependent frame transforms, encounter candidates, and other future predictions from `T` onward.
 
 ## Example: redirected asteroid
@@ -138,10 +148,11 @@ A state-changing event at `T` creates/increments the affected motion revision an
 1. Asteroid follows `referenceEphemeris` at F0.
 2. A spacecraft encounter requires higher fidelity.
 3. A numerical model is installed at an exact handoff time after passing continuity checks.
-4. An explosion applies an exact-time impulse; the object becomes permanently `diverged` and a post-event motion segment is anchored.
-5. After local dynamics settle, a `twoBodyAnalytical` candidate is derived from the new state.
-6. The candidate passes handoff continuity and the requested future error-budget test, so it becomes authoritative at F0.
-7. The asteroid remains diverged; its original ephemeris is provenance only.
-8. Broad-phase predictions are rebuilt for the new trajectory and may identify a future planetary encounter.
+4. If several bodies require true mutual response, their member segments may be promoted atomically into one bounded coupled numerical authority.
+5. An explosion applies an exact-time impulse; the affected authority ends at that instant, the object becomes permanently `diverged`, and successor motion/group authority is re-anchored from the post-event state.
+6. After local dynamics settle, a `twoBodyAnalytical` candidate is derived from the new state.
+7. The candidate passes handoff continuity and the requested future error-budget test, so it becomes authoritative at F0.
+8. The asteroid remains diverged; its original ephemeris is provenance only.
+9. Broad-phase predictions are rebuilt for the new trajectory and may identify a future planetary encounter.
 
 This preserves physical consequences while allowing cheap propagation across long quiet intervals.
