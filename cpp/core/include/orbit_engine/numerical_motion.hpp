@@ -32,6 +32,7 @@ enum class FailureCode : std::uint16_t {
 struct Failure {
   FailureCode code = FailureCode::none;
   std::string message;
+  numerical::FailureCode numerical_code = numerical::FailureCode::none;
 };
 
 struct NumericalSegmentAnchor {

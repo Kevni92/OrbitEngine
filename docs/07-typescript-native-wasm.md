@@ -136,11 +136,16 @@ Backend-specific packing is internal and must not leak into public value shapes.
 Normal TypeScript consumers use stable high-level operations such as:
 
 - register/configure initial motion authority;
+- create a numerical motion authority from an exact anchor, explicit DOP853 tolerances/step bounds, optional mass, constant acceleration, and explicit gravity sources through `OrbitEngine.numericalMotion(...)`;
 - query state at exact time, optionally in a requested output frame;
 - request an explicit model/configuration switch at an exact simulation time;
 - apply supported exact-time physical impulses/state changes;
 - provide supported deterministic force/mass/maneuver definitions;
 - inspect intentionally exposed model/reference status metadata.
+
+The numerical facade exposes `stateAt(T)`, `massAt(T)`, a backend-neutral propagation model declaration, and normalized propagation errors. It does not expose DOP853 stages, dense-output arrays, cache handles, native pointers, Emscripten modules, or per-stage JavaScript callbacks. The numerical operation is transferred as one validated f64/exact-time wire request and is evaluated by the same portable C++ core for native and WASM. Explicit work budgets (checkpoint stride/capacity, dense-step capacity, accepted/rejected-step limits) are part of the configuration so bounded resource exhaustion is observable rather than hidden.
+
+For true mutual interaction, consumers use `OrbitEngine.coupledMotion(...)` with a bounded group of 2–32 members. Promotion, same-time batch evaluation, demotion, and removal are one model-neutral authority operation; `bindCoupledMotion(...)` exposes the resulting members through the normal state-query API. The coupled authority preserves exact member IDs, epochs, frames, masses, and revisions while keeping group bookkeeping and integration in the portable core.
 
 TypeScript performs public input validation and error normalization, but the authoritative segment graph, switch transaction, reference-divergence transition, force evaluation order, and cache revisions live in portable C++.
 

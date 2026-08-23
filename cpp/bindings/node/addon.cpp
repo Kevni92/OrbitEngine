@@ -1,6 +1,8 @@
 #include "orbit_engine/core.hpp"
+#include "orbit_engine/coupled_operation.hpp"
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/frame_registry.hpp"
+#include "orbit_engine/numerical_operation.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
@@ -576,6 +578,241 @@ Napi::Object writeTwoBodyWire(Napi::Env env, orbit_engine::two_body::TwoBodyWire
   return result;
 }
 
+bool readNumericalWire(const Napi::Value& value, orbit_engine::numerical_operation::NumericalWire& output) {
+  if (!value.IsObject()) return false;
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) return false;
+    const auto number = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number);
+    return true;
+  };
+  const auto readDouble = [&object](const char* name, double& target) {
+    const auto value = object.Get(name);
+    if (!value.IsNumber()) return false;
+    target = value.As<Napi::Number>().DoubleValue();
+    return std::isfinite(target);
+  };
+  const auto readBoolean = [&object](const char* name, bool& target) {
+    const auto value = object.Get(name);
+    if (!value.IsBoolean()) return false;
+    target = value.As<Napi::Boolean>().Value();
+    return true;
+  };
+  return readInteger("resultCode", 0.0, 65'535.0, output.result_code)
+    && readInteger("objectIdHigh", 0.0, 4'294'967'295.0, output.object_id_high)
+    && readInteger("objectIdLow", 0.0, 4'294'967'295.0, output.object_id_low)
+    && readInteger("propagationFrameHigh", 0.0, 4'294'967'295.0, output.propagation_frame_high)
+    && readInteger("propagationFrameLow", 0.0, 4'294'967'295.0, output.propagation_frame_low)
+    && readInteger("frameRevisionHigh", 0.0, 4'294'967'295.0, output.frame_revision_high)
+    && readInteger("frameRevisionLow", 0.0, 4'294'967'295.0, output.frame_revision_low)
+    && readWire(object.Get("anchorEpoch"), output.anchor_epoch)
+    && readWire(object.Get("targetEpoch"), output.target_epoch)
+    && readDouble("anchorPositionX", output.anchor_position_x)
+    && readDouble("anchorPositionY", output.anchor_position_y)
+    && readDouble("anchorPositionZ", output.anchor_position_z)
+    && readDouble("anchorVelocityX", output.anchor_velocity_x)
+    && readDouble("anchorVelocityY", output.anchor_velocity_y)
+    && readDouble("anchorVelocityZ", output.anchor_velocity_z)
+    && readBoolean("massPresent", output.mass_present)
+    && readDouble("mass", output.mass)
+    && readDouble("constantAccelerationX", output.constant_acceleration_x)
+    && readDouble("constantAccelerationY", output.constant_acceleration_y)
+    && readDouble("constantAccelerationZ", output.constant_acceleration_z)
+    && readBoolean("sourcePresent", output.source_present)
+    && readInteger("sourceIdHigh", 0.0, 4'294'967'295.0, output.source_id_high)
+    && readInteger("sourceIdLow", 0.0, 4'294'967'295.0, output.source_id_low)
+    && readInteger("sourceRevisionHigh", 0.0, 4'294'967'295.0, output.source_revision_high)
+    && readInteger("sourceRevisionLow", 0.0, 4'294'967'295.0, output.source_revision_low)
+    && readDouble("sourcePositionX", output.source_position_x)
+    && readDouble("sourcePositionY", output.source_position_y)
+    && readDouble("sourcePositionZ", output.source_position_z)
+    && readBoolean("sourceMuPresent", output.source_mu_present)
+    && readDouble("sourceMu", output.source_mu)
+    && readBoolean("sourceMassPresent", output.source_mass_present)
+    && readDouble("sourceMass", output.source_mass)
+    && readDouble("relativeTolerance", output.relative_tolerance)
+    && readDouble("positionAbsoluteToleranceMeters", output.position_absolute_tolerance_meters)
+    && readDouble("velocityAbsoluteToleranceMetersPerSecond", output.velocity_absolute_tolerance_meters_per_second)
+    && readDouble("massAbsoluteToleranceKilograms", output.mass_absolute_tolerance_kilograms)
+    && readInteger("checkpointStrideAcceptedSteps", 1.0, 4'294'967'295.0, output.checkpoint_stride_accepted_steps)
+    && readInteger("maxCheckpointCount", 1.0, 4'294'967'295.0, output.max_checkpoint_count)
+    && readInteger("maxDenseStepCount", 1.0, 4'294'967'295.0, output.max_dense_step_count)
+    && readInteger("maxAcceptedStepsPerExtension", 1.0, 4'294'967'295.0, output.max_accepted_steps_per_extension)
+    && readInteger("maxRejectedStepsPerExtension", 1.0, 4'294'967'295.0, output.max_rejected_steps_per_extension)
+    && readWire(object.Get("minStep"), output.min_step)
+    && readWire(object.Get("maxStep"), output.max_step)
+    && readInteger("configurationRevisionHigh", 0.0, 4'294'967'295.0, output.configuration_revision_high)
+    && readInteger("configurationRevisionLow", 0.0, 4'294'967'295.0, output.configuration_revision_low)
+    && readInteger("motionRevisionHigh", 0.0, 4'294'967'295.0, output.motion_revision_high)
+    && readInteger("motionRevisionLow", 0.0, 4'294'967'295.0, output.motion_revision_low)
+    && readWire(object.Get("resultEpoch"), output.result_epoch)
+    && readDouble("resultPositionX", output.result_position_x)
+    && readDouble("resultPositionY", output.result_position_y)
+    && readDouble("resultPositionZ", output.result_position_z)
+    && readDouble("resultVelocityX", output.result_velocity_x)
+    && readDouble("resultVelocityY", output.result_velocity_y)
+    && readDouble("resultVelocityZ", output.result_velocity_z)
+    && readBoolean("resultMassPresent", output.result_mass_present)
+    && readDouble("resultMass", output.result_mass);
+}
+
+Napi::Object writeNumericalWire(Napi::Env env, const orbit_engine::numerical_operation::NumericalWire& value) {
+  auto result = Napi::Object::New(env);
+  result.Set("resultCode", Napi::Number::New(env, value.result_code));
+  result.Set("objectIdHigh", Napi::Number::New(env, value.object_id_high));
+  result.Set("objectIdLow", Napi::Number::New(env, value.object_id_low));
+  result.Set("propagationFrameHigh", Napi::Number::New(env, value.propagation_frame_high));
+  result.Set("propagationFrameLow", Napi::Number::New(env, value.propagation_frame_low));
+  result.Set("frameRevisionHigh", Napi::Number::New(env, value.frame_revision_high));
+  result.Set("frameRevisionLow", Napi::Number::New(env, value.frame_revision_low));
+  result.Set("anchorEpoch", writeWire(env, value.anchor_epoch));
+  result.Set("targetEpoch", writeWire(env, value.target_epoch));
+  result.Set("anchorPositionX", Napi::Number::New(env, value.anchor_position_x));
+  result.Set("anchorPositionY", Napi::Number::New(env, value.anchor_position_y));
+  result.Set("anchorPositionZ", Napi::Number::New(env, value.anchor_position_z));
+  result.Set("anchorVelocityX", Napi::Number::New(env, value.anchor_velocity_x));
+  result.Set("anchorVelocityY", Napi::Number::New(env, value.anchor_velocity_y));
+  result.Set("anchorVelocityZ", Napi::Number::New(env, value.anchor_velocity_z));
+  result.Set("massPresent", Napi::Boolean::New(env, value.mass_present));
+  result.Set("mass", Napi::Number::New(env, value.mass));
+  result.Set("constantAccelerationX", Napi::Number::New(env, value.constant_acceleration_x));
+  result.Set("constantAccelerationY", Napi::Number::New(env, value.constant_acceleration_y));
+  result.Set("constantAccelerationZ", Napi::Number::New(env, value.constant_acceleration_z));
+  result.Set("sourcePresent", Napi::Boolean::New(env, value.source_present));
+  result.Set("sourceIdHigh", Napi::Number::New(env, value.source_id_high));
+  result.Set("sourceIdLow", Napi::Number::New(env, value.source_id_low));
+  result.Set("sourceRevisionHigh", Napi::Number::New(env, value.source_revision_high));
+  result.Set("sourceRevisionLow", Napi::Number::New(env, value.source_revision_low));
+  result.Set("sourcePositionX", Napi::Number::New(env, value.source_position_x));
+  result.Set("sourcePositionY", Napi::Number::New(env, value.source_position_y));
+  result.Set("sourcePositionZ", Napi::Number::New(env, value.source_position_z));
+  result.Set("sourceMuPresent", Napi::Boolean::New(env, value.source_mu_present));
+  result.Set("sourceMu", Napi::Number::New(env, value.source_mu));
+  result.Set("sourceMassPresent", Napi::Boolean::New(env, value.source_mass_present));
+  result.Set("sourceMass", Napi::Number::New(env, value.source_mass));
+  result.Set("relativeTolerance", Napi::Number::New(env, value.relative_tolerance));
+  result.Set("positionAbsoluteToleranceMeters", Napi::Number::New(env, value.position_absolute_tolerance_meters));
+  result.Set("velocityAbsoluteToleranceMetersPerSecond", Napi::Number::New(env, value.velocity_absolute_tolerance_meters_per_second));
+  result.Set("massAbsoluteToleranceKilograms", Napi::Number::New(env, value.mass_absolute_tolerance_kilograms));
+  result.Set("checkpointStrideAcceptedSteps", Napi::Number::New(env, value.checkpoint_stride_accepted_steps));
+  result.Set("maxCheckpointCount", Napi::Number::New(env, value.max_checkpoint_count));
+  result.Set("maxDenseStepCount", Napi::Number::New(env, value.max_dense_step_count));
+  result.Set("maxAcceptedStepsPerExtension", Napi::Number::New(env, value.max_accepted_steps_per_extension));
+  result.Set("maxRejectedStepsPerExtension", Napi::Number::New(env, value.max_rejected_steps_per_extension));
+  result.Set("minStep", writeWire(env, value.min_step));
+  result.Set("maxStep", writeWire(env, value.max_step));
+  result.Set("configurationRevisionHigh", Napi::Number::New(env, value.configuration_revision_high));
+  result.Set("configurationRevisionLow", Napi::Number::New(env, value.configuration_revision_low));
+  result.Set("motionRevisionHigh", Napi::Number::New(env, value.motion_revision_high));
+  result.Set("motionRevisionLow", Napi::Number::New(env, value.motion_revision_low));
+  result.Set("resultEpoch", writeWire(env, value.result_epoch));
+  result.Set("resultPositionX", Napi::Number::New(env, value.result_position_x));
+  result.Set("resultPositionY", Napi::Number::New(env, value.result_position_y));
+  result.Set("resultPositionZ", Napi::Number::New(env, value.result_position_z));
+  result.Set("resultVelocityX", Napi::Number::New(env, value.result_velocity_x));
+  result.Set("resultVelocityY", Napi::Number::New(env, value.result_velocity_y));
+  result.Set("resultVelocityZ", Napi::Number::New(env, value.result_velocity_z));
+  result.Set("resultMassPresent", Napi::Boolean::New(env, value.result_mass_present));
+  result.Set("resultMass", Napi::Number::New(env, value.result_mass));
+  return result;
+}
+
+bool readCoupledMember(const Napi::Value& value, orbit_engine::coupled_operation::MemberWire& output) {
+  if (!value.IsObject()) return false;
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto value = object.Get(name); if (!value.IsNumber()) return false;
+    const auto number = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number); return true;
+  };
+  const auto readDouble = [&object](const char* name, double& target) {
+    const auto value = object.Get(name); if (!value.IsNumber()) return false;
+    target = value.As<Napi::Number>().DoubleValue(); return std::isfinite(target);
+  };
+  const auto readBoolean = [&object](const char* name, bool& target) {
+    const auto value = object.Get(name); if (!value.IsBoolean()) return false;
+    target = value.As<Napi::Boolean>().Value(); return true;
+  };
+  return readInteger("objectIdHigh", 0.0, 4'294'967'295.0, output.object_id_high)
+    && readInteger("objectIdLow", 0.0, 4'294'967'295.0, output.object_id_low)
+    && readWire(object.Get("epoch"), output.epoch)
+    && readInteger("frameHigh", 0.0, 4'294'967'295.0, output.frame_high)
+    && readInteger("frameLow", 0.0, 4'294'967'295.0, output.frame_low)
+    && readDouble("positionX", output.position_x) && readDouble("positionY", output.position_y) && readDouble("positionZ", output.position_z)
+    && readDouble("velocityX", output.velocity_x) && readDouble("velocityY", output.velocity_y) && readDouble("velocityZ", output.velocity_z)
+    && readBoolean("massPresent", output.mass_present) && readDouble("mass", output.mass)
+    && readBoolean("muPresent", output.mu_present) && readDouble("mu", output.mu)
+    && readInteger("motionRevisionHigh", 0.0, 4'294'967'295.0, output.motion_revision_high)
+    && readInteger("motionRevisionLow", 0.0, 4'294'967'295.0, output.motion_revision_low)
+    && readInteger("propertyRevisionHigh", 0.0, 4'294'967'295.0, output.property_revision_high)
+    && readInteger("propertyRevisionLow", 0.0, 4'294'967'295.0, output.property_revision_low)
+    && readInteger("massRevisionHigh", 0.0, 4'294'967'295.0, output.mass_revision_high)
+    && readInteger("massRevisionLow", 0.0, 4'294'967'295.0, output.mass_revision_low);
+}
+
+Napi::Object writeCoupledMember(Napi::Env env, const orbit_engine::coupled_operation::MemberWire& value) {
+  auto result = Napi::Object::New(env);
+  result.Set("objectIdHigh", Napi::Number::New(env, value.object_id_high)); result.Set("objectIdLow", Napi::Number::New(env, value.object_id_low));
+  result.Set("epoch", writeWire(env, value.epoch)); result.Set("frameHigh", Napi::Number::New(env, value.frame_high)); result.Set("frameLow", Napi::Number::New(env, value.frame_low));
+  result.Set("positionX", Napi::Number::New(env, value.position_x)); result.Set("positionY", Napi::Number::New(env, value.position_y)); result.Set("positionZ", Napi::Number::New(env, value.position_z));
+  result.Set("velocityX", Napi::Number::New(env, value.velocity_x)); result.Set("velocityY", Napi::Number::New(env, value.velocity_y)); result.Set("velocityZ", Napi::Number::New(env, value.velocity_z));
+  result.Set("massPresent", Napi::Boolean::New(env, value.mass_present)); result.Set("mass", Napi::Number::New(env, value.mass));
+  result.Set("muPresent", Napi::Boolean::New(env, value.mu_present)); result.Set("mu", Napi::Number::New(env, value.mu));
+  result.Set("motionRevisionHigh", Napi::Number::New(env, value.motion_revision_high)); result.Set("motionRevisionLow", Napi::Number::New(env, value.motion_revision_low));
+  result.Set("propertyRevisionHigh", Napi::Number::New(env, value.property_revision_high)); result.Set("propertyRevisionLow", Napi::Number::New(env, value.property_revision_low));
+  result.Set("massRevisionHigh", Napi::Number::New(env, value.mass_revision_high)); result.Set("massRevisionLow", Napi::Number::New(env, value.mass_revision_low));
+  return result;
+}
+
+bool readCoupledWire(const Napi::Value& value, orbit_engine::coupled_operation::CoupledWire& output) {
+  if (!value.IsObject()) return false;
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto value = object.Get(name); if (!value.IsNumber()) return false; const auto number = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number); return true;
+  };
+  const auto readDouble = [&object](const char* name, double& target) { const auto value = object.Get(name); if (!value.IsNumber()) return false; target = value.As<Napi::Number>().DoubleValue(); return std::isfinite(target); };
+  if (!readInteger("resultCode", 0.0, 65'535.0, output.result_code) || !readInteger("operationCode", 1.0, 4.0, output.operation_code)
+      || !readWire(object.Get("targetEpoch"), output.target_epoch)
+      || !readInteger("authorityIdHigh", 0.0, 4'294'967'295.0, output.authority_id_high) || !readInteger("authorityIdLow", 0.0, 4'294'967'295.0, output.authority_id_low)
+      || !readInteger("groupRevisionHigh", 0.0, 4'294'967'295.0, output.group_revision_high) || !readInteger("groupRevisionLow", 0.0, 4'294'967'295.0, output.group_revision_low)
+      || !readInteger("memberCount", 0.0, 32.0, output.member_count) || !readInteger("requestedCount", 0.0, 32.0, output.requested_count)
+      || !readInteger("configurationRevisionHigh", 0.0, 4'294'967'295.0, output.configuration_revision_high) || !readInteger("configurationRevisionLow", 0.0, 4'294'967'295.0, output.configuration_revision_low)
+      || !readDouble("relativeTolerance", output.relative_tolerance) || !readDouble("positionAbsoluteToleranceMeters", output.position_absolute_tolerance_meters)
+      || !readDouble("velocityAbsoluteToleranceMetersPerSecond", output.velocity_absolute_tolerance_meters_per_second) || !readDouble("massAbsoluteToleranceKilograms", output.mass_absolute_tolerance_kilograms)
+      || !readInteger("checkpointStrideAcceptedSteps", 1.0, 4'294'967'295.0, output.checkpoint_stride_accepted_steps) || !readInteger("maxCheckpointCount", 1.0, 4'294'967'295.0, output.max_checkpoint_count)
+      || !readInteger("maxDenseStepCount", 1.0, 4'294'967'295.0, output.max_dense_step_count) || !readInteger("maxAcceptedStepsPerExtension", 1.0, 4'294'967'295.0, output.max_accepted_steps_per_extension)
+      || !readInteger("maxRejectedStepsPerExtension", 1.0, 4'294'967'295.0, output.max_rejected_steps_per_extension)
+      || !readWire(object.Get("minStep"), output.min_step) || !readWire(object.Get("maxStep"), output.max_step)
+      || !readDouble("constantAccelerationX", output.constant_acceleration_x) || !readDouble("constantAccelerationY", output.constant_acceleration_y) || !readDouble("constantAccelerationZ", output.constant_acceleration_z)) return false;
+  const auto members = object.Get("members");
+  if (!members.IsArray() || output.member_count > orbit_engine::coupled_operation::kMaxMembers || members.As<Napi::Array>().Length() < output.member_count) return false;
+  for (std::size_t index = 0; index < output.member_count; ++index) if (!readCoupledMember(members.As<Napi::Array>().Get(index), output.members[index])) return false;
+  const auto requested = object.Get("requestedIds");
+  if (!requested.IsArray() || requested.As<Napi::Array>().Length() < output.requested_count) return false;
+  for (std::size_t index = 0; index < output.requested_count; ++index) {
+    const auto id = requested.As<Napi::Array>().Get(index); if (!id.IsObject()) return false; const auto item = id.As<Napi::Object>();
+    const auto high = item.Get("high"); const auto low = item.Get("low"); if (!high.IsNumber() || !low.IsNumber()) return false;
+    output.requested_id_high[index] = static_cast<std::uint32_t>(high.As<Napi::Number>().Uint32Value()); output.requested_id_low[index] = static_cast<std::uint32_t>(low.As<Napi::Number>().Uint32Value());
+  }
+  return true;
+}
+
+Napi::Object writeCoupledWire(Napi::Env env, const orbit_engine::coupled_operation::CoupledWire& value) {
+  auto result = Napi::Object::New(env);
+  result.Set("resultCode", Napi::Number::New(env, value.result_code)); result.Set("operationCode", Napi::Number::New(env, value.operation_code));
+  result.Set("authorityIdHigh", Napi::Number::New(env, value.authority_id_high)); result.Set("authorityIdLow", Napi::Number::New(env, value.authority_id_low));
+  result.Set("groupRevisionHigh", Napi::Number::New(env, value.group_revision_high)); result.Set("groupRevisionLow", Napi::Number::New(env, value.group_revision_low));
+  result.Set("resultCount", Napi::Number::New(env, value.result_count)); result.Set("sharedEvaluationCountHigh", Napi::Number::New(env, value.shared_evaluation_count_high)); result.Set("sharedEvaluationCountLow", Napi::Number::New(env, value.shared_evaluation_count_low));
+  auto results = Napi::Array::New(env, value.result_count); for (std::size_t index = 0; index < value.result_count; ++index) results.Set(index, writeCoupledMember(env, value.results[index])); result.Set("results", results);
+  return result;
+}
+
 Napi::Value RoundTripTime(const Napi::CallbackInfo& info) {
   const auto env = info.Env();
   if (info.Length() != 1) {
@@ -715,6 +952,34 @@ Napi::Value RoundTripTwoBody(const Napi::CallbackInfo& info) {
   return writeTwoBodyWire(env, orbit_engine::two_body::evaluate(input));
 }
 
+Napi::Value RoundTripNumerical(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1) {
+    Napi::TypeError::New(env, "roundTripNumerical expects one numerical wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  orbit_engine::numerical_operation::NumericalWire input{};
+  if (!readNumericalWire(info[0], input)) {
+    Napi::TypeError::New(env, "roundTripNumerical received an invalid wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  return writeNumericalWire(env, orbit_engine::numerical_operation::evaluate(input));
+}
+
+Napi::Value RoundTripCoupled(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1) {
+    Napi::TypeError::New(env, "roundTripCoupled expects one coupled wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  orbit_engine::coupled_operation::CoupledWire input{};
+  if (!readCoupledWire(info[0], input)) {
+    Napi::TypeError::New(env, "roundTripCoupled received an invalid wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  return writeCoupledWire(env, orbit_engine::coupled_operation::evaluate(input));
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("protocolVersion", Napi::Number::New(env, orbit_engine::kBindingProtocolVersion));
   exports.Set("initialize", Napi::Function::New(env, Initialize));
@@ -726,6 +991,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("roundTripRegistry", Napi::Function::New(env, RoundTripRegistry));
   exports.Set("roundTripFrameRegistry", Napi::Function::New(env, RoundTripFrameRegistry));
   exports.Set("roundTripTwoBody", Napi::Function::New(env, RoundTripTwoBody));
+  exports.Set("roundTripNumerical", Napi::Function::New(env, RoundTripNumerical));
+  exports.Set("roundTripCoupled", Napi::Function::New(env, RoundTripCoupled));
   return exports;
 }
 

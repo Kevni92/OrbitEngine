@@ -6,6 +6,15 @@ import {
   propagationTimeInterval,
   revisionId,
   simulationInstant,
+  duration,
+  kilograms,
+  meters,
+  metersPerSecond,
+  metersPerSecondSquared,
+  objectId,
+  propagationState,
+  referenceFrameId,
+  vec3,
   type OepLoadInput,
 } from "orbit-engine";
 
@@ -101,9 +110,37 @@ try {
   handle.release();
   dataset.unload();
 
+  const numerical = engine.numericalMotion({
+    objectId: objectId("42"),
+    anchor: propagationState({
+      position: vec3(meters(1), meters(0), meters(0)),
+      velocity: vec3(metersPerSecond(3), metersPerSecond(0), metersPerSecond(0)),
+      epoch: simulationInstant(0),
+      referenceFrame: referenceFrameId("1"),
+    }),
+    configurationRevision: revisionId("1"),
+    motionRevision: revisionId("2"),
+    relativeTolerance: 1e-12,
+    positionAbsoluteToleranceMeters: 1e-10,
+    velocityAbsoluteToleranceMetersPerSecond: 1e-12,
+    minStep: duration(0, 1),
+    maxStep: duration(1),
+    mass: kilograms(4),
+    constantAcceleration: vec3(
+      metersPerSecondSquared(2),
+      metersPerSecondSquared(0),
+      metersPerSecondSquared(0),
+    ),
+  });
+  const numericalState = numerical.stateAt(simulationInstant(2));
+  if (Math.abs(numericalState.position.x - 11) > 1e-8
+      || Math.abs(numericalState.velocity.x - 7) > 1e-9) {
+    throw new Error("Unexpected browser numerical state");
+  }
+
   setStatus(
     "ready",
-    `ready:${health.protocolVersion}:${health.coreVersion}:${health.healthCode}:oep:${state.position.x}:${state.velocity.x}`,
+    `ready:${health.protocolVersion}:${health.coreVersion}:${health.healthCode}:oep:${state.position.x}:${state.velocity.x}:numerical:${Math.round(numericalState.position.x)}`,
   );
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);

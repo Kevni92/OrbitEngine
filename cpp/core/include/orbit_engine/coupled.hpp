@@ -154,6 +154,7 @@ public:
   CoupledAuthorityManager() = default;
 
   [[nodiscard]] const CoupledAuthority* authority() const noexcept;
+  [[nodiscard]] CoupledAuthority* authority() noexcept;
 
   [[nodiscard]] bool promote(
     time::SimulationInstant target,

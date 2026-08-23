@@ -5,8 +5,10 @@ import type { PropagationWire } from "../propagation-wire.js";
 import type { RegistryWire } from "../registry-wire.js";
 import type { FrameRegistryWire } from "../frame-registry-wire.js";
 import type { TwoBodyWire } from "../two-body-wire.js";
+import type { NumericalWire } from "../numerical-wire.js";
+import type { CoupledWire } from "../coupled-wire.js";
 
-export const BINDING_PROTOCOL_VERSION = 8;
+export const BINDING_PROTOCOL_VERSION = 9;
 
 export type BackendKind = "native" | "wasm";
 
@@ -27,6 +29,8 @@ export interface Backend {
   roundTripRegistry(value: RegistryWire): RegistryWire;
   roundTripFrameRegistry(value: FrameRegistryWire): FrameRegistryWire;
   roundTripTwoBody(value: TwoBodyWire): TwoBodyWire;
+  roundTripNumerical(value: NumericalWire): NumericalWire;
+  roundTripCoupled(value: CoupledWire): CoupledWire;
 }
 
 export interface RawBackendBinding {
@@ -40,6 +44,8 @@ export interface RawBackendBinding {
   roundTripRegistry(value: unknown): unknown;
   roundTripFrameRegistry(value: unknown): unknown;
   roundTripTwoBody(value: unknown): unknown;
+  roundTripNumerical(value: unknown): unknown;
+  roundTripCoupled(value: unknown): unknown;
 }
 
 export interface RawInitializationResult {

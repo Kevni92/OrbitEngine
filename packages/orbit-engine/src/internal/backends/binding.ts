@@ -14,6 +14,8 @@ import { validatePropagationWire, type PropagationWire } from "../propagation-wi
 import { validateRegistryWire, type RegistryWire } from "../registry-wire.js";
 import { validateFrameRegistryWire, type FrameRegistryWire } from "../frame-registry-wire.js";
 import { validateTwoBodyWire, type TwoBodyWire } from "../two-body-wire.js";
+import { validateNumericalWire, type NumericalWire } from "../numerical-wire.js";
+import { validateCoupledWire, type CoupledWire } from "../coupled-wire.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -42,7 +44,9 @@ export async function backendFromRawBinding(
   }
   if (typeof raw.roundTripRegistry !== "function"
       || typeof raw.roundTripFrameRegistry !== "function"
-      || typeof raw.roundTripTwoBody !== "function") {
+      || typeof raw.roundTripTwoBody !== "function"
+      || typeof raw.roundTripNumerical !== "function"
+      || typeof raw.roundTripCoupled !== "function") {
     throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
   }
 
@@ -159,6 +163,26 @@ export async function backendFromRawBinding(
         throw new BackendInitializationError(kind, `${kind} two-body operation failed`, cause);
       }
       return validateTwoBodyWire(result);
+    },
+    roundTripNumerical: (value: NumericalWire): NumericalWire => {
+      const input = validateNumericalWire(value);
+      let result: unknown;
+      try {
+        result = binding.roundTripNumerical(input);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} numerical operation failed`, cause);
+      }
+      return validateNumericalWire(result);
+    },
+    roundTripCoupled: (value: CoupledWire): CoupledWire => {
+      const input = validateCoupledWire(value);
+      let result: unknown;
+      try {
+        result = binding.roundTripCoupled(input);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} coupled operation failed`, cause);
+      }
+      return validateCoupledWire({ ...input, ...(result as object) });
     },
   };
 }

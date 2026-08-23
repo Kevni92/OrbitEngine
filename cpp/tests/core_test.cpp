@@ -29,7 +29,7 @@ int main() {
     return 1;
   }
 
-  if (orbit_engine::kBindingProtocolVersion != 8) {
+  if (orbit_engine::kBindingProtocolVersion != 9) {
     std::cerr << "unexpected binding protocol version\n";
     return 1;
   }

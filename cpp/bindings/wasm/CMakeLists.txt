@@ -180,6 +180,20 @@ set(ORBIT_ENGINE_WASM_EXPORTS
   _orbit_engine_two_body_result_velocity_x
   _orbit_engine_two_body_result_velocity_y
   _orbit_engine_two_body_result_velocity_z
+  _orbit_engine_round_trip_numerical
+  _orbit_engine_numerical_result_code
+  _orbit_engine_numerical_result_epoch_seconds_high
+  _orbit_engine_numerical_result_epoch_seconds_low
+  _orbit_engine_numerical_result_epoch_nanoseconds
+  _orbit_engine_numerical_result_position_x
+  _orbit_engine_numerical_result_position_y
+  _orbit_engine_numerical_result_position_z
+  _orbit_engine_numerical_result_velocity_x
+  _orbit_engine_numerical_result_velocity_y
+  _orbit_engine_numerical_result_velocity_z
+  _orbit_engine_numerical_result_mass_present
+  _orbit_engine_numerical_result_mass
+  _orbit_engine_round_trip_coupled
   _orbit_engine_oep_load
   _orbit_engine_oep_retain
   _orbit_engine_oep_release_reference

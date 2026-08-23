@@ -153,6 +153,37 @@ export class ObjectStateQueries {
     const exactTarget = normalizedTarget(target);
     const normalizedFrame = outputFrame === undefined ? undefined : referenceFrameId(outputFrame);
     const context = requestContext();
+    const normalizedIds = ids.map((id) => objectId(id));
+    if (normalizedIds.length > 0) {
+      const records = normalizedIds.map((id) => this.#registry.get(id));
+      const bindings = records.map((record) => this.#bindingFor(record));
+      const batch = bindings[0]?.model.evaluateBatch;
+      if (batch !== undefined && bindings.every((binding) => binding.model.evaluateBatch === batch)) {
+        records.forEach((record) => assertTargetInActiveSegment(record, exactTarget));
+        const states = [...batch(normalizedIds, exactTarget, propagationEvaluationContext({
+          currentTime: this.#registry.currentTime(),
+        }))];
+        if (states.length !== normalizedIds.length) {
+          throw new PropagationError(PropagationErrorCode.invalidCanonicalState, "Batch propagation returned the wrong number of states");
+        }
+        return Object.freeze(states.map((state, index) => {
+          const record = records[index];
+          const binding = bindings[index];
+          if (record === undefined || binding === undefined || state === undefined) {
+            throw new PropagationError(PropagationErrorCode.invalidCanonicalState, "Batch propagation returned an incomplete state set");
+          }
+          if (compareSimulationInstants(state.epoch, exactTarget) !== 0
+              || state.referenceFrame !== binding.model.declaration.propagationFrame) {
+            throw new PropagationError(PropagationErrorCode.invalidCanonicalState, "Batch propagation returned a state with the wrong epoch or frame");
+          }
+          context.rawStates.set(rawKey(record.id, exactTarget), state);
+          if (normalizedFrame === undefined || state.referenceFrame === normalizedFrame) return state;
+          const transformed = this.#frames.transformState(state, normalizedFrame);
+          context.transformedStates.set(transformedKey(record.id, exactTarget, normalizedFrame), transformed);
+          return transformed;
+        }));
+      }
+    }
     return Object.freeze(ids.map((id) => this.#stateAt(objectId(id), exactTarget, normalizedFrame, context)));
   }
 
