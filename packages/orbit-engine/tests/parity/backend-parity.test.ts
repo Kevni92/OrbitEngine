@@ -15,6 +15,7 @@ import { assertNumericalMotion } from "../shared/numerical.js";
 import { assertCoupledMotion } from "../shared/coupled.js";
 import { assertScheduledWorkQueue } from "../shared/scheduler.js";
 import { assertFidelityManager } from "../shared/fidelity.js";
+import { assertFidelityTransitions } from "../shared/fidelity-transitions.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -61,5 +62,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`semantic fidelity requirements and selection have parity on ${name}`, async () => {
     await assertFidelityManager(await OrbitEngine.create({ backend: name }));
+  });
+  test(`fidelity authority transitions have parity on ${name}`, async () => {
+    await assertFidelityTransitions(await OrbitEngine.create({ backend: name }));
   });
 }

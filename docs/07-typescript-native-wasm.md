@@ -143,6 +143,8 @@ engine.getFidelityStatus(objectId)
 
 Requirements combine monotonically: stricter error budgets use the smaller bound, interaction capabilities combine by logical OR, gravity-source requirements use set union, and reason/re-evaluation metadata is retained deterministically. Candidate selection first preserves a satisfying current authority and otherwise chooses the cheapest satisfying configured candidate with stable tie-breaks. No camera, zoom, renderer, UI, ownership, or game-priority state participates. If no configured candidate can prove the effective physical requirement, the API reports an explicit `FidelitySelectionError` and never silently downgrades. This policy layer is backend-neutral, so native and WASM expose identical requirement, selection, and diagnostic semantics.
 
+Configured executable candidates may additionally be bound to the existing exact-time `MotionAuthority` transaction. Promotion evaluates and validates the canonical handoff before committing; demotion requires the configured minimum dwell, quiet-window, bounded retry/backoff, and future acceptance-horizon representability checks. A failed promotion or demotion leaves the previous authority and segment history unchanged. The motion authority's one-way `followingReference` → `diverged` rule remains in force, including after later demotion or coupled-authority exit.
+
 Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense indexes, propagator/provider vtables, integrator work arrays, cache handles, and pointers are not exported from the normal public package entry point.
 
 ## Numeric, time, object, frame, and propagation transfer contract

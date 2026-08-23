@@ -40,10 +40,13 @@ import {
 } from "./coupled.js";
 import {
   FidelityManager,
+  type FidelityAuthorityCandidateInput,
+  type FidelityAuthorityTransitionPolicy,
   type FidelityCandidateInput,
   type FidelityRequirementInput,
   type FidelityStatus,
 } from "./fidelity.js";
+import type { MotionAuthority } from "./propagation.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -180,6 +183,27 @@ export class OrbitEngine {
 
   configureFidelityCandidates(id: ObjectId, candidates: readonly FidelityCandidateInput[]): FidelityStatus {
     return this.#fidelityManager.configureCandidates(id, candidates);
+  }
+
+  configureFidelityAuthorityCandidates(
+    id: ObjectId,
+    candidates: readonly FidelityAuthorityCandidateInput[],
+    policy?: FidelityAuthorityTransitionPolicy,
+  ): FidelityStatus {
+    return this.#fidelityManager.configureAuthorityCandidates(id, candidates, policy);
+  }
+
+  bindFidelityAuthority(
+    id: ObjectId,
+    authority: MotionAuthority,
+    currentCandidateId: string,
+    policy?: FidelityAuthorityTransitionPolicy,
+  ): FidelityStatus {
+    return this.#fidelityManager.bindAuthority(id, authority, currentCandidateId, this.currentTime, policy);
+  }
+
+  transitionFidelityAuthority(id: ObjectId): FidelityStatus {
+    return this.#fidelityManager.transitionAuthority(id, this.currentTime);
   }
 
   setFidelitySignal(
