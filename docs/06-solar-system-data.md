@@ -8,31 +8,54 @@ The engine consumes normalized physical/orbital/frame data; separate import/buil
 
 Reference/demo applications may ship small committed normalized fixtures for deterministic integration and visualization. Those fixtures are consumers of the same object/time/frame/propagation contracts and must not become a second runtime astronomy database or a source of hidden engine defaults.
 
-## Intended source direction
+The production translational reference-data contract is defined by [20 — Reference Ephemeris Data and Pipeline](20-reference-ephemeris-data-and-pipeline.md).
 
-Authoritative astronomical sources such as NASA/JPL data products should provide the factual baseline where practical, including ephemerides/orbital state, physical constants, rotation/orientation data, and body metadata.
+## Authoritative source direction
 
-The exact source set and licenses/redistribution rules must be decided before a production dataset is shipped. Candidate source families include JPL Horizons and SPICE/NAIF products.
+Authoritative astronomical sources such as NASA/JPL data products provide the factual baseline where practical, including ephemerides/orbital state, physical constants, rotation/orientation data, and body metadata.
+
+Architecture #113 makes the translational source strategy concrete:
+
+- JPL **DE441** is the standard long-horizon major-body baseline because it covers OrbitEngine's approximately ±1000-year target around a modern era;
+- DE440 may later be offered as a separately selected modern-era dataset profile, but runtime does not automatically splice DE440 and DE441 by date;
+- planet centers and non-lunar natural satellites use pinned JPL planetary-system/satellite ephemerides where available and retain their actual, often shorter, validity intervals;
+- Pluto-system body centers use an appropriate pinned Pluto-system ephemeris combined with the DE441 Pluto-system barycenter where required;
+- curated asteroids/comets/minor bodies prefer suitable official JPL/NAIF/PDS SPKs and may otherwise use pinned Horizons-generated small-body SPKs acquired offline;
+- runtime never contacts JPL/Horizons/NAIF to obtain or refresh authoritative state.
+
+The exact product/kernel/version selected for a released scenario is part of that scenario dataset's identity and provenance.
 
 ## Reproducible import pipeline
 
-Preferred flow:
+The production flow is:
 
 ```text
-Authoritative external sources
+Pinned authoritative JPL/NAIF/Horizons products
           |
-      import tooling
+      acquisition cache
+      + checksums/version
           |
-validation / normalization
+  CSPICE-assisted import tooling
           |
-versioned OrbitEngine dataset
+validation / SI + TDB + frame normalization
           |
-scenario/game loads objects + frames
+OrbitEngine Ephemeris Pack (OEP)
+manifest + binary shards
+          |
+scenario/game loads dataset + objects + frames
+          |
+portable referenceEphemeris evaluator
           |
       OrbitEngine
 ```
 
-Normal game/server execution should not depend on live internet access to JPL/NASA services.
+Normal game/server/browser execution does not depend on live internet access to JPL/NASA services.
+
+CSPICE is an allowed acquisition/import/validation dependency. It is not a normal portable-core, native-addon, or WASM runtime dependency. Runtime evaluates the OrbitEngine-owned normalized OEP representation directly.
+
+OEP is scenario/dataset content rather than a hidden database bundled into every `orbit-engine` npm installation. The npm package owns the loader/evaluator contracts; scenarios own which pack versions and shards they distribute/load.
+
+See document 20 for pack format, source-center graph, sharding, error budgets, versioning, and source-vector/event validation.
 
 ## Time, units, object, and frame normalization
 
@@ -43,17 +66,20 @@ Import/build tooling is responsible for:
 - converting source units to SI;
 - converting source epochs/time scales to normalized TDB `SimulationInstant` values;
 - mapping each imported body to one stable caller-supplied OrbitEngine `ObjectId`;
+- keeping dataset-local ephemeris source-node identity distinct from `ObjectId` and `ReferenceFrameId`;
 - mapping source body classification to the closed physical `ObjectType` taxonomy;
 - assigning deterministic non-root `ReferenceFrameId` values for imported frame definitions;
 - recording the exact source spatial reference-frame convention/realization rather than relying on ambiguous labels alone;
-- rotating/translating imported states into the declared OrbitEngine frame when the source frame is materially different;
+- rotating/translating imported states or coefficients into the declared normalized OrbitEngine frame exactly once when the source frame is materially different;
+- preserving the source target/center graph needed for barycenter/planet/moon reconstruction without conflating it with the physical `centralBody` hierarchy;
 - converting source orientation models into the canonical quaternion + angular-velocity provider contract where runtime body-fixed frames require them;
 - keeping physical mass, gravitational parameter, physical radius, and collision envelope as explicit fields rather than relying on hidden inference;
-- preserving reference-source/provenance information separately from runtime identity/type.
+- preserving reference-source/provenance information separately from runtime identity/type;
+- recording source coverage, source uncertainty/limitations, and normalization/representation error separately.
 
 Runtime simulation must not need live SPICE kernels, a live network connection, or a mutable leap-second table merely to interpret a versioned normalized dataset.
 
-The produced dataset must retain source/provenance information sufficient to reproduce time conversion, frame conversion, orientation, and physical values, including source time scale, source spatial frame/product convention, orientation-source version, and leap-second/time-conversion data source where applicable.
+The produced dataset must retain source/provenance information sufficient to reproduce time conversion, frame conversion, orientation, and physical values, including source time scale, source spatial frame/product convention, source/kernel/orbit-solution version, checksums, orientation-source version, and leap-second/time-conversion data source where applicable.
 
 ## Spatial reference convention
 
@@ -61,23 +87,42 @@ OrbitEngine's canonical root is SSB-centered with fixed ICRS/ICRF-aligned axes. 
 
 Modern JPL/SPICE products commonly labeled `J2000` may be ICRF-aligned for historical compatibility; the exact source product documentation remains authoritative and should be preserved as provenance.
 
+Production OEP translational series are geometric. Observer/light-time/stellar-aberration-corrected Horizons results are not canonical physical-state input.
+
 Body-fixed source frames are normalized through explicit orientation providers. Source surface coordinates such as planetocentric/planetographic latitude/longitude are converted through an explicit body-shape/convention into body-fixed Cartesian/local transforms rather than becoming universal runtime state.
+
+## Ephemeris source hierarchy versus physical hierarchy
+
+JPL source products distinguish SSB, planetary-system barycenters, planet centers, and satellite centers. That source dependency graph is not OrbitEngine's physical/display hierarchy.
+
+A dataset may therefore contain a non-selectable ephemeris source node or frame origin such as the Jupiter-system barycenter while the physical catalog still says:
+
+```text
+Europa.centralBody = Jupiter
+```
+
+Pack-backed source-center frames are ordinary document-14 non-rotating frame providers with explicit dataset dependencies; they are not `ObjectType` values and do not become game entities.
+
+This separation prevents double-applying parent translation and preserves useful local source coordinates for satellite systems.
 
 ## Data categories
 
 Orbit-relevant dataset fields may include:
 
 - stable OrbitEngine object ID plus source identifiers/names used for provenance;
+- dataset-local ephemeris source-node IDs and source-center relationships;
 - physical `ObjectType`;
 - stable frame IDs plus parent/dependency definitions;
 - source/canonical frame convention and validity metadata;
 - mass and/or gravitational parameter as explicitly supplied/normalized;
 - mean/physical radius and later collision/shape information where needed;
-- epoch Cartesian state vectors and/or reference ephemeris representation;
+- epoch Cartesian state vectors and/or OEP reference ephemeris bindings;
 - orbital elements where appropriate as derived/import representation, not canonical dynamic authority after divergence;
 - normalized orientation provider data for required body-fixed frames;
-- parent/reference relationships;
-- source/provenance/version information, including source unit/time-scale/spatial-frame metadata where relevant.
+- physical parent/reference relationships distinct from source-center relationships;
+- source/provenance/version/checksum information;
+- per-series effective validity and normalization error budgets;
+- source uncertainty/limitations where known.
 
 Resource composition, geology, atmosphere as gameplay content, habitability, population, economy, detailed terrain, and rendering-coordinate data are outside OrbitEngine unless a physical subset is specifically required by trajectory/frame physics.
 
@@ -118,35 +163,59 @@ A fixed RGB value is presentation metadata, not an astronomical physical truth. 
 
 Composition alone must not be presented as an exact color prediction. The normalized appearance dataset may provide calibrated visible reflectance where available and otherwise use a documented, versioned optical approximation.
 
-## Browser demo fixture
+## Browser demo fixture and migration
 
-The browser Solar-System reference application defined by [16 — Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md) uses a small committed offline fixture containing at least the Sun, eight planets, and Earth's Moon.
+The browser Solar-System reference application defined by [16 — Browser Solar-System Demo Architecture](16-browser-solar-system-demo.md) currently uses a committed offline educational fixture.
 
-The fixture is intentionally an integration/scenario artifact, not a production ephemeris database.
+That fixture remains an integration/scenario artifact and is explicitly superseded for reference-quality motion by the OEP production path from document 20.
 
-Requirements:
+Migration requirements:
 
-- use the same normalized SI/time/object/frame/propagation inputs expected from the future importer;
-- use stable explicit object/frame IDs rather than name-based engine identity;
-- record source, epoch/time scale, source frame, normalization steps, and known accuracy limitations;
-- require no runtime network access;
-- keep display and celestial-appearance metadata outside engine physical records;
-- keep appearance provenance separate from ephemeris provenance;
-- remain replaceable by later production importer output without changing rendering architecture;
-- use OrbitEngine production state-at-time models for visible motion rather than embedding a JavaScript orbital approximation in the demo.
+- preserve stable application `ObjectId` values and UI/appearance metadata where practical;
+- load a versioned application-owned OEP manifest/shard set through public OrbitEngine APIs;
+- use `referenceEphemeris` for known natural bodies while their source is authoritative;
+- remove manually circularized/copy-authored reference anchors for migrated bodies;
+- continue to derive all rendered positions and sampled orbit lines from normal engine state-at-time queries;
+- require no external astronomy network request at runtime;
+- expose or enforce per-body effective reference validity instead of presenting out-of-range results as source quality;
+- retain appearance provenance separately from ephemeris provenance;
+- include source-vector regressions and the 2026-08-12 eclipse geometry as a concrete Earth/Moon cross-body regression.
 
-The committed fixture may be substantially smaller and scientifically less comprehensive than the final production dataset, but it must never obscure its provenance or claim a validity window it has not been validated for.
+The demo never receives a JavaScript ephemeris solver and never parses OEP coefficients into its own authoritative state.
 
-## Accuracy window
+## Accuracy window and source validity
 
-The intended simulation use case is approximately ±1000 years around a scenario epoch. We do not need a model optimized for tens of millions of years. Data, frame/orientation, and propagation choices should be validated against the actual supported time window.
+The intended simulation use case is approximately ±1000 years around a modern scenario epoch. The default major-body DE441 baseline covers that target comfortably.
+
+That does **not** imply every planet-center, natural-satellite, asteroid, or comet source has the same validity. JPL planetary-satellite and small-body products retain their own actual source intervals and uncertainty.
+
+Every `referenceEphemeris` binding has an effective validity equal to the intersection of its target series, source-center dependencies, required frame/provider coverage, and configured motion segment.
+
+A query outside that interval fails explicitly. A scenario may deliberately install a separate adjacent `twoBodyAnalytical`, `numerical`, or other future source/model segment with its own accuracy contract, but OrbitEngine never silently extrapolates the final reference record or labels such fallback as JPL reference quality.
 
 The underlying instant/identity representations have larger numerical ranges; that does not extend the scientific validity of imported data or models automatically.
 
-A demo fixture may have a narrower documented useful interval than the long-term engine target. The UI/implementation must not silently present out-of-validity results as reference-quality astronomy.
+## Reference quality and validation
+
+Reference quality means reproducing the **selected pinned source trajectory** within the OEP normalization error budget. It does not mean the real body is known to that same numerical precision.
+
+The production pipeline validates OEP states against the selected CSPICE/Horizons source oracle at deterministic epochs, including record boundaries and dates far from old single-anchor fixtures.
+
+For directly normalized major-body/satellite Chebyshev data, document 20 sets a default normalization ceiling of:
+
+```text
+position error <= 1e-3 m
+velocity error <= 1e-6 m/s
+```
+
+unless a source family explicitly adopts a stricter or reviewed looser policy.
+
+Source trajectory uncertainty is recorded separately.
 
 ## Reference divergence
 
 Imported data defines the baseline/reference history. `followingReference` is motion/provenance status, not `ObjectType`.
 
 Once simulation changes an imported object's physical state, the object transitions atomically to diverged dynamic authority at that exact instant. Its `ObjectId`, physical `ObjectType`, and frame identities stay unchanged unless an explicit separate structural operation changes frame attachment. The original source ephemeris remains available only as historical/reference provenance and must never silently regain authority.
+
+A later low-cost `twoBodyAnalytical` segment may be derived from the diverged handoff state if it meets the requested fidelity/error contract. It continues the simulated changed trajectory; it does not restore the original OEP/JPL future.
