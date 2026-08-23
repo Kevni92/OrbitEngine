@@ -111,6 +111,21 @@ Once a valid native module is loaded, protocol mismatch or backend initializatio
 
 The reference browser demo deliberately selects `wasm` rather than `auto` so it continuously validates the browser/WASM consumer path.
 
+### Exact clock and scheduled work queue
+
+`OrbitEngine` exposes one backend-neutral exact clock and one deterministic scheduled-work queue:
+
+```ts
+engine.currentTime
+engine.clock()
+engine.scheduleWork({ instant, phase, sourceKind, sourceId, payload })
+engine.replaceScheduledWork(id, generation, replacement)
+engine.cancelScheduledWork(id, generation)
+engine.listScheduledWorkDiagnostics()
+```
+
+The clock is represented as the normalized integer `SimulationInstant`, never as floating-point total seconds. Work records receive monotonically allocated, never-reused `ScheduledWorkId` values and an explicit generation. Queue ordering is by exact instant, semantic phase, source kind, source ID, source ordinal, and finally work ID. Cancellation and replacement require the exact ID/generation pair; past work is rejected and same-time work requires explicit opt-in while a timestamp transaction is being drained. Queue limits and all wire marshalling are shared by the native and WASM adapters; the portable C++ core contains no Node.js or Emscripten dependency.
+
 Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense indexes, propagator/provider vtables, integrator work arrays, cache handles, and pointers are not exported from the normal public package entry point.
 
 ## Numeric, time, object, frame, and propagation transfer contract

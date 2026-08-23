@@ -194,6 +194,7 @@ set(ORBIT_ENGINE_WASM_EXPORTS
   _orbit_engine_numerical_result_mass_present
   _orbit_engine_numerical_result_mass
   _orbit_engine_round_trip_coupled
+  _orbit_engine_round_trip_scheduler
   _orbit_engine_oep_load
   _orbit_engine_oep_retain
   _orbit_engine_oep_release_reference
@@ -265,6 +266,7 @@ target_link_options(orbit_engine_wasm PRIVATE
   "-sEXPORT_ES6=1"
   "-sENVIRONMENT=web,node"
   "-sALLOW_MEMORY_GROWTH=1"
+  "-sSTACK_SIZE=262144"
   "-sEXPORTED_FUNCTIONS=@${ORBIT_ENGINE_WASM_EXPORTS_FILE}"
   "--no-entry"
 )

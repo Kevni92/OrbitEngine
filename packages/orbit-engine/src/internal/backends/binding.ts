@@ -16,6 +16,7 @@ import { validateFrameRegistryWire, type FrameRegistryWire } from "../frame-regi
 import { validateTwoBodyWire, type TwoBodyWire } from "../two-body-wire.js";
 import { validateNumericalWire, type NumericalWire } from "../numerical-wire.js";
 import { validateCoupledWire, type CoupledWire } from "../coupled-wire.js";
+import { validateSchedulerWire, type SchedulerWire } from "../scheduler-wire.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -46,7 +47,8 @@ export async function backendFromRawBinding(
       || typeof raw.roundTripFrameRegistry !== "function"
       || typeof raw.roundTripTwoBody !== "function"
       || typeof raw.roundTripNumerical !== "function"
-      || typeof raw.roundTripCoupled !== "function") {
+      || typeof raw.roundTripCoupled !== "function"
+      || typeof raw.roundTripScheduler !== "function") {
     throw new BackendInitializationError(kind, `${kind} binding is missing its initialization surface`);
   }
 
@@ -183,6 +185,16 @@ export async function backendFromRawBinding(
         throw new BackendInitializationError(kind, `${kind} coupled operation failed`, cause);
       }
       return validateCoupledWire({ ...input, ...(result as object) });
+    },
+    roundTripScheduler: (value: SchedulerWire): SchedulerWire => {
+      const input = validateSchedulerWire(value);
+      let result: unknown;
+      try {
+        result = binding.roundTripScheduler(input);
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} scheduler operation failed`, cause);
+      }
+      return validateSchedulerWire({ ...input, ...(result as object) });
     },
   };
 }

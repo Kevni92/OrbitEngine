@@ -6,6 +6,7 @@
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
+#include "orbit_engine/scheduler.hpp"
 #include "orbit_engine/time.hpp"
 #include "orbit_engine/two_body.hpp"
 
@@ -18,6 +19,7 @@ namespace {
 
 orbit_engine::registry::Registry g_registry;
 orbit_engine::frame_registry::Registry g_frame_registry;
+orbit_engine::scheduler::Scheduler g_scheduler;
 
 Napi::Value Initialize(const Napi::CallbackInfo& info) {
   const auto health = orbit_engine::health();
@@ -813,6 +815,105 @@ Napi::Object writeCoupledWire(Napi::Env env, const orbit_engine::coupled_operati
   return result;
 }
 
+bool readSchedulerWork(const Napi::Value& value, orbit_engine::scheduler::WorkWire& output) {
+  if (!value.IsObject()) return false;
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto item = object.Get(name);
+    if (!item.IsNumber()) return false;
+    const auto number = item.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number);
+    return true;
+  };
+  const auto readDouble = [&object](const char* name, double& target) {
+    const auto item = object.Get(name);
+    if (!item.IsNumber()) return false;
+    target = item.As<Napi::Number>().DoubleValue();
+    return std::isfinite(target);
+  };
+  return readInteger("idHigh", 0.0, 4'294'967'295.0, output.id_high)
+    && readInteger("idLow", 0.0, 4'294'967'295.0, output.id_low)
+    && readInteger("generationHigh", 0.0, 4'294'967'295.0, output.generation_high)
+    && readInteger("generationLow", 0.0, 4'294'967'295.0, output.generation_low)
+    && readWire(object.Get("instant"), output.instant)
+    && readInteger("phase", 0.0, 65'535.0, output.phase)
+    && readInteger("sourceKind", 0.0, 65'535.0, output.source_kind)
+    && readInteger("sourceIdHigh", 0.0, 4'294'967'295.0, output.source_id_high)
+    && readInteger("sourceIdLow", 0.0, 4'294'967'295.0, output.source_id_low)
+    && readInteger("sourceOrdinalHigh", 0.0, 4'294'967'295.0, output.source_ordinal_high)
+    && readInteger("sourceOrdinalLow", 0.0, 4'294'967'295.0, output.source_ordinal_low)
+    && readInteger("dependencyDigestHigh", 0.0, 4'294'967'295.0, output.dependency_digest_high)
+    && readInteger("dependencyDigestLow", 0.0, 4'294'967'295.0, output.dependency_digest_low)
+    && readInteger("payloadKind", 0.0, 65'535.0, output.payload_kind)
+    && readInteger("payloadObjectIdHigh", 0.0, 4'294'967'295.0, output.payload_object_id_high)
+    && readInteger("payloadObjectIdLow", 0.0, 4'294'967'295.0, output.payload_object_id_low)
+    && readInteger("relatedWorkIdHigh", 0.0, 4'294'967'295.0, output.related_work_id_high)
+    && readInteger("relatedWorkIdLow", 0.0, 4'294'967'295.0, output.related_work_id_low)
+    && readInteger("relatedGenerationHigh", 0.0, 4'294'967'295.0, output.related_generation_high)
+    && readInteger("relatedGenerationLow", 0.0, 4'294'967'295.0, output.related_generation_low)
+    && readDouble("payloadValue", output.payload_value);
+}
+
+Napi::Object writeSchedulerWork(Napi::Env env, const orbit_engine::scheduler::WorkWire& value) {
+  auto result = Napi::Object::New(env);
+  result.Set("idHigh", Napi::Number::New(env, value.id_high)); result.Set("idLow", Napi::Number::New(env, value.id_low));
+  result.Set("generationHigh", Napi::Number::New(env, value.generation_high)); result.Set("generationLow", Napi::Number::New(env, value.generation_low));
+  result.Set("instant", writeWire(env, value.instant)); result.Set("phase", Napi::Number::New(env, value.phase)); result.Set("sourceKind", Napi::Number::New(env, value.source_kind));
+  result.Set("sourceIdHigh", Napi::Number::New(env, value.source_id_high)); result.Set("sourceIdLow", Napi::Number::New(env, value.source_id_low));
+  result.Set("sourceOrdinalHigh", Napi::Number::New(env, value.source_ordinal_high)); result.Set("sourceOrdinalLow", Napi::Number::New(env, value.source_ordinal_low));
+  result.Set("dependencyDigestHigh", Napi::Number::New(env, value.dependency_digest_high)); result.Set("dependencyDigestLow", Napi::Number::New(env, value.dependency_digest_low));
+  result.Set("payloadKind", Napi::Number::New(env, value.payload_kind)); result.Set("payloadObjectIdHigh", Napi::Number::New(env, value.payload_object_id_high)); result.Set("payloadObjectIdLow", Napi::Number::New(env, value.payload_object_id_low));
+  result.Set("relatedWorkIdHigh", Napi::Number::New(env, value.related_work_id_high)); result.Set("relatedWorkIdLow", Napi::Number::New(env, value.related_work_id_low));
+  result.Set("relatedGenerationHigh", Napi::Number::New(env, value.related_generation_high)); result.Set("relatedGenerationLow", Napi::Number::New(env, value.related_generation_low)); result.Set("payloadValue", Napi::Number::New(env, value.payload_value));
+  return result;
+}
+
+bool readSchedulerWire(const Napi::Value& value, orbit_engine::scheduler::SchedulerWire& output) {
+  if (!value.IsObject()) return false;
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto item = object.Get(name);
+    if (!item.IsNumber()) return false;
+    const auto number = item.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number);
+    return true;
+  };
+  const auto readBoolean = [&object](const char* name, bool& target) { const auto item = object.Get(name); if (!item.IsBoolean()) return false; target = item.As<Napi::Boolean>().Value(); return true; };
+  if (!readInteger("operationCode", 0.0, 65'535.0, output.operation_code)
+      || !readInteger("resultCode", 0.0, 65'535.0, output.result_code)
+      || !readWire(object.Get("currentTime"), output.current_time) || !readWire(object.Get("targetTime"), output.target_time)
+      || !readInteger("expectedIdHigh", 0.0, 4'294'967'295.0, output.expected_id_high) || !readInteger("expectedIdLow", 0.0, 4'294'967'295.0, output.expected_id_low)
+      || !readInteger("expectedGenerationHigh", 0.0, 4'294'967'295.0, output.expected_generation_high) || !readInteger("expectedGenerationLow", 0.0, 4'294'967'295.0, output.expected_generation_low)
+      || !readInteger("listOffset", 0.0, 4'294'967'295.0, output.list_offset) || !readInteger("listLimit", 0.0, 4'294'967'295.0, output.list_limit)
+      || !readBoolean("allowCurrentTime", output.allow_current_time)
+      || !readInteger("maxScheduledWorkItems", 0.0, 4'294'967'295.0, output.max_scheduled_work_items)
+      || !readInteger("maxWorkItemsPerTimestamp", 0.0, 4'294'967'295.0, output.max_work_items_per_timestamp)
+      || !readInteger("maxTimestampTransactionsPerAdvance", 0.0, 4'294'967'295.0, output.max_timestamp_transactions_per_advance)
+      || !readSchedulerWork(object.Get("work"), output.work)
+      || !readInteger("clockRevisionHigh", 0.0, 4'294'967'295.0, output.clock_revision_high) || !readInteger("clockRevisionLow", 0.0, 4'294'967'295.0, output.clock_revision_low)
+      || !readInteger("nextWorkIdHigh", 0.0, 4'294'967'295.0, output.next_work_id_high) || !readInteger("nextWorkIdLow", 0.0, 4'294'967'295.0, output.next_work_id_low)
+      || !readBoolean("resultWorkPresent", output.result_work_present) || !readSchedulerWork(object.Get("resultWork"), output.result_work)
+      || !readInteger("resultCount", 0.0, 64.0, output.result_count)) return false;
+  const auto results = object.Get("results");
+  if (!results.IsArray() || results.As<Napi::Array>().Length() < orbit_engine::scheduler::kMaxDiagnostics) return false;
+  for (std::size_t index = 0; index < orbit_engine::scheduler::kMaxDiagnostics; ++index) {
+    if (!readSchedulerWork(results.As<Napi::Array>().Get(index), output.results[index])) return false;
+  }
+  return true;
+}
+
+Napi::Object writeSchedulerWire(Napi::Env env, const orbit_engine::scheduler::SchedulerWire& value) {
+  auto result = Napi::Object::New(env);
+  result.Set("operationCode", Napi::Number::New(env, value.operation_code)); result.Set("resultCode", Napi::Number::New(env, value.result_code)); result.Set("currentTime", writeWire(env, value.current_time)); result.Set("targetTime", writeWire(env, value.target_time));
+  result.Set("expectedIdHigh", Napi::Number::New(env, value.expected_id_high)); result.Set("expectedIdLow", Napi::Number::New(env, value.expected_id_low)); result.Set("expectedGenerationHigh", Napi::Number::New(env, value.expected_generation_high)); result.Set("expectedGenerationLow", Napi::Number::New(env, value.expected_generation_low));
+  result.Set("listOffset", Napi::Number::New(env, value.list_offset)); result.Set("listLimit", Napi::Number::New(env, value.list_limit)); result.Set("allowCurrentTime", Napi::Boolean::New(env, value.allow_current_time)); result.Set("maxScheduledWorkItems", Napi::Number::New(env, value.max_scheduled_work_items)); result.Set("maxWorkItemsPerTimestamp", Napi::Number::New(env, value.max_work_items_per_timestamp)); result.Set("maxTimestampTransactionsPerAdvance", Napi::Number::New(env, value.max_timestamp_transactions_per_advance));
+  result.Set("work", writeSchedulerWork(env, value.work)); result.Set("clockRevisionHigh", Napi::Number::New(env, value.clock_revision_high)); result.Set("clockRevisionLow", Napi::Number::New(env, value.clock_revision_low)); result.Set("nextWorkIdHigh", Napi::Number::New(env, value.next_work_id_high)); result.Set("nextWorkIdLow", Napi::Number::New(env, value.next_work_id_low)); result.Set("resultWorkPresent", Napi::Boolean::New(env, value.result_work_present)); result.Set("resultWork", writeSchedulerWork(env, value.result_work)); result.Set("resultCount", Napi::Number::New(env, value.result_count));
+  auto results = Napi::Array::New(env, orbit_engine::scheduler::kMaxDiagnostics); for (std::size_t index = 0; index < orbit_engine::scheduler::kMaxDiagnostics; ++index) results.Set(index, writeSchedulerWork(env, value.results[index])); result.Set("results", results);
+  return result;
+}
+
 Napi::Value RoundTripTime(const Napi::CallbackInfo& info) {
   const auto env = info.Env();
   if (info.Length() != 1) {
@@ -980,6 +1081,20 @@ Napi::Value RoundTripCoupled(const Napi::CallbackInfo& info) {
   return writeCoupledWire(env, orbit_engine::coupled_operation::evaluate(input));
 }
 
+Napi::Value RoundTripScheduler(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1) {
+    Napi::TypeError::New(env, "roundTripScheduler expects one scheduler wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  orbit_engine::scheduler::SchedulerWire input{};
+  if (!readSchedulerWire(info[0], input)) {
+    Napi::TypeError::New(env, "roundTripScheduler received an invalid wire value").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  return writeSchedulerWire(env, g_scheduler.command(input));
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("protocolVersion", Napi::Number::New(env, orbit_engine::kBindingProtocolVersion));
   exports.Set("initialize", Napi::Function::New(env, Initialize));
@@ -993,6 +1108,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("roundTripTwoBody", Napi::Function::New(env, RoundTripTwoBody));
   exports.Set("roundTripNumerical", Napi::Function::New(env, RoundTripNumerical));
   exports.Set("roundTripCoupled", Napi::Function::New(env, RoundTripCoupled));
+  exports.Set("roundTripScheduler", Napi::Function::New(env, RoundTripScheduler));
   return exports;
 }
 

@@ -7,8 +7,9 @@ import type { FrameRegistryWire } from "../frame-registry-wire.js";
 import type { TwoBodyWire } from "../two-body-wire.js";
 import type { NumericalWire } from "../numerical-wire.js";
 import type { CoupledWire } from "../coupled-wire.js";
+import type { SchedulerWire } from "../scheduler-wire.js";
 
-export const BINDING_PROTOCOL_VERSION = 9;
+export const BINDING_PROTOCOL_VERSION = 10;
 
 export type BackendKind = "native" | "wasm";
 
@@ -31,6 +32,7 @@ export interface Backend {
   roundTripTwoBody(value: TwoBodyWire): TwoBodyWire;
   roundTripNumerical(value: NumericalWire): NumericalWire;
   roundTripCoupled(value: CoupledWire): CoupledWire;
+  roundTripScheduler(value: SchedulerWire): SchedulerWire;
 }
 
 export interface RawBackendBinding {
@@ -46,6 +48,7 @@ export interface RawBackendBinding {
   roundTripTwoBody(value: unknown): unknown;
   roundTripNumerical(value: unknown): unknown;
   roundTripCoupled(value: unknown): unknown;
+  roundTripScheduler(value: unknown): unknown;
 }
 
 export interface RawInitializationResult {

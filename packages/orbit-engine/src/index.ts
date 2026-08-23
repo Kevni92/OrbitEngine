@@ -4,9 +4,17 @@ import { ObjectRegistry } from "./registry.js";
 import { FrameRegistry, type FrameNode, type ObjectFrameStateSource } from "./frame-registry.js";
 import { referenceFrameId, type ReferenceFrameId } from "./frames.js";
 import { objectId, type ObjectId } from "./objects.js";
-import { type PropagationModel, type PropagationState } from "./propagation.js";
+import { type PropagationModel, type PropagationState, type RevisionId } from "./propagation.js";
 import { ObjectStateQueries } from "./state-query.js";
 import { type SimulationInstant } from "./time.js";
+import {
+  ScheduledWorkQueue,
+  type ScheduledWorkInput,
+  type ScheduledWorkRecord,
+  type ScheduledWorkId,
+  type ScheduledWorkQueueConfiguration,
+  type SimulationClockStatus,
+} from "./scheduler.js";
 import {
   loadOepDataset,
   type EphemerisSourceNodeId,
@@ -40,6 +48,7 @@ export * from "./registry.js";
 export * from "./frame-registry.js";
 export * from "./state-query.js";
 export * from "./ephemeris.js";
+export * from "./scheduler.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -65,6 +74,7 @@ export type OrbitEngineBackendPreference = BackendPreference;
 
 export interface OrbitEngineCreateOptions {
   readonly backend?: OrbitEngineBackendPreference;
+  readonly scheduler?: ScheduledWorkQueueConfiguration;
 }
 
 export interface OrbitEngineHealth extends BackendHealth {
@@ -96,21 +106,47 @@ export class OrbitEngine {
   #registry?: ObjectRegistry;
   #frames?: FrameRegistry;
   #stateQueries?: ObjectStateQueries;
+  readonly #scheduledWorkQueue: ScheduledWorkQueue;
 
-  private constructor(backend: Backend, health: BackendHealth) {
+  private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
     this.#backend = backend;
     this.#health = health;
+    this.#scheduledWorkQueue = new ScheduledWorkQueue(backend, scheduler);
   }
 
   static async create(options: OrbitEngineCreateOptions = {}): Promise<OrbitEngine> {
     const preference = validateOptions(options);
     const backend = await initializeBackend(preference);
-    return new OrbitEngine(backend, backend.health());
+    return new OrbitEngine(backend, backend.health(), options.scheduler);
   }
 
   health(): OrbitEngineHealth {
     return { backend: this.backend, ...this.#health };
+  }
+
+  get currentTime(): SimulationInstant {
+    return this.#scheduledWorkQueue.status().currentTime;
+  }
+
+  clock(): SimulationClockStatus {
+    return this.#scheduledWorkQueue.status();
+  }
+
+  scheduleWork(input: ScheduledWorkInput, options?: { readonly allowCurrentTime?: boolean }): ScheduledWorkRecord {
+    return this.#scheduledWorkQueue.schedule(input, options);
+  }
+
+  cancelScheduledWork(id: ScheduledWorkId, generation: RevisionId): ScheduledWorkRecord {
+    return this.#scheduledWorkQueue.cancel(id, generation);
+  }
+
+  replaceScheduledWork(id: ScheduledWorkId, generation: RevisionId, input: ScheduledWorkInput, options?: { readonly allowCurrentTime?: boolean }): ScheduledWorkRecord {
+    return this.#scheduledWorkQueue.replace(id, generation, input, options);
+  }
+
+  listScheduledWorkDiagnostics(limit = 64, offset = 0): readonly ScheduledWorkRecord[] {
+    return this.#scheduledWorkQueue.list(limit, offset);
   }
 
   registry(): ObjectRegistry {
