@@ -1,6 +1,8 @@
 #include "orbit_engine/core.hpp"
+#include "orbit_engine/coupled_operation.hpp"
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/frame_registry.hpp"
+#include "orbit_engine/numerical_operation.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
@@ -8,6 +10,9 @@
 #include "orbit_engine/two_body.hpp"
 
 #include <emscripten/emscripten.h>
+
+#include <span>
+#include <utility>
 
 extern "C" {
 
@@ -875,5 +880,120 @@ TWO_BODY_GETTER(orbit_engine_two_body_result_velocity_z, result_velocity_z, doub
 
 #undef TWO_BODY_GETTER
 #undef TWO_BODY_PARAMETERS
+
+#define NUMERICAL_PARAMETERS \
+  std::uint16_t result_code, \
+  std::uint32_t object_id_high, std::uint32_t object_id_low, \
+  std::uint32_t propagation_frame_high, std::uint32_t propagation_frame_low, \
+  std::uint32_t frame_revision_high, std::uint32_t frame_revision_low, \
+  std::int32_t anchor_epoch_seconds_high, std::uint32_t anchor_epoch_seconds_low, std::uint32_t anchor_epoch_nanoseconds, \
+  std::int32_t target_epoch_seconds_high, std::uint32_t target_epoch_seconds_low, std::uint32_t target_epoch_nanoseconds, \
+  double anchor_position_x, double anchor_position_y, double anchor_position_z, \
+  double anchor_velocity_x, double anchor_velocity_y, double anchor_velocity_z, \
+  int mass_present, double mass, \
+  double constant_acceleration_x, double constant_acceleration_y, double constant_acceleration_z, \
+  int source_present, std::uint32_t source_id_high, std::uint32_t source_id_low, \
+  std::uint32_t source_revision_high, std::uint32_t source_revision_low, \
+  double source_position_x, double source_position_y, double source_position_z, \
+  int source_mu_present, double source_mu, int source_mass_present, double source_mass, \
+  double relative_tolerance, double position_absolute_tolerance_meters, double velocity_absolute_tolerance_meters_per_second, \
+  double mass_absolute_tolerance_kilograms, \
+  std::uint32_t checkpoint_stride_accepted_steps, std::uint32_t max_checkpoint_count, \
+  std::uint32_t max_dense_step_count, std::uint32_t max_accepted_steps_per_extension, \
+  std::uint32_t max_rejected_steps_per_extension, \
+  std::int32_t min_step_seconds_high, std::uint32_t min_step_seconds_low, std::uint32_t min_step_nanoseconds, \
+  std::int32_t max_step_seconds_high, std::uint32_t max_step_seconds_low, std::uint32_t max_step_nanoseconds, \
+  std::uint32_t configuration_revision_high, std::uint32_t configuration_revision_low, \
+  std::uint32_t motion_revision_high, std::uint32_t motion_revision_low
+
+orbit_engine::numerical_operation::NumericalWire g_numerical_output{};
+
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_numerical(NUMERICAL_PARAMETERS) {
+  orbit_engine::numerical_operation::NumericalWire input{};
+  input.result_code = result_code;
+  input.object_id_high = object_id_high;
+  input.object_id_low = object_id_low;
+  input.propagation_frame_high = propagation_frame_high;
+  input.propagation_frame_low = propagation_frame_low;
+  input.frame_revision_high = frame_revision_high;
+  input.frame_revision_low = frame_revision_low;
+  input.anchor_epoch = orbit_engine::time::TimeWire{anchor_epoch_seconds_high, anchor_epoch_seconds_low, anchor_epoch_nanoseconds};
+  input.target_epoch = orbit_engine::time::TimeWire{target_epoch_seconds_high, target_epoch_seconds_low, target_epoch_nanoseconds};
+  input.anchor_position_x = anchor_position_x;
+  input.anchor_position_y = anchor_position_y;
+  input.anchor_position_z = anchor_position_z;
+  input.anchor_velocity_x = anchor_velocity_x;
+  input.anchor_velocity_y = anchor_velocity_y;
+  input.anchor_velocity_z = anchor_velocity_z;
+  input.mass_present = mass_present != 0;
+  input.mass = mass;
+  input.constant_acceleration_x = constant_acceleration_x;
+  input.constant_acceleration_y = constant_acceleration_y;
+  input.constant_acceleration_z = constant_acceleration_z;
+  input.source_present = source_present != 0;
+  input.source_id_high = source_id_high;
+  input.source_id_low = source_id_low;
+  input.source_revision_high = source_revision_high;
+  input.source_revision_low = source_revision_low;
+  input.source_position_x = source_position_x;
+  input.source_position_y = source_position_y;
+  input.source_position_z = source_position_z;
+  input.source_mu_present = source_mu_present != 0;
+  input.source_mu = source_mu;
+  input.source_mass_present = source_mass_present != 0;
+  input.source_mass = source_mass;
+  input.relative_tolerance = relative_tolerance;
+  input.position_absolute_tolerance_meters = position_absolute_tolerance_meters;
+  input.velocity_absolute_tolerance_meters_per_second = velocity_absolute_tolerance_meters_per_second;
+  input.mass_absolute_tolerance_kilograms = mass_absolute_tolerance_kilograms;
+  input.checkpoint_stride_accepted_steps = checkpoint_stride_accepted_steps;
+  input.max_checkpoint_count = max_checkpoint_count;
+  input.max_dense_step_count = max_dense_step_count;
+  input.max_accepted_steps_per_extension = max_accepted_steps_per_extension;
+  input.max_rejected_steps_per_extension = max_rejected_steps_per_extension;
+  input.min_step = orbit_engine::time::TimeWire{min_step_seconds_high, min_step_seconds_low, min_step_nanoseconds};
+  input.max_step = orbit_engine::time::TimeWire{max_step_seconds_high, max_step_seconds_low, max_step_nanoseconds};
+  input.configuration_revision_high = configuration_revision_high;
+  input.configuration_revision_low = configuration_revision_low;
+  input.motion_revision_high = motion_revision_high;
+  input.motion_revision_low = motion_revision_low;
+  g_numerical_output = orbit_engine::numerical_operation::evaluate(input);
+  return 1;
+}
+
+#define NUMERICAL_GETTER(name, field, type) \
+  EMSCRIPTEN_KEEPALIVE type name() { return g_numerical_output.field; }
+
+NUMERICAL_GETTER(orbit_engine_numerical_result_code, result_code, std::uint16_t)
+NUMERICAL_GETTER(orbit_engine_numerical_result_epoch_seconds_high, result_epoch.seconds_high, std::int32_t)
+NUMERICAL_GETTER(orbit_engine_numerical_result_epoch_seconds_low, result_epoch.seconds_low, std::uint32_t)
+NUMERICAL_GETTER(orbit_engine_numerical_result_epoch_nanoseconds, result_epoch.nanoseconds, std::uint32_t)
+NUMERICAL_GETTER(orbit_engine_numerical_result_position_x, result_position_x, double)
+NUMERICAL_GETTER(orbit_engine_numerical_result_position_y, result_position_y, double)
+NUMERICAL_GETTER(orbit_engine_numerical_result_position_z, result_position_z, double)
+NUMERICAL_GETTER(orbit_engine_numerical_result_velocity_x, result_velocity_x, double)
+NUMERICAL_GETTER(orbit_engine_numerical_result_velocity_y, result_velocity_y, double)
+NUMERICAL_GETTER(orbit_engine_numerical_result_velocity_z, result_velocity_z, double)
+NUMERICAL_GETTER(orbit_engine_numerical_result_mass_present, result_mass_present, int)
+NUMERICAL_GETTER(orbit_engine_numerical_result_mass, result_mass, double)
+
+#undef NUMERICAL_GETTER
+#undef NUMERICAL_PARAMETERS
+
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_coupled(
+  const double* input,
+  std::uint32_t input_length,
+  double* output,
+  std::uint32_t output_length
+) {
+  if (input == nullptr || output == nullptr) return 0;
+  orbit_engine::coupled_operation::CoupledWire wire;
+  if (!orbit_engine::coupled_operation::decode_packet(
+        std::span<const double>(input, input_length), wire)) return 0;
+  wire = orbit_engine::coupled_operation::evaluate(std::move(wire));
+  if (!orbit_engine::coupled_operation::encode_packet(
+        wire, std::span<double>(output, output_length))) return 0;
+  return 1;
+}
 
 }

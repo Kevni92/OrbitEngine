@@ -12,6 +12,8 @@ import { assertOepRuntime } from "../shared/oep-runtime.js";
 import { assertTwoBodyModel } from "../shared/two-body.js";
 import { assertStateQueryIntegration } from "../shared/state-query.js";
 import { assertTimeRoundTrip } from "../shared/time-roundtrip.js";
+import { assertNumericalMotion } from "../shared/numerical.js";
+import { assertCoupledMotion } from "../shared/coupled.js";
 
 test("real WASM backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "wasm" });
@@ -20,7 +22,7 @@ test("real WASM backend initializes and reports the shared core health", async (
   assert.equal(engine.backend, "wasm");
   assert.deepEqual(health, {
     backend: "wasm",
-    protocolVersion: 8,
+    protocolVersion: 9,
     coreVersion: 1,
     healthCode: 42,
   });
@@ -35,4 +37,6 @@ test("real WASM backend initializes and reports the shared core health", async (
   await assertTwoBodyModel(backend);
   await assertStateQueryIntegration(backend);
   await assertOepRuntime(engine);
+  await assertNumericalMotion("wasm");
+  await assertCoupledMotion("wasm");
 });

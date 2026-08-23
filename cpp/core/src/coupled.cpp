@@ -534,6 +534,7 @@ bool CoupledAuthority::evaluate_derivative(
 }
 
 const CoupledAuthority* CoupledAuthorityManager::authority() const noexcept { return authority_.get(); }
+CoupledAuthority* CoupledAuthorityManager::authority() noexcept { return authority_.get(); }
 
 bool CoupledAuthorityManager::promote(
   time::SimulationInstant target,
@@ -580,6 +581,7 @@ std::unique_ptr<CoupledAuthority> CoupledAuthorityManager::make_successor(
   Failure& failure
 ) {
   auto successor_configuration = configuration;
+  successor_configuration.integrator.component_kinds.clear();
   auto successor = std::make_unique<CoupledAuthority>(anchors, std::move(successor_configuration), next_group_revision_++);
   if (!successor->valid()) {
     failure = successor->construction_failure();
@@ -634,7 +636,10 @@ bool CoupledAuthorityManager::demote(
     });
   }
   std::unique_ptr<CoupledAuthority> replacement;
-  if (remaining.size() >= 2) replacement = make_successor(target, remaining, authority_->configuration(), failure);
+  if (remaining.size() >= 2) {
+    replacement = make_successor(target, remaining, authority_->configuration(), failure);
+    if (!replacement) return false;
+  }
   if (!remaining.empty() && remaining.size() < 2 && object_ids.size() != authority_->members().size()) {
     fail(failure, FailureCode::transaction_rejected, "demotion would leave an unrepresented single-member group");
     return false;

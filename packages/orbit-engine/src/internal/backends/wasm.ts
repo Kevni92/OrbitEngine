@@ -8,6 +8,8 @@ import type { PropagationWire } from "../propagation-wire.js";
 import type { RegistryWire } from "../registry-wire.js";
 import type { FrameRegistryWire } from "../frame-registry-wire.js";
 import type { TwoBodyWire } from "../two-body-wire.js";
+import type { NumericalWire } from "../numerical-wire.js";
+import { decodeCoupledPacket, encodeCoupledPacket, type CoupledWire } from "../coupled-wire.js";
 import type { EmscriptenWasmFactoryModule } from "../wasm-factory.js";
 
 type ObjectRoundTripArgs = [
@@ -54,8 +56,12 @@ type PropagationRoundTripArgs = [
 type RegistryRoundTripArgs = number[];
 type FrameRegistryRoundTripArgs = number[];
 type TwoBodyRoundTripArgs = number[];
+type NumericalRoundTripArgs = number[];
 
 interface WasmModule {
+  readonly _malloc: (size: number) => number;
+  readonly _free: (pointer: number) => void;
+  readonly HEAPF64: Float64Array;
   readonly _orbit_engine_binding_protocol_version: () => number;
   readonly _orbit_engine_core_version: () => number;
   readonly _orbit_engine_health: () => number;
@@ -235,6 +241,20 @@ interface WasmModule {
   readonly _orbit_engine_two_body_result_velocity_x: () => number;
   readonly _orbit_engine_two_body_result_velocity_y: () => number;
   readonly _orbit_engine_two_body_result_velocity_z: () => number;
+  readonly _orbit_engine_round_trip_numerical: (...args: NumericalRoundTripArgs) => number;
+  readonly _orbit_engine_numerical_result_code: () => number;
+  readonly _orbit_engine_numerical_result_epoch_seconds_high: () => number;
+  readonly _orbit_engine_numerical_result_epoch_seconds_low: () => number;
+  readonly _orbit_engine_numerical_result_epoch_nanoseconds: () => number;
+  readonly _orbit_engine_numerical_result_position_x: () => number;
+  readonly _orbit_engine_numerical_result_position_y: () => number;
+  readonly _orbit_engine_numerical_result_position_z: () => number;
+  readonly _orbit_engine_numerical_result_velocity_x: () => number;
+  readonly _orbit_engine_numerical_result_velocity_y: () => number;
+  readonly _orbit_engine_numerical_result_velocity_z: () => number;
+  readonly _orbit_engine_numerical_result_mass_present: () => number;
+  readonly _orbit_engine_numerical_result_mass: () => number;
+  readonly _orbit_engine_round_trip_coupled: (inputPointer: number, inputLength: number, outputPointer: number, outputLength: number) => number;
 }
 
 interface WasmModuleFactory {
@@ -685,6 +705,107 @@ export async function loadWasmBackend(): Promise<Backend> {
         resultVelocityY: module._orbit_engine_two_body_result_velocity_y(),
         resultVelocityZ: module._orbit_engine_two_body_result_velocity_z(),
       };
+    },
+    roundTripNumerical: (value: NumericalWire) => {
+      const args: NumericalRoundTripArgs = [
+        value.resultCode,
+        value.objectIdHigh,
+        value.objectIdLow,
+        value.propagationFrameHigh,
+        value.propagationFrameLow,
+        value.frameRevisionHigh,
+        value.frameRevisionLow,
+        value.anchorEpoch.secondsHigh,
+        value.anchorEpoch.secondsLow,
+        value.anchorEpoch.nanoseconds,
+        value.targetEpoch.secondsHigh,
+        value.targetEpoch.secondsLow,
+        value.targetEpoch.nanoseconds,
+        value.anchorPositionX,
+        value.anchorPositionY,
+        value.anchorPositionZ,
+        value.anchorVelocityX,
+        value.anchorVelocityY,
+        value.anchorVelocityZ,
+        value.massPresent ? 1 : 0,
+        value.mass,
+        value.constantAccelerationX,
+        value.constantAccelerationY,
+        value.constantAccelerationZ,
+        value.sourcePresent ? 1 : 0,
+        value.sourceIdHigh,
+        value.sourceIdLow,
+        value.sourceRevisionHigh,
+        value.sourceRevisionLow,
+        value.sourcePositionX,
+        value.sourcePositionY,
+        value.sourcePositionZ,
+        value.sourceMuPresent ? 1 : 0,
+        value.sourceMu,
+        value.sourceMassPresent ? 1 : 0,
+        value.sourceMass,
+        value.relativeTolerance,
+        value.positionAbsoluteToleranceMeters,
+        value.velocityAbsoluteToleranceMetersPerSecond,
+        value.massAbsoluteToleranceKilograms,
+        value.checkpointStrideAcceptedSteps,
+        value.maxCheckpointCount,
+        value.maxDenseStepCount,
+        value.maxAcceptedStepsPerExtension,
+        value.maxRejectedStepsPerExtension,
+        value.minStep.secondsHigh,
+        value.minStep.secondsLow,
+        value.minStep.nanoseconds,
+        value.maxStep.secondsHigh,
+        value.maxStep.secondsLow,
+        value.maxStep.nanoseconds,
+        value.configurationRevisionHigh,
+        value.configurationRevisionLow,
+        value.motionRevisionHigh,
+        value.motionRevisionLow,
+      ];
+      if (module._orbit_engine_round_trip_numerical(...args) === 0) {
+        throw new RangeError("WASM numerical operation was rejected");
+      }
+      return {
+        ...value,
+        resultCode: module._orbit_engine_numerical_result_code() >>> 0,
+        resultEpoch: {
+          secondsHigh: module._orbit_engine_numerical_result_epoch_seconds_high(),
+          secondsLow: module._orbit_engine_numerical_result_epoch_seconds_low() >>> 0,
+          nanoseconds: module._orbit_engine_numerical_result_epoch_nanoseconds() >>> 0,
+        },
+        resultPositionX: module._orbit_engine_numerical_result_position_x(),
+        resultPositionY: module._orbit_engine_numerical_result_position_y(),
+        resultPositionZ: module._orbit_engine_numerical_result_position_z(),
+        resultVelocityX: module._orbit_engine_numerical_result_velocity_x(),
+        resultVelocityY: module._orbit_engine_numerical_result_velocity_y(),
+        resultVelocityZ: module._orbit_engine_numerical_result_velocity_z(),
+        resultMassPresent: module._orbit_engine_numerical_result_mass_present() !== 0,
+        resultMass: module._orbit_engine_numerical_result_mass(),
+      };
+    },
+    roundTripCoupled: (value: CoupledWire) => {
+      const input = encodeCoupledPacket(value);
+      const outputLength = 9 + 32 * 23;
+      const inputPointer = module._malloc(input.byteLength);
+      const outputPointer = module._malloc(outputLength * Float64Array.BYTES_PER_ELEMENT);
+      if (inputPointer === 0 || outputPointer === 0) {
+        if (inputPointer !== 0) module._free(inputPointer);
+        if (outputPointer !== 0) module._free(outputPointer);
+        throw new RangeError("WASM coupled operation could not allocate its packet buffers");
+      }
+      try {
+        module.HEAPF64.set(input, inputPointer / Float64Array.BYTES_PER_ELEMENT);
+        if (module._orbit_engine_round_trip_coupled(inputPointer, input.length, outputPointer, outputLength) === 0) {
+          throw new RangeError("WASM coupled operation was rejected");
+        }
+        const output = module.HEAPF64.slice(outputPointer / Float64Array.BYTES_PER_ELEMENT, outputPointer / Float64Array.BYTES_PER_ELEMENT + outputLength);
+        return decodeCoupledPacket(value, output);
+      } finally {
+        module._free(inputPointer);
+        module._free(outputPointer);
+      }
     },
   };
 

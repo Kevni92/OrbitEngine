@@ -41,8 +41,13 @@ bool contains(const force::TimeInterval& interval, time::SimulationInstant targe
     && (!interval.end.has_value() || time::compare(target, *interval.end) < 0);
 }
 
-void set_failure(Failure& failure, FailureCode code, const char* message) {
-  failure = Failure{code, message};
+void set_failure(
+  Failure& failure,
+  FailureCode code,
+  const char* message,
+  numerical::FailureCode numerical_code = numerical::FailureCode::none
+) {
+  failure = Failure{code, message, numerical_code};
 }
 
 void set_numerical_failure(numerical::Failure& failure, numerical::FailureCode code, const std::string& message) {
@@ -342,7 +347,7 @@ std::unique_ptr<NumericalMotionSegment::Era> NumericalMotionSegment::make_era(
     std::move(local_boundaries));
   if (!era->tape->valid()) {
     const auto& tape_failure = era->tape->construction_failure();
-    set_failure(failure, FailureCode::numerical_failure, tape_failure.message.c_str());
+    set_failure(failure, FailureCode::numerical_failure, tape_failure.message.c_str(), tape_failure.code);
     return nullptr;
   }
   failure = {};
@@ -377,7 +382,7 @@ bool NumericalMotionSegment::evaluate_state_vector(
     const auto code = tape_failure.code == numerical::FailureCode::unsupported_temporal_direction
       ? FailureCode::unsupported_temporal_direction
       : FailureCode::numerical_failure;
-    set_failure(failure, code, message.c_str());
+    set_failure(failure, code, message.c_str(), tape_failure.code);
     return false;
   }
   return true;

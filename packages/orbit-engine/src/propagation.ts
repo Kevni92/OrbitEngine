@@ -109,12 +109,16 @@ export const PropagationErrorCode = Object.freeze({
   missingPhysicalProperty: "missingPhysicalProperty",
   sourceUnavailable: "sourceUnavailable",
   numericalFailure: "numericalFailure",
+  numericalStepUnderflow: "numericalStepUnderflow",
+  numericalWorkBudgetExceeded: "numericalWorkBudgetExceeded",
   invalidModelRepresentation: "invalidModelRepresentation",
   invalidCanonicalState: "invalidCanonicalState",
   invalidConfiguration: "invalidConfiguration",
   switchToleranceExceeded: "switchToleranceExceeded",
   acceptanceRejected: "acceptanceRejected",
   noActiveSegment: "noActiveSegment",
+  coupledMembership: "coupledMembership",
+  coupledTransitionRejected: "coupledTransitionRejected",
 } as const);
 
 export type PropagationErrorCode = (typeof PropagationErrorCode)[keyof typeof PropagationErrorCode];
@@ -423,6 +427,12 @@ export function propagationEvaluationContext(
 export interface PropagationModel {
   readonly declaration: PropagationModelDeclaration;
   evaluate(target: SimulationInstant, context: ReadOnlyPropagationEvaluationContext): PropagationState;
+  /** Optional same-epoch batch hook for authorities that own one shared tape. */
+  readonly evaluateBatch?: (
+    objectIds: readonly ObjectId[],
+    target: SimulationInstant,
+    context: ReadOnlyPropagationEvaluationContext,
+  ) => readonly PropagationState[];
 }
 
 export function evaluatePropagationModel(

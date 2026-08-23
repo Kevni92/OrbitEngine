@@ -22,6 +22,14 @@ target_link_libraries(orbit_engine_numerical_test PRIVATE orbit_engine_core)
 
 add_test(NAME orbit_engine_numerical_test COMMAND orbit_engine_numerical_test)
 
+add_executable(orbit_engine_numerical_operation_test
+  numerical_operation_test.cpp
+)
+
+target_link_libraries(orbit_engine_numerical_operation_test PRIVATE orbit_engine_core)
+
+add_test(NAME orbit_engine_numerical_operation_test COMMAND orbit_engine_numerical_operation_test)
+
 add_executable(orbit_engine_force_test
   force_test.cpp
 )
@@ -45,3 +53,11 @@ add_executable(orbit_engine_coupled_test
 target_link_libraries(orbit_engine_coupled_test PRIVATE orbit_engine_core)
 
 add_test(NAME orbit_engine_coupled_test COMMAND orbit_engine_coupled_test)
+
+add_executable(orbit_engine_coupled_operation_test
+  coupled_operation_test.cpp
+)
+
+target_link_libraries(orbit_engine_coupled_operation_test PRIVATE orbit_engine_core)
+
+add_test(NAME orbit_engine_coupled_operation_test COMMAND orbit_engine_coupled_operation_test)

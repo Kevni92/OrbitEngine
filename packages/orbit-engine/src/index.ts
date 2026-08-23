@@ -19,6 +19,16 @@ import {
   createTwoBodyAnalyticalModel,
   type TwoBodyAnalyticalModelConfiguration,
 } from "./two-body.js";
+import {
+  createNumericalMotion,
+  type NumericalMotion,
+  type NumericalMotionConfiguration,
+} from "./numerical.js";
+import {
+  createCoupledMotion,
+  type CoupledMotion,
+  type CoupledMotionConfiguration,
+} from "./coupled.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -32,6 +42,23 @@ export * from "./state-query.js";
 export * from "./ephemeris.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
+export {
+  NumericalMotion,
+  NumericalResultCode,
+} from "./numerical.js";
+export type {
+  NumericalGravitySource,
+  NumericalMotionConfiguration,
+  NumericalMotionStatus,
+} from "./numerical.js";
+export {
+  CoupledMotion,
+} from "./coupled.js";
+export type {
+  CoupledMemberConfiguration,
+  CoupledMotionConfiguration,
+  CoupledMotionStatus,
+} from "./coupled.js";
 
 export type OrbitEngineBackend = BackendKind;
 export type OrbitEngineBackendPreference = BackendPreference;
@@ -186,5 +213,27 @@ export class OrbitEngine {
     return createTwoBodyAnalyticalModel(configuration, {
       evaluate: (value) => this.#backend.roundTripTwoBody(value),
     });
+  }
+
+  numericalMotion(configuration: NumericalMotionConfiguration): NumericalMotion {
+    return createNumericalMotion(configuration, this.#backend);
+  }
+
+  bindNumericalMotion(configuration: NumericalMotionConfiguration): NumericalMotion {
+    const motion = this.numericalMotion(configuration);
+    this.bindMotionModel(configuration.objectId, motion.model());
+    return motion;
+  }
+
+  coupledMotion(configuration: CoupledMotionConfiguration): CoupledMotion {
+    return createCoupledMotion(configuration, this.#backend);
+  }
+
+  bindCoupledMotion(configuration: CoupledMotionConfiguration): CoupledMotion {
+    const motion = this.coupledMotion(configuration);
+    for (const member of configuration.members) {
+      this.bindMotionModel(member.objectId, motion.modelFor(member.objectId));
+    }
+    return motion;
   }
 }

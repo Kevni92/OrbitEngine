@@ -11,6 +11,8 @@ import { assertRegistryLifecycle } from "../shared/registry-lifecycle.js";
 import { assertFrameGraph } from "../shared/frame-graph.js";
 import { assertTwoBodyModel } from "../shared/two-body.js";
 import { assertStateQueryIntegration } from "../shared/state-query.js";
+import { assertNumericalMotion } from "../shared/numerical.js";
+import { assertCoupledMotion } from "../shared/coupled.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -18,7 +20,7 @@ for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngine
     const health = engine.health();
 
     assert.equal(health.backend, backend);
-    assert.equal(health.protocolVersion, 8);
+    assert.equal(health.protocolVersion, 9);
     assert.equal(health.coreVersion, 1);
     assert.equal(health.healthCode, 42);
   });
@@ -45,5 +47,11 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`integrated object state-at-time queries have parity on ${name}`, async () => {
     await assertStateQueryIntegration(await load());
+  });
+  test(`numerical motion has parity on ${name}`, async () => {
+    await assertNumericalMotion(name);
+  });
+  test(`coupled numerical batch and removal have parity on ${name}`, async () => {
+    await assertCoupledMotion(name);
   });
 }
