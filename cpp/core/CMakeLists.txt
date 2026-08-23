@@ -1,5 +1,6 @@
 add_library(orbit_engine_core STATIC
   src/core.cpp
+  src/coupled.cpp
   src/frame.cpp
   src/frame_registry.cpp
   src/force.cpp
