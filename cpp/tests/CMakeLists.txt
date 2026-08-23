@@ -29,3 +29,11 @@ add_executable(orbit_engine_force_test
 target_link_libraries(orbit_engine_force_test PRIVATE orbit_engine_core)
 
 add_test(NAME orbit_engine_force_test COMMAND orbit_engine_force_test)
+
+add_executable(orbit_engine_numerical_motion_test
+  numerical_motion_test.cpp
+)
+
+target_link_libraries(orbit_engine_numerical_motion_test PRIVATE orbit_engine_core)
+
+add_test(NAME orbit_engine_numerical_motion_test COMMAND orbit_engine_numerical_motion_test)
