@@ -14,6 +14,7 @@ import { assertStateQueryIntegration } from "../shared/state-query.js";
 import { assertNumericalMotion } from "../shared/numerical.js";
 import { assertCoupledMotion } from "../shared/coupled.js";
 import { assertScheduledWorkQueue } from "../shared/scheduler.js";
+import { assertFidelityManager } from "../shared/fidelity.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -57,5 +58,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`exact clock and scheduled work queue have parity on ${name}`, async () => {
     await assertScheduledWorkQueue(await OrbitEngine.create({ backend: name }));
+  });
+  test(`semantic fidelity requirements and selection have parity on ${name}`, async () => {
+    await assertFidelityManager(await OrbitEngine.create({ backend: name }));
   });
 }

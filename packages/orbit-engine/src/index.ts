@@ -38,6 +38,12 @@ import {
   type CoupledMotion,
   type CoupledMotionConfiguration,
 } from "./coupled.js";
+import {
+  FidelityManager,
+  type FidelityCandidateInput,
+  type FidelityRequirementInput,
+  type FidelityStatus,
+} from "./fidelity.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -50,6 +56,7 @@ export * from "./frame-registry.js";
 export * from "./state-query.js";
 export * from "./ephemeris.js";
 export * from "./scheduler.js";
+export * from "./fidelity.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -108,12 +115,14 @@ export class OrbitEngine {
   #frames?: FrameRegistry;
   #stateQueries?: ObjectStateQueries;
   readonly #scheduledWorkQueue: ScheduledWorkQueue;
+  readonly #fidelityManager: FidelityManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
     this.#backend = backend;
     this.#health = health;
     this.#scheduledWorkQueue = new ScheduledWorkQueue(backend, scheduler);
+    this.#fidelityManager = new FidelityManager();
   }
 
   static async create(options: OrbitEngineCreateOptions = {}): Promise<OrbitEngine> {
@@ -156,6 +165,29 @@ export class OrbitEngine {
 
   advanceBy(value: Duration): AdvanceResult {
     return this.#scheduledWorkQueue.advanceBy(value);
+  }
+
+  getFidelityStatus(id: ObjectId): FidelityStatus {
+    return this.#fidelityManager.getStatus(id);
+  }
+
+  setMinimumFidelityRequirement(
+    id: ObjectId,
+    requirement: FidelityRequirementInput | null,
+  ): FidelityStatus {
+    return this.#fidelityManager.setMinimumRequirement(id, requirement, this.currentTime);
+  }
+
+  configureFidelityCandidates(id: ObjectId, candidates: readonly FidelityCandidateInput[]): FidelityStatus {
+    return this.#fidelityManager.configureCandidates(id, candidates);
+  }
+
+  setFidelitySignal(
+    id: ObjectId,
+    signalId: string,
+    requirement: FidelityRequirementInput | null,
+  ): FidelityStatus {
+    return this.#fidelityManager.setSignal(id, signalId, requirement, this.currentTime);
   }
 
   registry(): ObjectRegistry {

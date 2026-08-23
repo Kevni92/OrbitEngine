@@ -15,6 +15,7 @@ import { assertTimeRoundTrip } from "../shared/time-roundtrip.js";
 import { assertNumericalMotion } from "../shared/numerical.js";
 import { assertCoupledMotion } from "../shared/coupled.js";
 import { assertScheduledWorkQueue } from "../shared/scheduler.js";
+import { assertFidelityManager } from "../shared/fidelity.js";
 
 test("real native backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "native" });
@@ -41,4 +42,5 @@ test("real native backend initializes and reports the shared core health", async
   await assertNumericalMotion("native");
   await assertCoupledMotion("native");
   await assertScheduledWorkQueue(engine);
+  await assertFidelityManager(await OrbitEngine.create({ backend: "native" }));
 });

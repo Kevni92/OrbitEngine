@@ -130,6 +130,19 @@ The clock is represented as the normalized integer `SimulationInstant`, never as
 
 Advancement jumps directly to the next due timestamp and drains that timestamp as one atomic transaction, including newly scheduled same-time work. A failed work item or exhausted transaction budget restores the queue and leaves the clock at the last committed instant; the returned backend-neutral `AdvanceResult` carries the failure category and work identity. `stateAt(...)` remains a pure query and does not participate in mutable advancement.
 
+### Semantic fidelity management
+
+The public fidelity API expresses physical accuracy and interaction requirements rather than a propagator enum:
+
+```ts
+engine.configureFidelityCandidates(objectId, candidates)
+engine.setFidelitySignal(objectId, signalId, requirementOrNull)
+engine.setMinimumFidelityRequirement(objectId, requirementOrNull)
+engine.getFidelityStatus(objectId)
+```
+
+Requirements combine monotonically: stricter error budgets use the smaller bound, interaction capabilities combine by logical OR, gravity-source requirements use set union, and reason/re-evaluation metadata is retained deterministically. Candidate selection first preserves a satisfying current authority and otherwise chooses the cheapest satisfying configured candidate with stable tie-breaks. No camera, zoom, renderer, UI, ownership, or game-priority state participates. If no configured candidate can prove the effective physical requirement, the API reports an explicit `FidelitySelectionError` and never silently downgrades. This policy layer is backend-neutral, so native and WASM expose identical requirement, selection, and diagnostic semantics.
+
 Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense indexes, propagator/provider vtables, integrator work arrays, cache handles, and pointers are not exported from the normal public package entry point.
 
 ## Numeric, time, object, frame, and propagation transfer contract
