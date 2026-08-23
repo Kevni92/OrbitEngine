@@ -57,23 +57,23 @@ Initial models are reference ephemeris, analytical two-body, numerical, and atta
 Model switches are exact-time transactions that validate state continuity before authority changes. Reference divergence is permanent for normal runtime and cannot be cleared by switching back to a cheaper model.
 
 ### Fidelity Manager
-Chooses the accuracy/interaction detail justified for an object or local interaction. Fidelity is independent from propagation model: it may request a model/configuration satisfying an error budget, but it does not redefine physical object type or state.
-
-The automatic manager/promotion heuristics remain later architecture.
+Owns semantic accuracy/interaction requirements and deterministic promotion/demotion under [22 — Event-Driven Advancement and Fidelity Management](22-event-driven-advancement-and-fidelity-management.md). Fidelity is independent from propagation model: it requests capabilities/error budgets, while a separate selector chooses a compatible authority/configuration.
 
 ### Encounter System
-Finds potentially relevant future close approaches without testing every pair every simulation tick. It performs broad-phase filtering, schedules candidates, and refines them as the event approaches.
+Finds potentially relevant future close approaches without testing every pair every simulation tick. The canonical predictive architecture is [23 — Predictive Encounters and Close-Approach Scheduling](23-predictive-encounters-and-close-approach-scheduling.md): explicit monitoring policy, conservative hierarchy-aware broad phase, bounded closest-approach refinement, event/Fidelity integration and revision-aware invalidation.
 
 ### Collision System
-Evaluates actual collision risk only for object pairs allowed by configured interaction policies. Collision checks are especially relevant for artificial/gameplay-relevant and astronomically diverged objects.
+Evaluates actual collision risk only for object pairs allowed by configured interaction policies. [24 — Collision Policy, Continuous Detection, and Physical Response](24-collision-policy-detection-and-response.md) defines explicit sphere geometry, continuous contact detection, exact contact records, detect-only/frictionless-impulse response ownership, simultaneous-contact limits and invalidation.
 
 ### Force / Maneuver System
-Provides deterministic physical force/acceleration, impulse, and supported mass-evolution inputs to motion authority.
+Provides deterministic physical force/acceleration, impulse, and supported mass-evolution inputs to motion authority. [25 — Active Spacecraft Thrust, Mass Flow, and Maneuver Execution](25-active-spacecraft-thrust-mass-flow-and-maneuvers.md) defines exact impulses, bounded finite-burn stages, explicit frame/body direction, prescribed attitude dependencies, integrated physical mass flow and exact event integration.
 
 Continuous forces feed numerical propagation in deterministic order. Instantaneous impulses are exact-time state changes and create new motion handoff segments. Game-specific drive names, fuel-item inventories, and module concepts do not belong here.
 
 ### Trajectory Planner
-Plans physically valid transfers toward moving targets using object state, mass, propulsion constraints, time, and destination motion. Planning and authoritative trajectory propagation are separate responsibilities.
+Provides read-only derived trajectory analysis over authoritative moving-object state. [26 — Trajectory Planning, Transfers, Rendezvous, and Intercepts](26-trajectory-planning-transfers-rendezvous-and-intercepts.md) defines the initial zero-revolution impulsive Lambert solver, explicit central-body/frame assumptions, intercept/rendezvous/flyby semantics, bounded departure/time-of-flight search, stale-plan identity and detached numerical validation.
+
+Planning never makes a trajectory authoritative. A selected plan enters simulation only through an explicit maneuver application transaction using the normal Force/Maneuver System.
 
 ## Reference/demo applications
 
@@ -97,4 +97,5 @@ A reference application is allowed to reveal a missing public consumer capabilit
 8. A game layer may attach arbitrary metadata to an OrbitEngine ID outside the engine.
 9. Reference/demo applications may attach presentation metadata to an OrbitEngine ID outside the engine, but Three.js/Vite/DOM/WebGL/render-space concepts must not leak into the engine package or portable core.
 10. Browser animation/render cadence must not become an authoritative physics tick; browser consumers request engine state at explicit simulation instants.
-11. Architectural changes require documentation updates in the same PR.
+11. Planner queries are derived/read-only; only explicit maneuver application may turn a selected plan into future authoritative physical work.
+12. Architectural changes require documentation updates in the same PR.
