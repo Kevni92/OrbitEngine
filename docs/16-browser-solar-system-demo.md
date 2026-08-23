@@ -8,7 +8,7 @@ The demo is a private in-repository reference application. It is deliberately **
 
 The initial visual stack is TypeScript + Vite + Three.js. Browser execution uses the real OrbitEngine WebAssembly backend compiled from the same portable C++ core as the Node native backend.
 
-This document defines application boundaries, browser/WASM loading, render-space precision, simulation-time animation, scenario data, UI scope, tests, and staging. It does not define new orbital physics. The later celestial-appearance, atmosphere, and stellar-lighting extension is defined by [19 — Celestial Appearance, Atmospheres, and Stellar Lighting](19-celestial-appearance-atmospheres-and-lighting.md) and preserves all boundaries in this document.
+This document defines application boundaries, browser/WASM loading, render-space precision, simulation-time animation, scenario data, UI scope, tests, and staging. It does not define new orbital physics. Celestial appearance is defined by [19 — Celestial Appearance, Atmospheres, and Stellar Lighting](19-celestial-appearance-atmospheres-and-lighting.md). Production astronomical reference motion and the demo's migration away from educational two-body fixtures are defined by [20 — Reference Ephemeris Data and Pipeline](20-reference-ephemeris-data-and-pipeline.md).
 
 ## Decisions at a glance
 
@@ -27,7 +27,10 @@ This document defines application boundaries, browser/WASM loading, render-space
 - Render coordinates are camera/focus-relative whenever possible. Large SSB coordinates are not blindly copied into Three.js for local views.
 - OrbitEngine state remains ICRS/ICRF-aligned; the demo applies one explicit J2000-ecliptic presentation rotation at the render-space boundary and uses +Z as scene/camera up.
 - Distances are converted from SI metres to presentation-only scene units. Body-size exaggeration is presentation-only and explicitly separate from physical radius.
-- The first deterministic scenario is offline and committed. It contains the Sun, eight planets, and Earth's Moon, normalized to OrbitEngine contracts with source/provenance metadata.
+- The first deterministic scenario is offline and committed. Its original educational two-body fixture remains a bootstrap/integration artifact only; document 20 requires migration of known natural bodies to a versioned application-owned OrbitEngine Ephemeris Pack (OEP) and `referenceEphemeris` authority.
+- The OEP dataset is a demo/scenario static asset, not bundled as a hidden full Solar-System database inside the `orbit-engine` npm package.
+- Browser runtime may load packaged same-origin OEP assets, but it never calls NASA/JPL/Horizons/NAIF to obtain or refresh astronomical data.
+- Per-body reference validity is explicit. The demo must not present out-of-range analytical fallback as JPL/reference-quality motion.
 - The first useful Solar-System motion demo depends on #20 and #23. Browser-WASM packaging/smoke work may be implemented earlier.
 - Initial CI includes unit/build tests plus a real headless-browser WASM smoke test. WebGL availability is capability-checked and produces a clear unsupported message rather than a crash.
 - The production demo build is static-hosting compatible. Deployment to GitHub Pages or another host is a separate operational task.
@@ -40,6 +43,7 @@ The dependency direction is permanently one-way:
 ```text
 apps/solar-system-demo
   ├── orbit-engine public TypeScript API
+  ├── application-owned OEP dataset assets
   ├── three
   └── vite (development/build only)
              |
@@ -60,6 +64,8 @@ portable C++ -> DOM/WebGL/browser UI
 ```
 
 The demo is allowed to expose deficiencies in the public consumer contract. When it does, the fix belongs in the appropriate OrbitEngine public/backend contract rather than in a demo-only internal binding escape hatch.
+
+The demo never owns a second ephemeris evaluator. OEP coefficient decoding/evaluation remains in the public engine path and portable core.
 
 ## Repository and workspace layout
 
@@ -83,7 +89,7 @@ OrbitEngine/
 │       │   ├── rendering/
 │       │   └── ui/
 │       ├── tests/
-│       └── public/                 # only assets that must retain exact public names
+│       └── public/                 # packaged static assets such as OEP shards when exact names are required
 ├── cpp/
 ├── docs/
 └── .github/
@@ -104,6 +110,7 @@ The demo package:
 - depends on `orbit-engine: workspace:*`;
 - owns `three` and its own browser-only development dependencies;
 - pins dependency resolution through the repository lockfile;
+- may own/version curated OEP scenario assets without making those assets engine-package defaults;
 - does not add browser dependencies to `packages/orbit-engine`.
 
 Routine Three.js/Vite patch/minor upgrades are dependency maintenance, not architecture changes, provided the contracts in this document remain intact.
@@ -166,6 +173,7 @@ Runtime capability failures must be visible and descriptive:
 
 - WASM unavailable/initialization failure → engine initialization error panel;
 - WebGL 2 unavailable → rendering capability message;
+- OEP manifest/shard missing/corrupt/incompatible → explicit dataset initialization error;
 - scenario registration/query failure → explicit scenario error rather than silently drawing guessed positions.
 
 CI uses Chromium as the initial automated browser baseline. Cross-browser automation can be added later without changing the architecture.
@@ -189,7 +197,8 @@ The normal public `OrbitEngine` facade remains the only application-facing engin
 - binding objects;
 - C++ memory views;
 - internal protocol codecs;
-- generated WASM files by package-relative filesystem path.
+- generated WASM files by package-relative filesystem path;
+- internal OEP parsers/evaluators or raw coefficient views.
 
 ### Asset ownership
 
@@ -201,6 +210,8 @@ A browser consumer must not need to:
 - configure a Vite alias to an OrbitEngine internal directory;
 - know generated file layout;
 - call Emscripten APIs directly.
+
+OEP dataset assets are different: they are scenario/application content governed by document 20. The demo deliberately owns which manifest/shards are packaged and passes their immutable bytes through the public OrbitEngine OEP-loading API.
 
 ### Bundle-safe loader rule
 
@@ -245,6 +256,8 @@ This rule preserves two properties simultaneously:
 
 The existing Node tarball smoke remains required. Browser support adds a second consumer shape: build/install the package into the demo or a minimal browser fixture and prove that the compiled package, not source-tree internals, initializes WASM successfully.
 
+Once document-20 implementation lands, smoke coverage also proves that the packaged public engine can ingest a small OEP fixture and evaluate a real `referenceEphemeris` state in WASM.
+
 ## Application module responsibilities
 
 Recommended internal demo decomposition:
@@ -254,6 +267,7 @@ src/main.ts
   |
   +-- engine/create-engine.ts
   +-- scenario/load-solar-system.ts
+  +-- scenario/reference-dataset.ts
   +-- simulation/simulation-clock.ts
   +-- simulation/state-query-coordinator.ts
   +-- rendering/render-space.ts
@@ -271,20 +285,23 @@ Owns public OrbitEngine initialization only. It may normalize demo error present
 
 ### `scenario/`
 
-Owns deterministic application metadata and registration orchestration:
+Owns deterministic application metadata, dataset asset selection/loading, and registration orchestration:
 
 - human-readable names;
 - display accent/fallback colors;
 - initial camera/focus preference;
-- committed normalized physical/state/frame records;
+- committed normalized physical/frame records;
+- selected OEP dataset identity/manifest/shards for reference motion;
 - application-owned celestial appearance records defined by document 19;
 - source/provenance metadata, with appearance provenance independent from orbital provenance.
+
+The scenario layer may load static asset bytes and pass them to the public OrbitEngine API. It must not parse/evaluate Chebyshev coefficients as authoritative state.
 
 Names, accent colors, composition, atmosphere appearance, and stellar emission metadata are demo/scenario data keyed by `ObjectId`; they do not become OrbitEngine physical properties.
 
 ### `simulation/`
 
-Owns wall-clock-to-requested-time mapping and bounded query scheduling. It does not implement orbital equations.
+Owns wall-clock-to-requested-time mapping and bounded query scheduling. It does not implement orbital equations or source interpolation.
 
 ### `rendering/`
 
@@ -295,6 +312,8 @@ For celestial appearance it additionally owns the renderer-side derivation and r
 ### `ui/`
 
 Owns buttons, sliders/selects, debug panels, and user-visible formatting. Civil/calendar display conversion is presentation logic and must not replace canonical TDB `SimulationInstant` state. Physical/Enhanced lighting selection and any indication that Enhanced mode uses artificial fill also belong here.
+
+The UI may expose dataset ID/version, per-body source/model kind, and effective reference validity as diagnostics. It must not describe an explicit non-reference fallback as JPL/reference motion.
 
 ## Authoritative data flow
 
@@ -308,6 +327,9 @@ SimulationClock computes requested SimulationInstant
           |
           v
 OrbitEngine public state query at exact T
+          |
+          v
+referenceEphemeris/OEP or active dynamic model in portable core
           |
           v
 canonical/relative Cartesian state snapshot
@@ -329,6 +351,12 @@ position += velocity * dt
        |
        v
 pretend this is authoritative physics
+```
+
+and equally:
+
+```text
+OEP bytes -> JavaScript Chebyshev evaluator -> pretend this bypass is engine state
 ```
 
 The demo may interpolate **purely visual camera motion or UI transitions**, but it must not interpolate/extrapolate object physical state and then present that result as an OrbitEngine state. If a future optimization visually interpolates between authoritative snapshots, it must be explicitly marked as render interpolation and periodically re-anchor to engine results; that optimization is outside v1.
@@ -353,7 +381,7 @@ Adaptive visual radii, atmosphere-rim exaggeration, tone mapping, and Enhanced f
 
 The controller stores an exact OrbitEngine `SimulationInstant` as its current requested/displayed physics instant.
 
-JavaScript `Date` is never the simulation clock. The demo may use it only at the UI boundary for the explicit TDB/J2000-to-local-civil formatter and local date-time input. The exact `SimulationInstant` seconds/nanoseconds pair remains authoritative; the civil formatter applies the documented J2000 UTC offset and known UTC leap-second table, while the exact seconds/nanoseconds controls remain available for diagnostic jumps.
+JavaScript `Date` is never the simulation clock. The demo may use it only at the UI boundary for the explicit TDB/J2000-to-local-civil formatter and local date-time input. The exact `SimulationInstant` seconds/nanoseconds pair remains authoritative; civil conversion data remains presentation/import-boundary state.
 
 Browser elapsed time comes from `performance.now()` or the animation callback timestamp. This elapsed number has only presentation-clock meaning.
 
@@ -381,6 +409,16 @@ Supported initial controls:
 - selectable positive time-warp rates.
 
 Read-only backward state queries may later be exposed through a scrubber when the active propagation models support them. Mutable engine rewind semantics are not introduced by the demo.
+
+### Reference-validity interaction
+
+A requested date must be valid for the active configured motion segments. When an OEP-backed body has narrower source coverage than the demo's broad conceptual scenario range, the application must do one of the following explicitly:
+
+- constrain/communicate the supported reference-quality time interval for that loaded scenario;
+- configure documented adjacent non-reference motion segments through normal OrbitEngine semantics;
+- report the state query as unavailable.
+
+The UI must not silently clamp time or extrapolate OEP records.
 
 ### Frame-rate independence
 
@@ -420,6 +458,8 @@ or the final equivalent API from #20.
 
 The demo follows the actual public API established by #20; it does not add a demo-only backend method.
 
+OEP-backed batch evaluation should benefit from portable-core same-epoch reuse of shared source-center nodes as required by document 20. The demo does not implement that cache itself.
+
 ### Relative/local first
 
 The renderer should request states relative to the current focus/reference context when #20 supports it.
@@ -455,7 +495,7 @@ The presentation mapping keeps +X fixed and makes scene `z = 0` the J2000 eclipt
 
 The transform is centralized and applied consistently to body positions, relative/focus positions, and sampled orbit/path points before the metres→scene-unit scale. Debug/technical UI continues to display the unmodified canonical engine coordinates. Rendering the same physical vector through body and path code must yield the same scene-space vector.
 
-This is a presentation transform only. It is not an OrbitEngine reference frame, does not alter public API/frame semantics, and must never be written back into engine state.
+This is a presentation transform only. It is not an OrbitEngine reference frame, does not alter public API/frame semantics, and must never be written back into engine state or OEP data.
 
 ## Render-space origin and scale
 
@@ -524,54 +564,84 @@ The first complete scenario contains at least:
 - Uranus;
 - Neptune.
 
-Additional dwarf planets/asteroids/spacecraft belong in follow-ups.
+The generalized catalog may contain additional major moons, dwarf planets, and minor bodies.
 
 ### Data form
 
-The scenario is committed as normalized data compatible with the public OrbitEngine contracts. It includes, as required by the active models:
+The scenario is committed as normalized data compatible with the public OrbitEngine contracts. It includes, as required by active models:
 
 - stable caller-supplied `ObjectId` values;
 - `ObjectType`;
 - explicit mass and/or gravitational parameter where available/required;
 - physical radius for rendering/reference;
-- exact anchor `SimulationInstant`;
-- canonical Cartesian position/velocity;
 - `ReferenceFrameId` and required frame definitions;
-- propagation configuration;
+- propagation/reference configuration;
+- selected OEP dataset/object/source bindings for migrated known bodies;
+- exact effective validity;
 - source/provenance notes.
 
 Application-owned appearance records defined by document 19 may additionally describe visible-layer composition/reflectance, atmosphere structure/optics/clouds, and stellar temperature/luminosity. Those records use the same stable `ObjectId` association but are not OrbitEngine registration properties.
 
-The first motion scenario uses the production engine model implemented by #23 rather than a JavaScript ellipse approximation.
+### Educational bootstrap state versus production reference state
 
-Expected initial model use:
+The original demo stages used `twoBodyAnalytical` from committed Cartesian anchors because the purpose was to prove engine/WASM/state-query plumbing before a production ephemeris source existed.
 
-- planets: `twoBodyAnalytical` relative to a declared Sun-centered non-rotating frame;
-- Moon: `twoBodyAnalytical` relative to a declared Earth-centered non-rotating frame;
-- Sun: root/reference/appropriate anchor authority according to the available public contracts.
+Those anchors are not promoted to production astronomical truth.
 
-Exact registration details follow documents 13–15 and the public APIs delivered by #16/#20/#23.
+After document-20 implementation, the expected normal motion use for known bodies becomes:
+
+- Sun, Mercury, Venus, Earth, Moon, planetary-system barycentric dependencies and major-body motion: selected DE441-derived OEP reference source;
+- planet centers and major moons: selected pinned planetary-system/satellite OEP source where available;
+- curated minor bodies: selected OEP source within its real coverage where available;
+- explicit `twoBodyAnalytical`/`numerical` segments only where the scenario intentionally chooses an approximation/dynamic authority or after divergence.
+
+The model is never selected merely from `ObjectType`.
+
+### Reference dataset loading
+
+The demo owns an explicit dataset descriptor/asset list. Startup after OEP migration is conceptually:
+
+```text
+load manifest + required static shards
+        |
+validate dataset identity/checksums/schema
+        |
+OrbitEngine public OEP load/register
+        |
+register pack-backed source-center frames
+        |
+register physical objects
+        |
+bind referenceEphemeris motion
+        |
+query normal public states
+```
+
+A missing required shard is a startup/scenario error. Physics queries do not initiate implicit asset/network loads.
 
 ### Provenance
 
-The committed fixture must state:
+The committed scenario/dataset must state:
 
-- source(s);
+- OEP dataset ID/version/manifest hash;
+- source product(s);
 - source retrieval/version date where applicable;
+- source/kernel/Horizons target identifiers;
 - source epoch/time scale;
 - source spatial frame;
 - normalization steps;
-- known accuracy/validity limitations.
+- exact per-body effective validity;
+- representation error results and known source uncertainty/limitations.
 
 Appearance sources are recorded independently where they differ from state-vector/physical-constant sources. In particular, an ephemeris source must not be presented as authority for atmosphere composition, optical depth, surface reflectance, or stellar temperature unless it actually provides those values.
-
-The demo must not imply the small fixture is the future production ephemeris database.
 
 Runtime demo execution never calls NASA/JPL over the network.
 
 ### Replaceability
 
-The application scenario loader consumes a normalized demo-scenario shape. Later importer output should be able to produce equivalent registration and appearance inputs without changing rendering architecture.
+The application scenario loader consumes a normalized scenario shape and selected dataset assets. A newer OEP build is a new explicit scenario/dataset version rather than a transparent data refresh.
+
+Changing the dataset does not require changing rendering architecture; it may require deliberate scenario/save migration because reference trajectories are part of baseline simulation identity.
 
 ## Visual/UI v1 and appearance extension
 
@@ -591,6 +661,7 @@ The first complete engine-driven demo provides:
 - current focus/output frame information;
 - selected-object `ObjectId`, `ObjectType`, physical radius/mass/µ when present;
 - selected object's current position/velocity snapshot and propagation metadata exposed by the public API;
+- reference dataset/model/validity diagnostics when available;
 - a clear indicator when body radii are visually exaggerated.
 
 Document 19 defines the later appearance extension without replacing this application boundary. Resolved non-stellar spheres become lit presentation surfaces whose reflectance derives from appearance metadata when available. Atmospheres use LOD-gated shader shells. The UI exposes `Physical` and `Enhanced` lighting modes, with Enhanced clearly marked as artificial inspection fill. External photorealistic textures remain optional/deferred.
@@ -599,11 +670,9 @@ Document 19 defines the later appearance extension without replacing this applic
 
 Orbit/path lines are derived visualization, never an independent orbital model.
 
-When added, a path is generated by sampling OrbitEngine state-at-time queries over an explicit interval and rendering the returned points. The demo must not derive a Kepler ellipse from its own orbital-element math as a substitute for engine results.
+A path is generated by sampling OrbitEngine state-at-time queries over an explicit interval and rendering the returned points. The demo must not derive a Kepler ellipse from its own orbital-element math or evaluate OEP coefficients in JavaScript as a substitute for engine results.
 
-Path samples carry the source time interval/model revision so they can be invalidated/recomputed when authoritative motion changes.
-
-Path visualization is a follow-up feature after the initial engine-driven body view is working.
+Path samples carry the source time interval/model revision so they can be invalidated/recomputed when authoritative motion changes. OEP dataset/source revision is therefore part of the physical cache identity indirectly through the engine/motion revision.
 
 ## Later numerical/N-body visualization
 
@@ -612,22 +681,29 @@ The demo is intentionally structured so later propagation features can be displa
 For example:
 
 ```text
-twoBodyAnalytical
+referenceEphemeris
        |
+       | divergence / fidelity promotion
        v
 numerical / N-body near encounter
        |
        v
 new post-encounter motion authority
+       |
+       | optional validated demotion
+       v
+twoBodyAnalytical on changed trajectory
 ```
 
-The renderer still asks only for canonical state at `T`. Optional debug UI may show active `PropagationModelKind`, fidelity, force sources, or switch events when those public metadata become available.
+The renderer still asks only for canonical state at `T`. Optional debug UI may show active `PropagationModelKind`, dataset/source identity, fidelity, force sources, or switch events when those public metadata become available.
 
-The demo never implements N-body gravity itself.
+The demo never implements N-body gravity itself and never snaps a diverged object back to its OEP future.
 
 ## Main-thread policy
 
-V1 runs the small Solar-System WASM workload on the browser main thread. Ten-ish bodies and one bounded batch query do not justify a worker architecture yet.
+V1 runs the curated Solar-System WASM workload on the browser main thread. A few dozen bodies and one bounded batch query do not justify a worker architecture by default.
+
+OEP evaluation is designed as direct polynomial lookup/evaluation and should remain cheap. Large datasets may increase startup/download/memory cost, which is addressed through document-20 sharding rather than per-query networking.
 
 The simulation/query coordinator must nevertheless expose an asynchronous application boundary so the engine can later move into a Web Worker if profiling shows main-thread stalls. Moving to a worker must preserve exact query/result semantics.
 
@@ -648,7 +724,8 @@ Unit tests cover pure application logic, including:
 - reversible ICRS/ICRF → J2000-ecliptic presentation rotation and sign convention;
 - focus-relative coordinate mapping;
 - physical vs exaggerated/adaptive radius policy;
-- demo metadata keyed by `ObjectId` without mutating engine objects.
+- demo metadata keyed by `ObjectId` without mutating engine objects;
+- reference-dataset asset selection and explicit missing/out-of-validity error presentation without local physical fallback.
 
 Mocked engine tests verify that body mesh updates consume returned public state snapshots and do not calculate orbital motion locally. Rendering tests also verify that body meshes, sampled paths, and camera centering use the same transformed presentation coordinates while raw scenario/engine states remain unchanged.
 
@@ -665,10 +742,19 @@ It must:
 3. call `OrbitEngine.create({ backend: "wasm" })`;
 4. verify backend initialization succeeds;
 5. execute at least one real registry/state operation available at that implementation stage;
-6. after #20/#23 integration, register/load the demo scenario and verify at least one state-at-time result;
-7. fail on missing/misresolved Emscripten JS/WASM assets.
+6. after OEP/reference implementation, load a small immutable OEP fixture through the public API and verify a `referenceEphemeris` state;
+7. after demo migration, load the production demo dataset and verify representative Sun/Earth/Moon plus another planet/moon state-at-time results;
+8. fail on missing/misresolved Emscripten JS/WASM assets or required OEP assets.
 
 Playwright Chromium is the selected initial automation tool for this smoke path. Browser-specific test tooling remains in the private demo/application dev dependencies.
+
+### Astronomical regression
+
+The first production Earth/Moon demo dataset must include the document-20 **2026-08-12 total solar eclipse** regression.
+
+The authoritative numerical regression belongs below rendering and compares engine states/derived geometry with committed source-oracle data. Browser coverage may additionally jump to the event time and assert a coarse scene/diagnostic sanity condition, but screenshot appearance is not the primary physical oracle.
+
+This regression must decisively fail the old educational trajectory that placed the Moon roughly 66.9 degrees away from the relevant Earth/Sun direction.
 
 ### Rendering smoke
 
@@ -679,11 +765,11 @@ The browser smoke should assert one of:
 - WebGL 2 is available and the demo reaches a rendered/ready state; or
 - the application shows the explicit unsupported-renderer message.
 
-CI correctness of the OrbitEngine WASM query must not depend on GPU-driver-specific pixel snapshots. Pixel-perfect screenshot regression testing is not part of v1. Later appearance tests may add a small number of tolerance-based Playwright visual checks, but numerical/diagnostic invariants remain the primary correctness oracle as specified by document 19.
+CI correctness of the OrbitEngine WASM/OEP query must not depend on GPU-driver-specific pixel snapshots. Pixel-perfect screenshot regression testing is not the primary correctness oracle. Later appearance tests may add tolerance-based Playwright visual checks, but numerical/diagnostic invariants remain primary as specified by documents 19 and 20.
 
 ### Production build
 
-CI builds the static Vite artifact and treats unresolved imports/assets, TypeScript errors, or browser bundle failures as test failures.
+CI builds the static Vite artifact and treats unresolved imports/assets, TypeScript errors, browser bundle failures, or missing referenced production OEP assets as test failures.
 
 Existing portable C++, native, WASM, parity, and npm tarball checks remain independent and are not weakened by adding the demo.
 
@@ -691,34 +777,36 @@ Existing portable C++, native, WASM, parity, and npm tarball checks remain indep
 
 The demo adds application-focused jobs/steps rather than multiplying every existing engine matrix job.
 
-Initial expected validation:
+Expected validation includes:
 
 ```text
 Demo unit/type tests          Linux + supported repository Node
 Demo production build        Linux
 Browser/WASM smoke            Linux + headless Chromium
+Reference dataset regression shared engine/data tests as configured
 ```
 
 Engine/native Windows jobs do not need to run Three.js/browser tests merely because the demo exists.
 
-When OrbitEngine backend/public API code changes, existing engine CI plus browser smoke together protect both Node and browser consumer shapes.
+When OrbitEngine backend/public API or OEP reference code changes, existing engine CI plus reference/dataset tests plus browser smoke protect both Node and browser consumer shapes.
 
 ## Static deployment boundary
 
-`vite build` produces a self-contained static application directory containing hashed JS/assets and the bundled/copied OrbitEngine WASM artifacts.
+`vite build` produces a self-contained static application directory containing hashed JS/assets, the bundled/copied OrbitEngine WASM artifacts, and the selected demo OEP assets required by that build.
 
 The static artifact must not require:
 
-- an application server;
+- an application server beyond ordinary static hosting;
 - runtime Node.js;
 - live astronomical APIs;
+- access to mutable source kernels;
 - access to the source monorepo.
 
-A deployment workflow (for example GitHub Pages) is intentionally separate from the first implementation. Adding deployment must consume the already-tested static artifact rather than rebuilding different bytes after validation.
+A deployment workflow (for example GitHub Pages) is intentionally separate. Adding deployment must consume the already-tested static artifact rather than rebuilding different bytes after validation.
 
 ## Staged implementation plan
 
-Architecture #30 decomposes into separate Implementation tasks.
+Architecture #30 decomposes the browser demo into stages; Architecture #113 adds the production reference-data migration after the original engine-driven fixture path.
 
 ### Stage A — browser-safe OrbitEngine WASM consumer path
 
@@ -745,17 +833,19 @@ Scope:
 
 The shell may display backend/engine readiness before the full Solar-System motion APIs are available.
 
-### Stage C — engine-driven Solar-System scenario
+### Stage C — engine-driven educational Solar-System scenario
 
 Depends on #20, #23, and Stages A/B.
 
 Scope:
 
-- committed normalized Sun/planets/Moon scenario with provenance;
+- committed normalized Sun/planets/Moon bootstrap scenario with provenance;
 - real object/frame/model registration;
 - same-epoch engine state queries;
 - Three.js body visualization from engine state only;
 - selection/focus and debug state.
+
+This stage proves integration but is not the final reference-quality data architecture.
 
 ### Stage D — time warp, relative focus, and sampled paths
 
@@ -768,13 +858,27 @@ Scope:
 - engine-sampled orbit/path lines;
 - model/debug metadata display.
 
-Later numerical/N-body/encounter/trajectory features extend the demo through additional issues; they do not modify this boundary.
-
 ### Stage E — composition-driven appearance and stellar lighting
 
 Governed by document 19 and the Implementation issues created from Architecture #90.
 
 Scope is intentionally decomposed into catalog/appearance data, lit surface and stellar-illumination derivation, atmosphere shaders/LOD, UI lighting controls, and regression/quality coverage. These tasks extend only the application presentation path and do not change OrbitEngine physics ownership.
+
+### Stage F — production reference ephemeris migration
+
+Governed by document 20 and the follow-up Implementation issues from Architecture #113.
+
+Scope:
+
+- package/public OEP loader and portable reference evaluator available first;
+- versioned production Solar-System OEP assets generated offline from pinned JPL/NAIF sources;
+- demo loads those assets through public WASM APIs;
+- known natural bodies bind `referenceEphemeris` within real source validity;
+- old circularized reference anchors are removed for migrated bodies;
+- per-body/dataset validity and provenance become diagnosable;
+- source-vector and eclipse regressions protect the physical result.
+
+Later numerical/N-body/encounter/trajectory features extend the demo through additional issues; they do not modify this boundary.
 
 ## Explicit non-goals
 
@@ -782,10 +886,12 @@ This architecture does not add:
 
 - rendering APIs to OrbitEngine;
 - Three.js/Vite dependencies to the public engine package;
-- a JavaScript orbit solver;
+- a JavaScript orbit or ephemeris solver;
 - a second authoritative simulation clock;
 - live NASA/JPL calls;
-- production ephemeris import tooling;
+- CSPICE to browser/WASM runtime;
+- production ephemeris acquisition/import tooling inside the demo application itself;
+- implicit out-of-range ephemeris extrapolation;
 - N-body/numerical propagation;
 - encounter/collision systems;
 - trajectory optimization;
@@ -809,8 +915,12 @@ A conforming demo implementation satisfies all of the following:
 5. animation frame rate cannot become a hidden physics integration step;
 6. focus-relative rendering preserves local precision and does not mutate physical state;
 7. render scale/body exaggeration are presentation-only and explicitly distinguishable from physical values;
-8. the committed scenario is offline, deterministic, normalized, and provenance-documented;
+8. the committed scenario/reference dataset is offline, deterministic, normalized, versioned, and provenance-documented;
 9. browser/WASM asset resolution is tested through a real consumer build;
 10. later numerical/N-body features can be visualized through the same state-at-time boundary without redesigning the app/engine separation;
 11. celestial appearance, atmosphere rendering and stellar lighting remain downstream presentation/data concerns and obey document 19 rather than extending OrbitEngine physical records;
-12. physical stellar irradiance is resolved from authoritative same-epoch SI-space body/star state and is never changed by adaptive rendering or Enhanced inspection lighting.
+12. physical stellar irradiance is resolved from authoritative same-epoch SI-space body/star state and is never changed by adaptive rendering or Enhanced inspection lighting;
+13. production known-body reference motion is supplied through document-20 OEP/`referenceEphemeris`, never a demo-owned ephemeris evaluator;
+14. the demo does not silently claim reference quality outside each loaded source's effective validity;
+15. changing OEP dataset versions is explicit scenario/data migration rather than transparent source refresh;
+16. Earth/Moon production data passes source-vector regression and the 2026-08-12 eclipse geometry regression.
