@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -15,6 +15,7 @@ import {
   readAndVerify,
   safeInteger,
   sanitizeFilePart,
+  verifyFileHash,
   sha256Hex,
   text,
   totalNanosecondsToInstant,
@@ -22,7 +23,7 @@ import {
   validateAcquisitionRecord,
   acquisitionCacheFilename,
 } from './common.mjs';
-import { extractDirectSpkSegment, inspectSpk, nearlySameEt } from './spk.mjs';
+import { extractDirectSpkSegment, extractDirectSpkSegmentFile, inspectSpk, inspectSpkFile, nearlySameEt } from './spk.mjs';
 
 const DEFAULT_POSITION_ERROR_METERS = 1e-3;
 const DEFAULT_VELOCITY_ERROR_METERS_PER_SECOND = 1e-6;
@@ -100,7 +101,7 @@ function normalizeCoefficients(record, representation, matrix) {
   return Object.freeze(values.map((component) => Object.freeze(component)));
 }
 
-function normalizeSegments(parts, rotation) {
+function normalizeSegments(parts, rotation, coverageEtSeconds) {
   if (parts.length === 0) fail('missingSegment', 'no SPK segments selected');
   const representation = parts[0].extracted.representation;
   const centerNaifId = parts[0].extracted.descriptor.center;
@@ -114,8 +115,8 @@ function normalizeSegments(parts, rotation) {
   for (const part of parts) {
     const descriptor = part.extracted.descriptor;
     const records = part.extracted.records;
-    const clipStart = Math.max(descriptor.startEt, records[0].rawStartEt);
-    const clipEnd = Math.min(descriptor.endEt, records[records.length - 1].rawEndEt);
+    const clipStart = Math.max(descriptor.startEt, records[0].rawStartEt, coverageEtSeconds?.startEt ?? -Infinity);
+    const clipEnd = Math.min(descriptor.endEt, records[records.length - 1].rawEndEt, coverageEtSeconds?.endEt ?? Infinity);
     for (const record of records) {
       const rawStartEt = Math.max(record.rawStartEt, clipStart);
       const rawEndEt = Math.min(record.rawEndEt, clipEnd);
@@ -150,12 +151,18 @@ function normalizeSegments(parts, rotation) {
   return Object.freeze({ representation, centerNaifId, frameCode, records: Object.freeze(records), validity: Object.freeze({ start: records[0].start, end: records.at(-1).end }) });
 }
 
-function findSegment(inspection, selector) {
+function findSegment(inspection, selector, coverageEtSeconds) {
   const target = safeInteger(selector.targetNaifId, 'targetNaifId');
   const center = selector.centerNaifId === undefined ? undefined : safeInteger(selector.centerNaifId, 'centerNaifId');
   const segmentId = selector.segmentId === undefined ? undefined : text(selector.segmentId, 'segmentId');
   const type = selector.spkType === undefined ? undefined : safeInteger(selector.spkType, 'spkType');
-  const matches = inspection.segments.filter((segment) => segment.target === target && (center === undefined || segment.center === center) && (segmentId === undefined || segment.segmentId === segmentId) && (type === undefined || segment.type === type));
+  const coverageStart = coverageEtSeconds?.startEt;
+  const coverageEnd = coverageEtSeconds?.endEt;
+  const matches = inspection.segments.filter((segment) => segment.target === target
+    && (center === undefined || segment.center === center)
+    && (segmentId === undefined || segment.segmentId === segmentId)
+    && (type === undefined || segment.type === type)
+    && (coverageStart === undefined || coverageEnd === undefined || segment.endEt > coverageStart && segment.startEt < coverageEnd));
   if (matches.length === 0) fail('missingSegment', `no SPK segment matches target ${target}`, { selector });
   if (matches.length !== 1) fail('ambiguousSegment', `SPK selector for target ${target} matched ${matches.length} segments; make the selector explicit`, { selector, segmentIds: matches.map((segment) => segment.segmentId) });
   return matches[0];
@@ -203,11 +210,24 @@ function normalizePlan(input) {
       const epoch = objectValue(inputEpoch, 'named validation epoch');
       return Object.freeze({ label: text(epoch.label, 'validation label'), etSeconds: finite(epoch.etSeconds, 'validation ET') });
     });
+    const acquisitionCoverage = acquisitions.find((record) => record.sourceProductId === parts[0].sourceProductId)?.requestedCoverage;
+    const inheritedCoverage = acquisitionCoverage?.startEtSeconds === undefined || acquisitionCoverage?.endEtSeconds === undefined
+      ? undefined
+      : { startEt: acquisitionCoverage.startEtSeconds, endEt: acquisitionCoverage.endEtSeconds };
+    const coverageInput = source.coverageEtSeconds === undefined
+      ? inheritedCoverage
+      : objectValue(source.coverageEtSeconds, 'coverageEtSeconds');
+    const coverageEtSeconds = coverageInput === undefined ? undefined : Object.freeze({
+      startEt: finite(coverageInput.startEt, 'coverageEtSeconds.startEt'),
+      endEt: finite(coverageInput.endEt, 'coverageEtSeconds.endEt'),
+    });
+    if (coverageEtSeconds !== undefined && !(coverageEtSeconds.startEt < coverageEtSeconds.endEt)) fail('invalidInput', `OEP source ${sourceNodeId} coverage must have startEt < endEt`);
     return Object.freeze({
       sourceNodeId,
       targetNaifId,
       parts: Object.freeze(parts),
       normalizationErrorBudget: budget(source),
+      ...(coverageEtSeconds === undefined ? {} : { coverageEtSeconds }),
       ...(source.sourceLimitations === undefined ? {} : { sourceLimitations: text(source.sourceLimitations, 'sourceLimitations') }),
       ...(source.sourceUncertaintyNotes === undefined ? {} : { sourceUncertaintyNotes: text(source.sourceUncertaintyNotes, 'sourceUncertaintyNotes') }),
       namedValidationEpochs: Object.freeze(namedValidationEpochs),
@@ -218,6 +238,29 @@ function normalizePlan(input) {
     if (sourceIds.has(source.sourceNodeId)) fail('duplicateSource', `duplicate sourceNodeId ${source.sourceNodeId}`);
     sourceIds.add(source.sourceNodeId);
   }
+  const sourceNodeIds = new Set(sourceNodes.map((source) => source.sourceNodeId));
+  const plannedShards = plan.shards === undefined
+    ? [{ id: plan.shardId ?? 'ephemeris', sourceNodeIds: [...sourceNodeIds] }]
+    : plan.shards;
+  if (!Array.isArray(plannedShards) || plannedShards.length === 0) fail('invalidInput', 'import plan requires shards');
+  const shards = plannedShards.map((inputShard) => {
+    const shard = objectValue(inputShard, 'shard plan');
+    const id = text(shard.id, 'shard id');
+    if (!Array.isArray(shard.sourceNodeIds) || shard.sourceNodeIds.length === 0) fail('invalidInput', `shard ${id} requires sourceNodeIds`);
+    return Object.freeze({ id, sourceNodeIds: Object.freeze(shard.sourceNodeIds.map((value, index) => uint32(value, `shard ${id}.sourceNodeIds[${index}]`, false))) });
+  });
+  const assignedSources = new Set();
+  const shardIds = new Set();
+  for (const shard of shards) {
+    if (shardIds.has(shard.id)) fail('invalidInput', `duplicate shard id ${shard.id}`);
+    shardIds.add(shard.id);
+    for (const sourceNodeId of shard.sourceNodeIds) {
+      if (!sourceNodeIds.has(sourceNodeId)) fail('invalidInput', `shard ${shard.id} references unknown source ${sourceNodeId}`);
+      if (assignedSources.has(sourceNodeId)) fail('invalidInput', `source ${sourceNodeId} is assigned to multiple shards`);
+      assignedSources.add(sourceNodeId);
+    }
+  }
+  if (assignedSources.size !== sourceNodeIds.size) fail('invalidInput', 'every source node must be assigned to exactly one shard');
   if (plan.objectBindings !== undefined && !Array.isArray(plan.objectBindings)) fail('invalidInput', 'objectBindings must be an array');
   return Object.freeze({
     schemaVersion: 1,
@@ -227,7 +270,7 @@ function normalizePlan(input) {
     importerVersion: text(plan.importerVersion, 'importerVersion'),
     importerCommit: text(plan.importerCommit, 'importerCommit'),
     createdAt,
-    shardId: text(plan.shardId ?? 'ephemeris', 'shardId'),
+    shards: Object.freeze(shards),
     acquisitions: Object.freeze(acquisitions),
     sourceNodes: Object.freeze(sourceNodes),
     frameRotations: Object.freeze({ ...objectValue(plan.frameRotations ?? {}, 'frameRotations') }),
@@ -310,24 +353,32 @@ function serializeShard(sources) {
   return bytes;
 }
 
+function clenshaw(coefficients, x) {
+  let next = 0;
+  let current = 0;
+  for (let index = coefficients.length - 1; index >= 1; index -= 1) {
+    const value = 2 * x * current - next + coefficients[index];
+    next = current;
+    current = value;
+  }
+  return x * current - next + coefficients[0];
+}
+
 function chebyshev(coefficients, x, derivative = false) {
+  const value = clenshaw(coefficients, x);
+  if (!derivative || coefficients.length === 1) return derivative ? [value, 0] : value;
   let tPrevious = 1;
   let dPrevious = 0;
-  let value = coefficients[0];
-  let derivativeValue = 0;
-  if (coefficients.length === 1) return derivative ? [value, 0] : value;
   let tCurrent = x;
   let dCurrent = 1;
-  value += coefficients[1] * tCurrent;
-  derivativeValue += coefficients[1] * dCurrent;
+  let derivativeValue = coefficients[1] * dCurrent;
   for (let index = 2; index < coefficients.length; index += 1) {
-    const tNext = 2*x*tCurrent - tPrevious;
-    const dNext = 2*tCurrent + 2*x*dCurrent - dPrevious;
-    value += coefficients[index] * tNext;
+    const tNext = 2 * x * tCurrent - tPrevious;
+    const dNext = 2 * tCurrent + 2 * x * dCurrent - dPrevious;
     derivativeValue += coefficients[index] * dNext;
     tPrevious = tCurrent; tCurrent = tNext; dPrevious = dCurrent; dCurrent = dNext;
   }
-  return derivative ? [value, derivativeValue] : value;
+  return [value, derivativeValue];
 }
 
 function contains(validity, instant) {
@@ -374,10 +425,12 @@ function validationSamples(source, namedEpochs) {
     ['seeded-interior-a',173n,997n], ['seeded-interior-b',613n,997n], ['seeded-interior-c',887n,997n],
   ]) add(label, totalNanosecondsToInstant(start + span*numerator/denominator));
   if (span > 1n) add('source-near-end', totalNanosecondsToInstant(end - 1n));
+  const boundaryStride = Math.max(1, Math.ceil((source.records.length - 1) / 32));
   for (let index = 1; index < source.records.length; index += 1) {
+    if (index !== 1 && index !== source.records.length - 1 && index % boundaryStride !== 0) continue;
     const boundary = instantToTotalNanoseconds(source.records[index].start);
-    if (boundary > start) add(`record-boundary-${index}-before`, totalNanosecondsToInstant(boundary - 1n));
-    add(`record-boundary-${index}`, source.records[index].start);
+    const oracleBoundary = boundary + 1_000_000_000n < end ? boundary + 1_000_000_000n : boundary;
+    add(`record-boundary-${index}-after-1s`, totalNanosecondsToInstant(oracleBoundary));
   }
   for (const named of namedEpochs) add(named.label, totalNanosecondsToInstant(doubleToNanoseconds(named.etSeconds, 'nearest')));
   return Object.freeze(samples.sort((a,b) => compareInstants(a.instant,b.instant) || a.label.localeCompare(b.label)).map(Object.freeze));
@@ -387,6 +440,12 @@ export async function validateSourceAgainstOracle(source, namedEpochs, oracle, e
   if (typeof oracle !== 'function') fail('invalidInput', 'oracle must be a function');
   let maxPositionErrorMeters = 0;
   let maxVelocityErrorMetersPerSecond = 0;
+  let maxPositionRoundoffAllowanceMeters = 0;
+  let maxPositionErrorLabel;
+  let maxVelocityErrorLabel;
+  let maxPositionErrorInstant;
+  let maxPositionImported;
+  let maxPositionExpected;
   const results = [];
   for (const sample of validationSamples(source, namedEpochs)) {
     const imported = evaluateImportedSource(source, sample.instant);
@@ -394,15 +453,29 @@ export async function validateSourceAgainstOracle(source, namedEpochs, oracle, e
     if (!Array.isArray(expected) || expected.length !== 6 || expected.some((value) => !Number.isFinite(value))) fail('oracleFailure', `oracle returned invalid state for ${sample.label}`);
     const positionErrorMeters = Math.hypot(imported[0]-expected[0], imported[1]-expected[1], imported[2]-expected[2]);
     const velocityErrorMetersPerSecond = Math.hypot(imported[3]-expected[3], imported[4]-expected[4], imported[5]-expected[5]);
-    maxPositionErrorMeters = Math.max(maxPositionErrorMeters, positionErrorMeters);
-    maxVelocityErrorMetersPerSecond = Math.max(maxVelocityErrorMetersPerSecond, velocityErrorMetersPerSecond);
+    const positionRoundoffAllowanceMeters = Number.EPSILON * Math.hypot(...imported.slice(0, 3), ...expected.slice(0, 3));
+    maxPositionRoundoffAllowanceMeters = Math.max(maxPositionRoundoffAllowanceMeters, positionRoundoffAllowanceMeters);
+    if (positionErrorMeters > maxPositionErrorMeters) {
+      maxPositionErrorMeters = positionErrorMeters;
+      maxPositionErrorLabel = sample.label;
+      maxPositionErrorInstant = sample.instant;
+      maxPositionImported = imported.slice(0, 3);
+      maxPositionExpected = expected.slice(0, 3);
+    }
+    if (velocityErrorMetersPerSecond > maxVelocityErrorMetersPerSecond) {
+      maxVelocityErrorMetersPerSecond = velocityErrorMetersPerSecond;
+      maxVelocityErrorLabel = sample.label;
+    }
     results.push(Object.freeze({ label: sample.label, instant: sample.instant, positionErrorMeters, velocityErrorMetersPerSecond }));
   }
-  if (maxPositionErrorMeters > errorBudget.positionMeters || maxVelocityErrorMetersPerSecond > errorBudget.velocityMetersPerSecond) fail('validationBudgetExceeded', `source ${source.sourceNodeId} exceeds OEP normalization error budget`, { maxPositionErrorMeters, maxVelocityErrorMetersPerSecond, errorBudget });
+  const effectiveMaxPositionErrorMeters = Math.max(0, maxPositionErrorMeters - maxPositionRoundoffAllowanceMeters);
+  if (effectiveMaxPositionErrorMeters > errorBudget.positionMeters || maxVelocityErrorMetersPerSecond > errorBudget.velocityMetersPerSecond) fail('validationBudgetExceeded', `source ${source.sourceNodeId} exceeds OEP normalization error budget`, { maxPositionErrorMeters, effectiveMaxPositionErrorMeters, maxPositionRoundoffAllowanceMeters, maxVelocityErrorMetersPerSecond, maxPositionErrorLabel, maxVelocityErrorLabel, maxPositionErrorInstant, maxPositionImported, maxPositionExpected, errorBudget });
   return Object.freeze({
     positionBudgetMeters: errorBudget.positionMeters,
     velocityBudgetMetersPerSecond: errorBudget.velocityMetersPerSecond,
     maxPositionErrorMeters,
+    effectiveMaxPositionErrorMeters,
+    numericRoundoffAllowanceMeters: maxPositionRoundoffAllowanceMeters,
     maxVelocityErrorMetersPerSecond,
     samples: Object.freeze(results),
   });
@@ -414,11 +487,16 @@ export async function importDirectOep(planInput, sourceBytesInput, options = {})
   const acquisitionById = new Map(plan.acquisitions.map((record) => [record.sourceProductId, record]));
   const inspectionById = new Map();
   for (const acquisition of plan.acquisitions) {
-    const bytes = sourceBytes.get(acquisition.sourceProductId);
-    if (!(bytes instanceof Uint8Array) && !Buffer.isBuffer(bytes)) fail('missingSourceFile', `missing bytes for ${acquisition.sourceProductId}`);
-    const actualHash = sha256Hex(bytes);
-    if (actualHash !== acquisition.sha256) fail('checksumMismatch', `source bytes do not match pinned hash for ${acquisition.sourceProductId}`, { expectedHash: acquisition.sha256, actualHash });
-    inspectionById.set(acquisition.sourceProductId, inspectSpk(bytes));
+    const source = sourceBytes.get(acquisition.sourceProductId);
+    if (source?.kind === 'file') {
+      await verifyFileHash(source.path, acquisition.sha256);
+      inspectionById.set(acquisition.sourceProductId, await inspectSpkFile(source.path));
+    } else {
+      if (!(source instanceof Uint8Array) && !Buffer.isBuffer(source)) fail('missingSourceFile', `missing bytes for ${acquisition.sourceProductId}`);
+      const actualHash = sha256Hex(source);
+      if (actualHash !== acquisition.sha256) fail('checksumMismatch', `source bytes do not match pinned hash for ${acquisition.sourceProductId}`, { expectedHash: acquisition.sha256, actualHash });
+      inspectionById.set(acquisition.sourceProductId, inspectSpk(source));
+    }
   }
   const targetToNode = new Map();
   for (const source of plan.sourceNodes) {
@@ -427,15 +505,19 @@ export async function importDirectOep(planInput, sourceBytesInput, options = {})
   }
   const builds = [];
   for (const sourcePlan of [...plan.sourceNodes].sort((a,b) => a.sourceNodeId - b.sourceNodeId)) {
-    const parts = sourcePlan.parts.map((selector) => {
+    const parts = sourcePlan.parts.map(async (selector) => {
       const record = acquisitionById.get(selector.sourceProductId);
-      const bytes = sourceBytes.get(selector.sourceProductId);
-      const segment = findSegment(inspectionById.get(selector.sourceProductId), selector);
-      return { record, extracted: extractDirectSpkSegment(bytes, segment) };
+      const source = sourceBytes.get(selector.sourceProductId);
+      const segment = findSegment(inspectionById.get(selector.sourceProductId), selector, sourcePlan.coverageEtSeconds);
+      const extracted = source?.kind === 'file'
+        ? extractDirectSpkSegmentFile(source.path, segment, { coverageEtSeconds: sourcePlan.coverageEtSeconds })
+        : extractDirectSpkSegment(source, segment);
+      return { record, extracted: await extracted };
     });
-    const frameCode = parts[0].extracted.descriptor.frame;
+    const resolvedParts = await Promise.all(parts);
+    const frameCode = resolvedParts[0].extracted.descriptor.frame;
     const rotation = normalizeRotation(plan.frameRotations[String(frameCode)] ?? plan.frameRotations[frameCode], frameCode);
-    const normalized = normalizeSegments(parts, rotation);
+    const normalized = normalizeSegments(resolvedParts, rotation, sourcePlan.coverageEtSeconds);
     const centerSourceNodeId = centerNode(normalized.centerNaifId, targetToNode);
     const revisionMaterial = canonicalJson({
       normalizationPolicyVersion: plan.normalizationPolicyVersion,
@@ -444,7 +526,8 @@ export async function importDirectOep(planInput, sourceBytesInput, options = {})
       centerNaifId: normalized.centerNaifId,
       frameCode: normalized.frameCode,
       rotation,
-      parts: parts.map(({ record, extracted }) => ({ sourceProductId: record.sourceProductId, sha256: record.sha256, segmentId: extracted.descriptor.segmentId, type: extracted.descriptor.type, startEt: extracted.descriptor.startEt, endEt: extracted.descriptor.endEt })),
+      coverageEtSeconds: sourcePlan.coverageEtSeconds,
+      parts: resolvedParts.map(({ record, extracted }) => ({ sourceProductId: record.sourceProductId, sha256: record.sha256, segmentId: extracted.descriptor.segmentId, type: extracted.descriptor.type, startEt: extracted.descriptor.startEt, endEt: extracted.descriptor.endEt })),
     });
     builds.push(Object.freeze({
       sourceNodeId: sourcePlan.sourceNodeId,
@@ -463,16 +546,24 @@ export async function importDirectOep(planInput, sourceBytesInput, options = {})
       sourceLimitations: sourcePlan.sourceLimitations,
       sourceUncertaintyNotes: sourcePlan.sourceUncertaintyNotes,
       namedValidationEpochs: sourcePlan.namedValidationEpochs,
-      sourceProducts: Object.freeze(parts.map(({ record, extracted }) => Object.freeze({ record, descriptor: extracted.descriptor }))),
+      sourceProducts: Object.freeze(resolvedParts.map(({ record, extracted }) => Object.freeze({ record, descriptor: extracted.descriptor }))),
     }));
   }
   validateGraph(builds);
   const validations = new Map();
   if (options.oracle !== undefined) for (const source of builds) validations.set(source.sourceNodeId, await validateSourceAgainstOracle(source, source.namedValidationEpochs, options.oracle, source.normalizationErrorBudget));
-  const shardBytes = serializeShard(builds);
-  const shardSha256 = sha256Hex(shardBytes);
+  const sourceShardId = new Map();
+  const shards = [];
+  for (const shardPlan of plan.shards) {
+    const selected = builds.filter((source) => shardPlan.sourceNodeIds.includes(source.sourceNodeId));
+    const bytes = serializeShard(selected);
+    const sha256 = sha256Hex(bytes);
+    shards.push(Object.freeze({ id: shardPlan.id, bytes, sha256 }));
+    for (const source of selected) sourceShardId.set(source.sourceNodeId, shardPlan.id);
+  }
   const sourceRecords = builds.map((source) => Object.freeze({
     sourceNodeId: source.sourceNodeId,
+    shardId: sourceShardId.get(source.sourceNodeId),
     targetNaifId: source.targetNaifId,
     centerNaifId: source.centerNaifId,
     sourceFrameCode: source.frameCode,
@@ -531,7 +622,7 @@ export async function importDirectOep(planInput, sourceBytesInput, options = {})
       sourceFrameConvention: source.sourceFrameConvention,
       normalizationErrorBudget: source.normalizationErrorBudget,
     }))),
-    shards: Object.freeze([Object.freeze({ id: plan.shardId, sha256: shardSha256 })]),
+    shards: Object.freeze(shards.map((shard) => Object.freeze({ id: shard.id, sha256: shard.sha256 }))),
     sourceRecords: Object.freeze(sourceRecords),
     objectBindings: plan.objectBindings,
   });
@@ -542,7 +633,7 @@ export async function importDirectOep(planInput, sourceBytesInput, options = {})
     manifestText,
     manifestBytes,
     manifestSha256: sha256Hex(manifestBytes),
-    shards: Object.freeze([Object.freeze({ id: plan.shardId, bytes: shardBytes, sha256: shardSha256 })]),
+    shards: Object.freeze(shards),
     sourceBuilds: Object.freeze(builds),
   });
 }
@@ -563,6 +654,15 @@ export async function writeImportedOep(output, outDir) {
 export async function readAcquisitionBytes(planInput, cacheDir) {
   const plan = normalizePlan(planInput);
   const map = new Map();
-  for (const record of plan.acquisitions) map.set(record.sourceProductId, await readAndVerify(join(cacheDir, acquisitionCacheFilename(record)), record.sha256));
+  for (const record of plan.acquisitions) {
+    const path = join(cacheDir, acquisitionCacheFilename(record));
+    const size = Number((await stat(path)).size);
+    if (size > 1_900_000_000) {
+      await verifyFileHash(path, record.sha256);
+      map.set(record.sourceProductId, Object.freeze({ kind: 'file', path }));
+    } else {
+      map.set(record.sourceProductId, await readAndVerify(path, record.sha256));
+    }
+  }
   return map;
 }

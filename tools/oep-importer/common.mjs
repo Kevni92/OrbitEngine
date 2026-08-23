@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -53,6 +54,23 @@ export function nonNegative(value, name) {
 
 export function sha256Hex(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+export async function sha256File(path) {
+  const hash = createHash('sha256');
+  await new Promise((resolvePromise, reject) => {
+    const stream = createReadStream(path);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', resolvePromise);
+  });
+  return hash.digest('hex');
+}
+
+export async function verifyFileHash(path, expectedHash) {
+  const actualHash = await sha256File(path);
+  if (actualHash !== expectedHash) fail('checksumMismatch', `cached source checksum mismatch for ${path}`, { expectedHash, actualHash });
+  return Object.freeze({ path, sha256: actualHash });
 }
 
 function sha256Text(value, name = 'sha256') {

@@ -15,6 +15,7 @@
     "test:wasm": "pnpm --filter orbit-engine test:wasm",
     "test:parity": "pnpm --filter orbit-engine test:parity",
     "test:oep-importer": "node --test tools/oep-importer/tests/importer.test.mjs",
+    "test:oep-production": "node --test tools/oep-importer/tests/production-pack.test.mjs",
     "test:oep-importer:spice": "node --test tools/oep-importer/tests/spice-integration.test.mjs",
     "test:oep-importer:runtime:native": "node tools/oep-importer/tests/runtime-compat.mjs native",
     "test:oep-importer:runtime:wasm": "node tools/oep-importer/tests/runtime-compat.mjs wasm",

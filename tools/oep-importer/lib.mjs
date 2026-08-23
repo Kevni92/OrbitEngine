@@ -6,10 +6,12 @@ export {
   compareInstants,
   doubleToNanoseconds,
   sha256Hex,
+  sha256File,
   totalNanosecondsToInstant,
   validateAcquisitionRecord,
+  verifyFileHash,
 } from './common.mjs';
-export { extractDirectSpkSegment, inspectSpk } from './spk.mjs';
+export { extractDirectSpkSegment, extractDirectSpkSegmentFile, inspectSpk, inspectSpkFile } from './spk.mjs';
 export {
   evaluateImportedSource,
   importDirectOep,

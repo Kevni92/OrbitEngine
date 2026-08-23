@@ -242,30 +242,37 @@ void u64_to_words(std::uint64_t value, std::uint32_t& high, std::uint32_t& low) 
   double* derivative
 ) noexcept {
   if (coefficient_count == 0) return false;
-  double t_previous = 1.0;
-  double dt_previous = 0.0;
   double coefficient = 0.0;
+  double next = 0.0;
+  double current = 0.0;
+  for (auto index = coefficient_count; index-- > 1;) {
+    if (!read_f64_at(shard, coefficient_offset + static_cast<std::size_t>(index) * 8U, coefficient)
+        || !std::isfinite(coefficient)) {
+      return false;
+    }
+    const double value_next = 2.0 * x * current - next + coefficient;
+    next = current;
+    current = value_next;
+  }
   if (!read_f64_at(shard, coefficient_offset, coefficient) || !std::isfinite(coefficient)) return false;
-  value = coefficient;
-  double derivative_value = 0.0;
+  value = x * current - next + coefficient;
   if (coefficient_count == 1) {
     if (derivative != nullptr) *derivative = 0.0;
     return std::isfinite(value);
   }
 
+  double t_previous = 1.0;
+  double dt_previous = 0.0;
   double t_current = x;
   double dt_current = 1.0;
+  double derivative_value = 0.0;
   if (!read_f64_at(shard, coefficient_offset + 8U, coefficient) || !std::isfinite(coefficient)) return false;
-  value += coefficient * t_current;
   derivative_value += coefficient * dt_current;
   for (std::uint32_t index = 2; index < coefficient_count; ++index) {
     const double t_next = 2.0 * x * t_current - t_previous;
     const double dt_next = 2.0 * t_current + 2.0 * x * dt_current - dt_previous;
     if (!read_f64_at(shard, coefficient_offset + static_cast<std::size_t>(index) * 8U, coefficient)
-        || !std::isfinite(coefficient)) {
-      return false;
-    }
-    value += coefficient * t_next;
+        || !std::isfinite(coefficient)) return false;
     derivative_value += coefficient * dt_next;
     t_previous = t_current;
     t_current = t_next;

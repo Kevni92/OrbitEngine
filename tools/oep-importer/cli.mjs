@@ -18,7 +18,7 @@ Usage:
   node tools/oep-importer/cli.mjs inspect <kernel.bsp>
   node tools/oep-importer/cli.mjs acquire <acquisition.json> <cache-dir>
   node tools/oep-importer/cli.mjs acquire-plan <import-plan.json> <cache-dir>
-  node tools/oep-importer/cli.mjs import <import-plan.json> <cache-dir> <out-dir> [--spice-python <python>]
+  node tools/oep-importer/cli.mjs import <import-plan.json> <cache-dir> <out-dir> [--spice-python <python>] [--spice-kernel <path>]
 
 The import command never performs network access. Use acquire/acquire-plan first to populate
 an immutable checksum-verified source cache. If --spice-python is supplied, every emitted
@@ -56,9 +56,13 @@ async function main() {
   if (command === 'import' && args.length >= 3) {
     const [planPath, cacheDir, outDir, ...rest] = args;
     let pythonExecutable;
+    let spiceKernelPath;
     for (let index = 0; index < rest.length; index += 1) {
       if (rest[index] === '--spice-python' && rest[index + 1] !== undefined) {
         pythonExecutable = rest[index + 1];
+        index += 1;
+      } else if (rest[index] === '--spice-kernel' && rest[index + 1] !== undefined) {
+        spiceKernelPath = rest[index + 1];
         index += 1;
       } else {
         throw new Error(`unknown import option ${rest[index]}`);
@@ -66,7 +70,11 @@ async function main() {
     }
     const plan = await jsonFile(planPath);
     const sources = await readAcquisitionBytes(plan, cacheDir);
-    const oracle = pythonExecutable === undefined ? undefined : createSpiceyPyOracle(plan, cacheDir, { pythonExecutable });
+    const kernelPathByProduct = spiceKernelPath === undefined ? undefined : new Map(plan.acquisitions.map((record) => [record.sourceProductId, spiceKernelPath]));
+    const oracle = pythonExecutable === undefined ? undefined : createSpiceyPyOracle(plan, cacheDir, {
+      pythonExecutable,
+      ...(kernelPathByProduct === undefined ? {} : { kernelPathByProduct }),
+    });
     const output = await importDirectOep(plan, sources, { ...(oracle === undefined ? {} : { oracle }) });
     const paths = await writeImportedOep(output, outDir);
     console.log(JSON.stringify({
@@ -82,6 +90,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error?.stack ?? error);
+  console.error(error?.details && Object.keys(error.details).length > 0
+    ? `${error?.stack ?? error}\n${JSON.stringify(error.details, null, 2)}`
+    : (error?.stack ?? error));
   process.exitCode = 1;
 });
