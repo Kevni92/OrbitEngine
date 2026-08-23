@@ -92,21 +92,6 @@ struct EvaluationWire {
 
 class Registry {
 public:
-  Registry() noexcept;
-
-  [[nodiscard]] DatasetInfoWire load(std::span<const std::uint8_t> payload) noexcept;
-  [[nodiscard]] DatasetInfoWire retain(std::uint64_t handle) noexcept;
-  [[nodiscard]] DatasetInfoWire release_reference(std::uint64_t handle) noexcept;
-  [[nodiscard]] DatasetInfoWire unload(std::uint64_t handle) noexcept;
-  [[nodiscard]] SourceInfoWire source_info(std::uint64_t handle, std::uint32_t source_node_id) const noexcept;
-  [[nodiscard]] EvaluationWire evaluate(
-    std::uint64_t handle,
-    std::uint32_t source_node_id,
-    EvaluationMode mode,
-    time::TimeWire target
-  ) noexcept;
-
-private:
   struct Record {
     std::size_t shard_index;
     std::uint32_t source_node_id;
@@ -165,6 +150,21 @@ private:
     std::uint32_t references;
   };
 
+  Registry() noexcept;
+
+  [[nodiscard]] DatasetInfoWire load(std::span<const std::uint8_t> payload) noexcept;
+  [[nodiscard]] DatasetInfoWire retain(std::uint64_t handle) noexcept;
+  [[nodiscard]] DatasetInfoWire release_reference(std::uint64_t handle) noexcept;
+  [[nodiscard]] DatasetInfoWire unload(std::uint64_t handle) noexcept;
+  [[nodiscard]] SourceInfoWire source_info(std::uint64_t handle, std::uint32_t source_node_id) const noexcept;
+  [[nodiscard]] EvaluationWire evaluate(
+    std::uint64_t handle,
+    std::uint32_t source_node_id,
+    EvaluationMode mode,
+    time::TimeWire target
+  ) noexcept;
+
+private:
   std::map<std::uint64_t, Entry> datasets_;
   std::uint64_t next_handle_ = 1;
 
