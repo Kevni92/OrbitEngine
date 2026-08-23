@@ -1,6 +1,6 @@
 # 03 — Object Model and Interactions
 
-The canonical object/state contract is defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md). This document summarizes how that model relates to interactions.
+The canonical object/state contract is defined in [13 — Physical Object and State Model](13-physical-object-and-state-model.md). This document summarizes how that model relates to interactions. Predictive encounter architecture is defined in [23 — Predictive Encounters and Close-Approach Scheduling](23-predictive-encounters-and-close-approach-scheduling.md).
 
 ## Stable object identity
 
@@ -56,8 +56,10 @@ Removal retires the ID permanently for the simulation lineage. It does not silen
 
 ## Interaction policy boundary
 
-Object-side facts such as `ObjectType`, optional gravitational parameter/mass, collision bounding radius, and reference/divergence status may be inputs to later interaction policies.
+Object-side facts such as `ObjectType`, optional gravitational parameter/mass, collision bounding radius, and reference/divergence status may be inputs to interaction policies.
 
-Gravity, encounter detection, and collision detection remain separate configurable concerns. Having mass or radius never implies continuous all-pairs work.
+Gravity, predictive encounter monitoring, and collision detection remain separate revisioned configurable concerns. Having mass, radius, an object type, or mere registration never enables continuous all-pairs work by itself.
 
-Untouched astronomical reference bodies generally do not need wasteful mutual collision searches when their reference evolution already defines the baseline. Collision/encounter relevance increases for artificial objects, maneuvering objects, diverged natural bodies, and predicted close approaches.
+Document 23 requires explicit encounter-policy resolution and hierarchy-aware conservative broad-phase indexing. Encounter records are derived predictions only; they may request future fidelity/coupled treatment through document 22 but never become propagation authority.
+
+Untouched astronomical reference bodies generally do not need wasteful mutual collision/encounter searches when their reference evolution already defines the baseline. Policy can instead enable relevant combinations such as artificial/diverged objects against selected natural populations while leaving unrelated catalog pairs disabled.

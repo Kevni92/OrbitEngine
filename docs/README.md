@@ -26,6 +26,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 20. [Reference Ephemeris Data and Pipeline](20-reference-ephemeris-data-and-pipeline.md) — DE441 source strategy, JPL/NAIF offline acquisition, OrbitEngine Ephemeris Pack (OEP), source-center/barycenter semantics, bounded reference evaluation, packaging, versioning, and validation.
 21. [Numerical Propagation, Force Models, and Coupled N-Body Integration](21-numerical-propagation-force-models-and-coupled-nbody.md) — DOP853 integration, error control, deterministic forces/gravity sources, numerical caches, coupled local systems, mass authority, frame dynamics, and backend parity.
 22. [Event-Driven Advancement and Fidelity Management](22-event-driven-advancement-and-fidelity-management.md) — exact mutable time, deterministic scheduled work, atomic advancement transactions, semantic fidelity requirements, promotion/demotion, invalidation, time warp, and parity.
+23. [Predictive Encounters and Close-Approach Scheduling](23-predictive-encounters-and-close-approach-scheduling.md) — explicit encounter policy, hierarchy-aware swept-bound broad phase, coarse/refined closest approach, fidelity/coupled scheduling, invalidation and scaling.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -43,6 +44,7 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - Production numerical translation uses local adaptive DOP853 authorities with explicit force/source configuration; true mutual interaction is represented by bounded coupled authorities rather than global ticking or cyclic single-object dependencies.
 - Mutable time advancement is exact and event-driven: the engine jumps between scheduled instants, drains deterministic same-time transactions, and keeps pure state-at-time queries separate from mutable event processing.
 - Fidelity is a semantic accuracy/interaction requirement, not a rendering signal and not a direct propagator enum; promotion/demotion uses explicit exact-time authority transactions and anti-thrashing validation.
+- Encounter prediction is revision-aware derived scheduling data built from explicit policy, conservative broad-phase bounds and bounded refinement; it never becomes motion authority or a second global pair loop.
 - Canonical physical values use SI units; absolute simulation time uses the exact TDB/J2000 representation defined in document 12 rather than wall-clock/civil time.
 - Canonical dynamic translational handoff state is Cartesian position/velocity at an exact epoch in a defined frame.
 - The canonical root is SSB-centered and ICRS/ICRF-aligned; local/reference-frame state is preserved so precision-sensitive work is not forced through giant root coordinates.
