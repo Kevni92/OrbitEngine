@@ -60,6 +60,14 @@ import {
   EncounterDomainRegistry,
 } from "./broad-phase.js";
 import {
+  refineClosestApproach,
+  solveCoarseClosestApproach,
+  type CoarseClosestApproachInput,
+  type CoarseClosestApproachResult,
+  type RefinedClosestApproachInput,
+  type RefinedClosestApproachResult,
+} from "./closest-approach.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -82,6 +90,7 @@ export * from "./dependency.js";
 export * from "./invalidation.js";
 export * from "./encounter.js";
 export * from "./broad-phase.js";
+export * from "./closest-approach.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -258,6 +267,14 @@ export class OrbitEngine {
 
   encounterBroadPhase(): EncounterBroadPhaseIndex {
     return this.#encounterBroadPhaseIndex;
+  }
+
+  coarseClosestApproach(input: CoarseClosestApproachInput): CoarseClosestApproachResult {
+    return solveCoarseClosestApproach(input);
+  }
+
+  refineClosestApproach(input: RefinedClosestApproachInput): RefinedClosestApproachResult {
+    return refineClosestApproach(input);
   }
 
   getFidelityStatus(id: ObjectId): FidelityStatus {
