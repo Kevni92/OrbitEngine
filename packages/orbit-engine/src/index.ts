@@ -6,7 +6,7 @@ import { referenceFrameId, type ReferenceFrameId } from "./frames.js";
 import { objectId, type ObjectId } from "./objects.js";
 import { type PropagationModel, type PropagationState, type RevisionId } from "./propagation.js";
 import { ObjectStateQueries } from "./state-query.js";
-import { type SimulationInstant } from "./time.js";
+import { type Duration, type SimulationInstant } from "./time.js";
 import {
   ScheduledWorkQueue,
   type ScheduledWorkInput,
@@ -14,6 +14,7 @@ import {
   type ScheduledWorkId,
   type ScheduledWorkQueueConfiguration,
   type SimulationClockStatus,
+  type AdvanceResult,
 } from "./scheduler.js";
 import {
   loadOepDataset,
@@ -147,6 +148,14 @@ export class OrbitEngine {
 
   listScheduledWorkDiagnostics(limit = 64, offset = 0): readonly ScheduledWorkRecord[] {
     return this.#scheduledWorkQueue.list(limit, offset);
+  }
+
+  advanceTo(target: SimulationInstant): AdvanceResult {
+    return this.#scheduledWorkQueue.advanceTo(target);
+  }
+
+  advanceBy(value: Duration): AdvanceResult {
+    return this.#scheduledWorkQueue.advanceBy(value);
   }
 
   registry(): ObjectRegistry {

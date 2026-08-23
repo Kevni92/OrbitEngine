@@ -168,6 +168,147 @@ SchedulerWire Scheduler::list(SchedulerWire input) const noexcept {
   return input;
 }
 
+SchedulerWire Scheduler::execute_timestamp(SchedulerWire input, const time::SimulationInstant& instant) noexcept {
+  const auto queue_snapshot = queue_;
+  const auto index_snapshot = index_;
+  const auto time_snapshot = current_time_;
+  const auto revision_snapshot = clock_revision_;
+  const auto next_id_snapshot = next_work_id_;
+  const auto work_before = input.processed_work_count;
+  std::uint16_t current_phase = 0;
+  const auto set_failure = [&](const WorkRecord& value) {
+    input.failure_present = true;
+    words(value.id, input.failure_id_high, input.failure_id_low);
+    words(value.generation, input.failure_generation_high, input.failure_generation_low);
+    input.failure_phase = value.phase;
+    input.failure_source_kind = value.source_kind;
+  };
+
+  const auto rollback = [&](ResultCode code, const WorkRecord* failed) {
+    queue_ = queue_snapshot;
+    index_ = index_snapshot;
+    current_time_ = time_snapshot;
+    clock_revision_ = revision_snapshot;
+    next_work_id_ = next_id_snapshot;
+    input.result_code = static_cast<std::uint16_t>(code);
+    input.reached_target = false;
+    input.failure_present = failed != nullptr;
+    if (failed != nullptr) set_failure(*failed);
+    input.processed_work_count = work_before;
+    set_header(input);
+    return input;
+  };
+
+  for (;;) {
+    const auto found = queue_.begin();
+    if (found == queue_.end() || time::compare(found->second.instant, instant) != 0) {
+      current_time_ = instant;
+      ++clock_revision_;
+      input.result_code = static_cast<std::uint16_t>(ResultCode::success);
+      set_header(input);
+      return input;
+    }
+    if (input.processed_work_count - work_before >= max_work_items_per_timestamp_) {
+      return rollback(ResultCode::timestamp_budget_exceeded, &found->second);
+    }
+
+    const auto item = found->second;
+    if (item.phase < current_phase) return rollback(ResultCode::retroactive_earlier_phase, &item);
+    current_phase = item.phase;
+    queue_.erase(found);
+    index_.erase(item.id);
+    ++input.processed_work_count;
+
+    const auto payload = static_cast<std::uint16_t>(item.payload_kind);
+    if (payload == 2) return rollback(ResultCode::payload_failed, &item);
+
+    if (payload == 3) {
+      const auto phase_value = static_cast<double>(item.payload_value);
+      if (!std::isfinite(phase_value) || std::trunc(phase_value) != phase_value || phase_value < 1 || phase_value > 5) {
+        return rollback(ResultCode::invalid_payload, &item);
+      }
+      const auto new_phase = static_cast<std::uint16_t>(phase_value);
+      if (new_phase < current_phase) return rollback(ResultCode::retroactive_earlier_phase, &item);
+      if (queue_.size() >= max_scheduled_work_items_) return rollback(ResultCode::capacity_exceeded, &item);
+      if (item.source_ordinal == std::numeric_limits<std::uint64_t>::max()) return rollback(ResultCode::invalid_payload, &item);
+      WorkRecord generated{};
+      generated.id = next_work_id_++;
+      generated.generation = 1;
+      generated.instant = instant;
+      generated.phase = new_phase;
+      generated.source_kind = item.source_kind;
+      generated.source_id = item.source_id;
+      generated.source_ordinal = item.source_ordinal + 1;
+      generated.dependency_digest = item.dependency_digest;
+      generated.payload_kind = 1;
+      const auto ordered = key(generated);
+      queue_.emplace(ordered, generated);
+      index_[generated.id] = ordered;
+      if (next_work_id_ == 0) return rollback(ResultCode::capacity_exceeded, &item);
+    } else if (payload == 4) {
+      const auto target = index_.find(item.related_work_id);
+      if (target == index_.end()) return rollback(ResultCode::not_found, &item);
+      const auto target_entry = queue_.find(target->second);
+      if (target_entry == queue_.end() || target_entry->second.generation != item.related_generation) return rollback(ResultCode::stale_generation, &item);
+      queue_.erase(target_entry);
+      index_.erase(target);
+    }
+  }
+}
+
+SchedulerWire Scheduler::advance(SchedulerWire input, bool by_duration) noexcept {
+  std::optional<time::SimulationInstant> target;
+  if (by_duration) {
+    const auto delta = time::from_wire_duration(input.target_time);
+    if (!delta.has_value() || time::compare(*delta, time::Duration{0, 0}) < 0) return result(input, ResultCode::invalid_duration);
+    target = time::add(current_time_, *delta);
+    if (!target.has_value()) return result(input, ResultCode::invalid_duration);
+  } else {
+    target = time::from_wire(input.target_time);
+    if (!target.has_value()) return result(input, ResultCode::invalid_input);
+  }
+  input.processed_timestamp_count = 0;
+  input.processed_work_count = 0;
+  input.reached_target = false;
+  input.failure_present = false;
+  if (time::compare(*target, current_time_) < 0) return result(input, ResultCode::target_before_current);
+  if (time::compare(*target, current_time_) == 0) {
+    input.reached_target = true;
+    input.result_code = static_cast<std::uint16_t>(ResultCode::success);
+    set_header(input);
+    return input;
+  }
+
+  for (;;) {
+    if (time::compare(current_time_, *target) == 0) {
+      input.reached_target = true;
+      input.result_code = static_cast<std::uint16_t>(ResultCode::success);
+      set_header(input);
+      return input;
+    }
+    if (input.processed_timestamp_count >= max_timestamp_transactions_per_advance_) {
+      return result(input, ResultCode::advance_budget_exceeded);
+    }
+    auto next = queue_.begin();
+    while (next != queue_.end() && time::compare(next->second.instant, current_time_) <= 0) {
+      index_.erase(next->second.id);
+      next = queue_.erase(next);
+    }
+    if (next == queue_.end() || time::compare(next->second.instant, *target) > 0) {
+      current_time_ = *target;
+      ++clock_revision_;
+      input.reached_target = true;
+      input.result_code = static_cast<std::uint16_t>(ResultCode::success);
+      set_header(input);
+      return input;
+    }
+    const auto timestamp = next->second.instant;
+    input = execute_timestamp(input, timestamp);
+    if (input.result_code != static_cast<std::uint16_t>(ResultCode::success)) return input;
+    ++input.processed_timestamp_count;
+  }
+}
+
 SchedulerWire Scheduler::command(SchedulerWire input) noexcept {
   const auto operation = static_cast<Operation>(input.operation_code);
   if (operation == Operation::reset) {
@@ -192,6 +333,8 @@ SchedulerWire Scheduler::command(SchedulerWire input) noexcept {
   if (operation == Operation::cancel) return cancel(input);
   if (operation == Operation::replace) return schedule(input, true);
   if (operation == Operation::list) return list(input);
+  if (operation == Operation::advance_to) return advance(input, false);
+  if (operation == Operation::advance_by) return advance(input, true);
   return result(input, ResultCode::invalid_operation);
 }
 
@@ -219,7 +362,7 @@ bool read_work(std::span<const double> values, std::size_t& offset, WorkWire& ou
     && word(output.source_ordinal_high) && word(output.source_ordinal_low) && word(output.dependency_digest_high) && word(output.dependency_digest_low)
     && phase(output.payload_kind) && word(output.payload_object_id_high) && word(output.payload_object_id_low)
     && word(output.related_work_id_high) && word(output.related_work_id_low) && word(output.related_generation_high) && word(output.related_generation_low)
-    && offset < values.size() && std::isfinite(values[offset++]);
+    && offset < values.size() && std::isfinite(values[offset]) && ((output.payload_value = values[offset]), ++offset, true);
 }
 
 void write_work(std::span<double> values, std::size_t& offset, const WorkWire& value) noexcept {
@@ -276,6 +419,9 @@ bool encode_packet(const SchedulerWire& input, std::span<double> values) noexcep
   write(input.result_work_present ? 1 : 0); write_work(values, offset, input.result_work);
   write(input.result_count);
   for (std::size_t index = 0; index < kMaxDiagnostics; ++index) write_work(values, offset, input.results[index]);
+  write(input.processed_timestamp_count); write(input.processed_work_count); write(input.reached_target ? 1 : 0); write(input.failure_present ? 1 : 0);
+  write(input.failure_id_high); write(input.failure_id_low); write(input.failure_generation_high); write(input.failure_generation_low);
+  write(input.failure_phase); write(input.failure_source_kind);
   return offset == values.size();
 }
 

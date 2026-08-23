@@ -40,5 +40,5 @@ test("real native backend initializes and reports the shared core health", async
   await assertOepRuntime(engine);
   await assertNumericalMotion("native");
   await assertCoupledMotion("native");
-  assertScheduledWorkQueue(engine);
+  await assertScheduledWorkQueue(engine);
 });

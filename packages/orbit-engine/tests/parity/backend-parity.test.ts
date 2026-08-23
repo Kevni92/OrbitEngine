@@ -56,6 +56,6 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
     await assertCoupledMotion(name);
   });
   test(`exact clock and scheduled work queue have parity on ${name}`, async () => {
-    assertScheduledWorkQueue(await OrbitEngine.create({ backend: name }));
+    await assertScheduledWorkQueue(await OrbitEngine.create({ backend: name }));
   });
 }
