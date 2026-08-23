@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "prepare:oep": "node scripts/prepare-oep-assets.mjs",
+    "dev": "pnpm run prepare:oep && vite",
+    "build": "pnpm run prepare:oep && vite build",
     "typecheck": "tsc -p tsconfig.json",
     "test:unit": "tsc -p tsconfig.test.json && node scripts/run-tests.mjs",
     "smoke": "playwright test"

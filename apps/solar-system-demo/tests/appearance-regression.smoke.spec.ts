@@ -113,6 +113,7 @@ test("representative appearance bodies keep deterministic atmosphere, fallback, 
 test("overview retains global star and major-planet context while focused atmosphere remains inspectable", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
+  await expect.poll(async () => (await readDiagnostics(page))?.bodies.length ?? 0).toBeGreaterThan(0);
   const initial = await readDiagnostics(page);
   expect(initial!.bodies.find((body) => body.objectId === "1000")).toBeDefined();
   expect(initial!.bodies.find((body) => body.objectId === "1006")).toBeDefined();

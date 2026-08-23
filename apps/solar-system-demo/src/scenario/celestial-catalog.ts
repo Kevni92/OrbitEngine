@@ -23,6 +23,8 @@ export interface CelestialPropagationDefinition {
   readonly modelKind: PropagationModelKind;
   readonly direction: PropagationDirection;
   readonly propagationFrame: ReferenceFrameId;
+  /** OEP source node used by the production reference-ephemeris adapter. */
+  readonly referenceSourceNodeId?: number;
   readonly configurationRevision: string;
   readonly orbitVisualization?: OrbitVisualizationDefinition;
 }
@@ -204,7 +206,13 @@ function validateFrames(
   for (const body of bodyById.values()) {
     const expectedFrame = body.centralBody === undefined ? ROOT_FRAME : byCenter.get(body.centralBody)?.id;
     if (expectedFrame === undefined) fail(`Catalog body ${body.id} has no centered frame for its central body`);
-    if (body.propagation.propagationFrame !== expectedFrame) {
+    // A production OEP source may deliberately propagate in a source-centered
+    // frame (for example EMB for Earth/Moon) while the catalog still exposes
+    // the physical body hierarchy through its own centered display frames.
+    // Educational two-body fixtures retain the stricter frame invariant.
+    const isProductionReference = body.propagation.modelKind === "referenceEphemeris"
+      && body.propagation.referenceSourceNodeId !== undefined;
+    if (!isProductionReference && body.propagation.propagationFrame !== expectedFrame) {
       fail(`Catalog body ${body.id} propagation frame does not match its central body`);
     }
   }

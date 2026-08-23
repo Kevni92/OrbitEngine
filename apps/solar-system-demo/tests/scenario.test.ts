@@ -31,8 +31,10 @@ test("scenario contains a unique offline catalog with representative categories"
   assert.equal(catalog.roots.length, 1);
   assert.equal(catalog.roots[0], SUN_ID);
   assert.equal(catalog.bodyById.get(SUN_ID)?.propagation.propagationFrame, SCENARIO_ROOT_FRAME);
-  assert.equal(catalog.bodyById.get(EARTH_ID)?.propagation.propagationFrame, SUN_CENTERED_FRAME);
-  assert.equal(catalog.bodyById.get(MOON_ID)?.propagation.propagationFrame, EARTH_CENTERED_FRAME);
+  assert.equal(catalog.bodyById.get(EARTH_ID)?.propagation.propagationFrame, "203");
+  assert.equal(catalog.bodyById.get(EARTH_ID)?.propagation.referenceSourceNodeId, 6);
+  assert.equal(catalog.bodyById.get(MOON_ID)?.propagation.propagationFrame, "203");
+  assert.equal(catalog.bodyById.get(MOON_ID)?.propagation.referenceSourceNodeId, 7);
   assert.equal(catalog.parentOf(EUROPA_ID), JUPITER_ID);
   assert.equal(catalog.bodyById.get(CERES_ID)?.display.category, "dwarfPlanet");
   assert.equal(catalog.bodyById.get(APOPHIS_ID)?.display.category, "asteroid");
@@ -69,17 +71,20 @@ test("scenario definitions carry normalized physical and per-body provenance dat
   assert.ok(SCENARIO_BODIES.every((body) => body.properties.mu !== undefined));
   assert.ok(SCENARIO_BODIES.every((body) => body.properties.physicalRadius !== undefined));
   assert.ok(SCENARIO_BODIES.every((body) => body.provenance.sourceUrl.startsWith("https://")));
-  assert.equal(SCENARIO_PROVENANCE.retrievalDate, "2026-08-21");
+  assert.equal(SCENARIO_PROVENANCE.retrievalDate, "2026-08-23");
   assert.equal(SCENARIO_PROVENANCE.sourceEpoch, "J2000 TDB");
-  assert.match(SCENARIO_PROVENANCE.limitations, /educational fixture/);
+  assert.match(SCENARIO_PROVENANCE.source, /DE441/);
   const sun = SCENARIO_BODIES.find((body) => body.id === SUN_ID)!;
   const earth = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
   const moon = SCENARIO_BODIES.find((body) => body.id === MOON_ID)!;
   assert.equal(sun.centralBody, undefined);
   assert.equal(earth.centralBody, SUN_ID);
-  assert.equal(earth.provenance.sourceIdentifier, "399 Earth");
-  assert.match(earth.provenance.limitations, /not a precision long-term ephemeris/);
+  assert.equal(earth.provenance.sourceIdentifier, "OEP source node 6");
+  assert.equal(earth.propagation.modelKind, "referenceEphemeris");
+  assert.equal(earth.propagation.direction, "bounded");
   assert.equal(moon.centralBody, EARTH_ID);
+  assert.notEqual(moon.anchor.position.z, 0);
+  assert.match(SCENARIO_BODIES.find((body) => body.id === CERES_ID)!.provenance.limitations, /educational fixture/);
 });
 
 test("Earth and primary-planet fixtures share one heliocentric orbital plane", () => {

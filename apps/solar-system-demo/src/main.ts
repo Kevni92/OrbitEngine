@@ -11,9 +11,10 @@ import { SolarSystemScene } from "./rendering/solar-system-scene.js";
 import type { AtmosphereDiagnostics } from "./rendering/atmosphere-rendering.js";
 import { lightingModeDiagnostics, type LightingMode } from "./rendering/lighting-mode.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
+import { loadSolarSystemReferenceDataset } from "./scenario/load-reference-dataset.js";
 import { RuntimeAsteroidOverlay } from "./scenario/runtime-asteroid-overlay.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
-import { EUROPA_ID, SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
+import { EARTH_ID, EUROPA_ID, MOON_ID, SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
 import { PathCache } from "./simulation/path-sampling.js";
 import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visualization.js";
 import { SimulationClock } from "./simulation/simulation-clock.js";
@@ -78,10 +79,89 @@ interface BrowserRenderDiagnostics {
   readonly bodies: readonly BrowserRenderBodyDiagnostics[];
 }
 
+interface EclipseRegressionDiagnostics {
+  readonly instant: { readonly seconds: number; readonly nanoseconds: number };
+  readonly angularSeparationRadians: number;
+  readonly angularErrorRadians: number;
+  readonly maxPositionErrorMeters: number;
+  readonly maxVelocityErrorMetersPerSecond: number;
+}
+
 declare global {
   interface Window {
     __orbitDemoRenderDiagnostics?: () => BrowserRenderDiagnostics;
+    __orbitDemoReferenceDiagnostics?: () => {
+      readonly datasetId: string;
+      readonly datasetVersion: string;
+      readonly validityStartSeconds: number;
+      readonly validityEndSeconds?: number;
+      readonly eclipse: EclipseRegressionDiagnostics;
+    };
   }
+}
+
+function vectorError(actual: readonly number[], expected: readonly number[]): number {
+  return Math.hypot(...actual.map((value, index) => value - (expected[index] ?? Number.NaN)));
+}
+
+function stateVector(state: ReturnType<OrbitEngine["stateAt"]>): readonly number[] {
+  return [
+    state.position.x,
+    state.position.y,
+    state.position.z,
+    state.velocity.x,
+    state.velocity.y,
+    state.velocity.z,
+  ];
+}
+
+function validateEclipseRegression(engine: OrbitEngine, scenario: SolarSystemScenario): EclipseRegressionDiagnostics {
+  const oracle = scenario.eclipseOracle;
+  if (oracle === undefined) throw new Error("Production eclipse oracle is missing from the loaded scenario");
+  const instant = simulationInstant(
+    oracle.event.normalizedInstant.seconds,
+    oracle.event.normalizedInstant.nanoseconds,
+  );
+  const sun = stateVector(engine.stateAt(SUN_ID, instant, SCENARIO_ROOT_FRAME));
+  const earth = stateVector(engine.stateAt(EARTH_ID, instant, SCENARIO_ROOT_FRAME));
+  const moon = stateVector(engine.stateAt(MOON_ID, instant, SCENARIO_ROOT_FRAME));
+  const sunEarth = sun.map((value, index) => value - earth[index]!);
+  const moonEarth = moon.map((value, index) => value - earth[index]!);
+  const statePositionErrors = [
+    vectorError(sun.slice(0, 3), oracle.sourceStates.sunSsb ?? []),
+    vectorError(earth.slice(0, 3), oracle.sourceStates.earthSsb ?? []),
+    vectorError(moon.slice(0, 3), oracle.sourceStates.moonSsb ?? []),
+  ];
+  const stateVelocityErrors = [
+    vectorError(sun.slice(3), (oracle.sourceStates.sunSsb ?? []).slice(3)),
+    vectorError(earth.slice(3), (oracle.sourceStates.earthSsb ?? []).slice(3)),
+    vectorError(moon.slice(3), (oracle.sourceStates.moonSsb ?? []).slice(3)),
+  ];
+  const geometryPositionErrors = [
+    vectorError(sunEarth.slice(0, 3), oracle.sourceStates.sunEarth ?? []),
+    vectorError(moonEarth.slice(0, 3), oracle.sourceStates.moonEarth ?? []),
+  ];
+  const cosine = sunEarth.slice(0, 3).reduce((sum, value, index) => sum + value * moonEarth[index]!, 0)
+    / (Math.hypot(...sunEarth.slice(0, 3)) * Math.hypot(...moonEarth.slice(0, 3)));
+  const angularSeparationRadians = Math.acos(Math.max(-1, Math.min(1, cosine)));
+  const angularErrorRadians = Math.abs(angularSeparationRadians - oracle.earthCenteredGeometry.angularSeparationRadians);
+  const maxStatePositionErrorMeters = Math.max(...statePositionErrors);
+  const maxGeometryPositionErrorMeters = Math.max(...geometryPositionErrors);
+  const maxPositionErrorMeters = Math.max(maxStatePositionErrorMeters, maxGeometryPositionErrorMeters);
+  const maxVelocityErrorMetersPerSecond = Math.max(...stateVelocityErrors);
+  if (maxStatePositionErrorMeters > oracle.tolerance.statePositionMeters
+      || maxGeometryPositionErrorMeters > oracle.tolerance.geometryPositionMeters
+      || maxVelocityErrorMetersPerSecond > oracle.tolerance.stateVelocityMetersPerSecond
+      || angularErrorRadians > oracle.tolerance.geometryDirectionRadians) {
+    throw new Error(`Eclipse OEP regression failed: position ${maxPositionErrorMeters} m, velocity ${maxVelocityErrorMetersPerSecond} m/s, angular ${angularErrorRadians} rad`);
+  }
+  return Object.freeze({
+    instant: oracle.event.normalizedInstant,
+    angularSeparationRadians,
+    angularErrorRadians,
+    maxPositionErrorMeters,
+    maxVelocityErrorMetersPerSecond,
+  });
 }
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene");
@@ -110,6 +190,7 @@ async function bootstrap(): Promise<void> {
   let renderedFrameCount = 0;
   let totalFrameDurationMs = 0;
   let lastFrameDurationMs = 0;
+  let eclipseRegression: EclipseRegressionDiagnostics | undefined;
   const pathCache = new PathCache(ORBIT_CACHE_ENTRIES);
 
   function centerCameraOnFocus(): void {
@@ -152,7 +233,7 @@ async function bootstrap(): Promise<void> {
       ? undefined
       : scene?.representationFor(selectedEntry.definition.centralBody);
     panel.setSelectedBody(selectedEntry, state, focusState, scene?.representationFor(selectedId), parentRepresentation);
-    panel.setTechnicalDetails(selectedEntry, state, focusId, engineHealth);
+    panel.setTechnicalDetails(selectedEntry, state, focusId, engineHealth, scenario?.referenceSources?.get(selectedId));
   }
 
   function requestCurrentState(recenter = false, centerImmediately = false): void {
@@ -395,7 +476,8 @@ async function bootstrap(): Promise<void> {
   }
 
   try {
-    scenario = loadSolarSystemScenario(engine);
+    const referenceDataset = await loadSolarSystemReferenceDataset(engine);
+    scenario = loadSolarSystemScenario(engine, referenceDataset.dataset, referenceDataset.eclipseOracle);
     if (scenario.rootFrame !== SCENARIO_ROOT_FRAME) throw new Error("Scenario root frame is not the engine root frame");
     if (scenario.catalog.roots.length !== 1) throw new Error("Scenario catalog must have exactly one root");
     browser = new CelestialBrowser({
@@ -418,7 +500,19 @@ async function bootstrap(): Promise<void> {
       sphereCount: scenario.bodies.length,
       promotedRuntimeSphereCount: 0,
     });
-    panel.setScenarioNote("ready", `Offline deterministic catalog · ${scenario.bodies.length} committed bodies`);
+    const referenceIdentity = scenario.referenceDataset;
+    if (referenceIdentity === undefined) throw new Error("Production OEP identity is missing from the loaded scenario");
+    panel.setReferenceDataset(referenceIdentity, scenario.validity);
+    eclipseRegression = validateEclipseRegression(engine, scenario);
+    panel.setEclipseDiagnostics(`pass · ${eclipseRegression.angularSeparationRadians.toFixed(9)} rad · max ${eclipseRegression.maxPositionErrorMeters.toExponential(2)} m`);
+    panel.setScenarioNote("ready", `OEP ${referenceIdentity.datasetId}@${referenceIdentity.datasetVersion} · ${scenario.bodies.length} catalog bodies`);
+    window.__orbitDemoReferenceDiagnostics = () => ({
+      datasetId: referenceIdentity.datasetId,
+      datasetVersion: referenceIdentity.datasetVersion,
+      validityStartSeconds: scenario!.validity.start.seconds,
+      validityEndSeconds: scenario!.validity.end?.seconds,
+      eclipse: eclipseRegression!,
+    });
   } catch (error) {
     panel.setScenarioNote("error", error instanceof Error ? error.message : String(error));
     return;
