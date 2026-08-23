@@ -48,6 +48,14 @@ import {
 } from "./fidelity.js";
 import type { MotionAuthority } from "./propagation.js";
 import {
+  EncounterPolicyManager,
+  type EncounterPair,
+  type EncounterPairFactsInput,
+  type EncounterPolicy,
+  type EncounterPolicyInput,
+  type EncounterPolicyResolution,
+} from "./encounter.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -68,6 +76,7 @@ export * from "./scheduler.js";
 export * from "./fidelity.js";
 export * from "./dependency.js";
 export * from "./invalidation.js";
+export * from "./encounter.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -128,6 +137,7 @@ export class OrbitEngine {
   readonly #scheduledWorkQueue: ScheduledWorkQueue;
   readonly #fidelityManager: FidelityManager;
   readonly #invalidationManager: RevisionInvalidationManager;
+  readonly #encounterPolicyManager: EncounterPolicyManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -136,6 +146,12 @@ export class OrbitEngine {
     this.#scheduledWorkQueue = new ScheduledWorkQueue(backend, scheduler);
     this.#fidelityManager = new FidelityManager();
     this.#invalidationManager = new RevisionInvalidationManager(this.#scheduledWorkQueue);
+    this.#encounterPolicyManager = new EncounterPolicyManager(undefined, (_previous, next) => {
+      this.#invalidationManager.invalidate(
+        { kind: "interactionPolicy", id: "encounter-policy", revision: next.revision },
+        this.currentTime,
+      );
+    });
   }
 
   static async create(options: OrbitEngineCreateOptions = {}): Promise<OrbitEngine> {
@@ -210,6 +226,21 @@ export class OrbitEngine {
 
   listInvalidationDiagnostics(limit = 64): readonly InvalidationReport[] {
     return this.#invalidationManager.diagnostics(limit);
+  }
+
+  getEncounterPolicy(): EncounterPolicy {
+    return this.#encounterPolicyManager.policy;
+  }
+
+  configureEncounterPolicy(input: EncounterPolicyInput): EncounterPolicy {
+    return this.#encounterPolicyManager.setPolicy(input);
+  }
+
+  resolveEncounterPolicy(
+    pair: EncounterPair,
+    facts?: EncounterPairFactsInput,
+  ): EncounterPolicyResolution {
+    return this.#encounterPolicyManager.resolve(pair.objectA, pair.objectB, facts);
   }
 
   getFidelityStatus(id: ObjectId): FidelityStatus {

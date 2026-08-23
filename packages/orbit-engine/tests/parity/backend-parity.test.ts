@@ -17,6 +17,7 @@ import { assertScheduledWorkQueue } from "../shared/scheduler.js";
 import { assertFidelityManager } from "../shared/fidelity.js";
 import { assertFidelityTransitions } from "../shared/fidelity-transitions.js";
 import { assertRevisionInvalidation } from "../shared/invalidation.js";
+import { assertEncounterPrimitives } from "../shared/encounter.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -69,5 +70,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`revision invalidation and bounded rebuild have parity on ${name}`, async () => {
     await assertRevisionInvalidation(await OrbitEngine.create({ backend: name }));
+  });
+  test(`encounter policy and record primitives have parity on ${name}`, async () => {
+    await assertEncounterPrimitives(await OrbitEngine.create({ backend: name }));
   });
 }
