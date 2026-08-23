@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "solar-system-reference",
+  "datasetVersion": "1.0.0-de441-major",
+  "createdAt": "2026-08-23T00:57:14Z",
+  "importerVersion": "orbit-engine-oep-importer@1.0.0",
+  "importerCommit": "e9f4349",
+  "normalizationPolicyVersion": "oep-direct-v1",
+  "acquisitions": [
+    {
+      "sourceKind": "de441",
+      "sourceProductId": "de441-part-2",
+      "sourceTargetIds": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 199, 299, 301, 399],
+      "sourceUrl": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de441_part-2.bsp",
+      "retrievalTimestamp": "2026-08-23T00:57:14Z",
+      "sourceDeclaredVersion": "DE441 (official part 2)",
+      "requestedCoverage": {
+        "startEtSeconds": 0,
+        "endEtSeconds": 31557600000,
+        "note": "J2000 TDB through the scenario's +1000-year validity window"
+      },
+      "sha256": "3abb17dae2d78dd34880377544aacb54892104a0d4462b322cb9f4454d4887f6",
+      "redistribution": {
+        "class": "review-required",
+        "notes": "Derived OEP redistribution requires attribution and source-rule review. Original source: NASA/JPL Solar System Dynamics DE441 SPK."
+      }
+    }
+  ],
+  "sourceNodes": [
+    {
+      "sourceNodeId": 1,
+      "targetNaifId": 1,
+      "coverageEtSeconds": { "startEt": 0, "endEt": 31557600000 },
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 1, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "sourceLimitations": "DE441 Mercury-system barycenter series; the physical Mercury center is represented by source node 2.",
+      "sourceUncertaintyNotes": "Source uncertainty follows the selected DE441 solution and is separate from OEP representation error.",
+      "namedValidationEpochs": [
+        { "label": "modern-scenario-era", "etSeconds": 3155760000 },
+        { "label": "decades-from-j2000", "etSeconds": 6311520000 },
+        { "label": "late-validity", "etSeconds": 31557556800 }
+      ]
+    },
+    {
+      "sourceNodeId": 2,
+      "targetNaifId": 199,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 199, "centerNaifId": 1, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 3,
+      "targetNaifId": 2,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 2, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 4,
+      "targetNaifId": 299,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 299, "centerNaifId": 2, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 5,
+      "targetNaifId": 3,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 3, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 6,
+      "targetNaifId": 399,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 399, "centerNaifId": 3, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [
+        { "label": "eclipse-2026-08-12", "etSeconds": 839828822.9829979 },
+        { "label": "modern-scenario-era", "etSeconds": 3155760000 },
+        { "label": "decades-from-j2000", "etSeconds": 6311520000 },
+        { "label": "late-validity", "etSeconds": 31557556800 }
+      ]
+    },
+    {
+      "sourceNodeId": 7,
+      "targetNaifId": 301,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 301, "centerNaifId": 3, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [
+        { "label": "eclipse-2026-08-12", "etSeconds": 839828822.9829979 },
+        { "label": "modern-scenario-era", "etSeconds": 3155760000 },
+        { "label": "decades-from-j2000", "etSeconds": 6311520000 },
+        { "label": "late-validity", "etSeconds": 31557556800 }
+      ]
+    },
+    {
+      "sourceNodeId": 8,
+      "targetNaifId": 4,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 4, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 9,
+      "targetNaifId": 5,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 5, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 10,
+      "targetNaifId": 6,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 6, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 11,
+      "targetNaifId": 7,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 7, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 12,
+      "targetNaifId": 8,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 8, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 13,
+      "targetNaifId": 9,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 9, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "sourceLimitations": "DE441 Pluto-system barycenter only; Pluto/Charon center ephemerides are added by the selected Pluto-system shard when available.",
+      "namedValidationEpochs": [{ "label": "modern-scenario-era", "etSeconds": 3155760000 }, { "label": "decades-from-j2000", "etSeconds": 6311520000 }, { "label": "late-validity", "etSeconds": 31557556800 }]
+    },
+    {
+      "sourceNodeId": 14,
+      "targetNaifId": 10,
+      "parts": [{ "sourceProductId": "de441-part-2", "targetNaifId": 10, "centerNaifId": 0, "segmentId": "DE-0441LE-0441", "spkType": 2 }],
+      "namedValidationEpochs": [
+        { "label": "eclipse-2026-08-12", "etSeconds": 839320000 },
+        { "label": "modern-scenario-era", "etSeconds": 3155760000 },
+        { "label": "decades-from-j2000", "etSeconds": 6311520000 },
+        { "label": "late-validity", "etSeconds": 31557556800 }
+      ]
+    }
+  ],
+  "shards": [
+    { "id": "de441-mercury-venus", "sourceNodeIds": [1, 2, 3, 4] },
+    { "id": "de441-earth-emb", "sourceNodeIds": [5, 6] },
+    { "id": "de441-moon-sun", "sourceNodeIds": [7, 14] },
+    { "id": "de441-outer-planets", "sourceNodeIds": [8, 9, 10, 11, 12, 13] }
+  ],
+  "frameRotations": {},
+  "objectBindings": [
+    { "objectId": "1000", "sourceNodeId": 14, "propagationFrame": "1" },
+    { "objectId": "1001", "sourceNodeId": 2, "propagationFrame": "201" },
+    { "objectId": "1002", "sourceNodeId": 4, "propagationFrame": "202" },
+    { "objectId": "1003", "sourceNodeId": 6, "propagationFrame": "203" },
+    { "objectId": "1004", "sourceNodeId": 7, "propagationFrame": "203" },
+    { "objectId": "1005", "sourceNodeId": 8, "propagationFrame": "1" },
+    { "objectId": "1006", "sourceNodeId": 9, "propagationFrame": "1" },
+    { "objectId": "1007", "sourceNodeId": 10, "propagationFrame": "1" },
+    { "objectId": "1008", "sourceNodeId": 11, "propagationFrame": "1" },
+    { "objectId": "1009", "sourceNodeId": 12, "propagationFrame": "1" },
+    { "objectId": "2002", "sourceNodeId": 13, "propagationFrame": "1" }
+  ]
+}

@@ -12,7 +12,7 @@ import {
 
 const root = new URL('../../../data/solar-system-oep/', import.meta.url);
 const manifest = JSON.parse(await readFile(new URL('solar-system-reference-1.0.0-de441-major.oep.json', root), 'utf8'));
-const manifestSha256 = '47d8a8d1d547b79dc3766d68c187c3e766015a49371b21b5d9138f6b27a06d44';
+const manifestSha256 = '302dafc2d4091a6047e1a9026a9308ece1baead7f46891e43040f4de666c8640';
 const oracle = JSON.parse(await readFile(new URL('eclipse-oracle.json', root), 'utf8'));
 const shardBytes = await Promise.all(manifest.shards.map(async (shard) => {
   const bytes = new Uint8Array(await readFile(new URL(`${shard.id === 'de441-mercury-venus' ? 'solar-system-reference-de441-mercury-venus' : shard.id === 'de441-earth-emb' ? 'solar-system-reference-de441-earth-emb' : shard.id === 'de441-moon-sun' ? 'solar-system-reference-de441-moon-sun' : 'solar-system-reference-de441-outer-planets'}.oepb`, root)));
