@@ -14,6 +14,10 @@
     "test:native": "pnpm --filter orbit-engine test:native",
     "test:wasm": "pnpm --filter orbit-engine test:wasm",
     "test:parity": "pnpm --filter orbit-engine test:parity",
+    "test:oep-importer": "node --test tools/oep-importer/tests/importer.test.mjs",
+    "test:oep-importer:spice": "node --test tools/oep-importer/tests/spice-integration.test.mjs",
+    "test:oep-importer:runtime:native": "node tools/oep-importer/tests/runtime-compat.mjs native",
+    "test:oep-importer:runtime:wasm": "node tools/oep-importer/tests/runtime-compat.mjs wasm",
     "package:smoke": "node scripts/package-smoke.mjs",
     "browser:build": "pnpm --filter orbit-engine build && pnpm --filter orbit-engine-browser-smoke typecheck && pnpm --filter orbit-engine-browser-smoke build",
     "browser:smoke": "pnpm --filter orbit-engine-browser-smoke smoke",
@@ -21,8 +25,8 @@
     "demo:build": "pnpm --filter orbit-engine build && pnpm --filter orbit-engine-solar-system-demo typecheck && pnpm --filter orbit-engine-solar-system-demo build",
     "demo:test": "pnpm --filter orbit-engine-solar-system-demo test:unit",
     "demo:smoke": "pnpm --filter orbit-engine-solar-system-demo smoke",
-    "test": "pnpm run test:cpp && pnpm run test:ts",
-    "check": "pnpm run build:ts && pnpm run test:cpp && pnpm run test:ts"
+    "test": "pnpm run test:cpp && pnpm run test:ts && pnpm run test:oep-importer",
+    "check": "pnpm run build:ts && pnpm run test:cpp && pnpm run test:ts && pnpm run test:oep-importer"
   },
   "devDependencies": {
     "node-addon-api": "8.9.2",
