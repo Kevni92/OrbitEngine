@@ -8,6 +8,7 @@ import { assertFrameRoundTrip } from "../shared/frame-roundtrip.js";
 import { assertPropagationRoundTrip } from "../shared/propagation-roundtrip.js";
 import { assertRegistryLifecycle } from "../shared/registry-lifecycle.js";
 import { assertFrameGraph } from "../shared/frame-graph.js";
+import { assertOepRuntime } from "../shared/oep-runtime.js";
 import { assertTwoBodyModel } from "../shared/two-body.js";
 import { assertStateQueryIntegration } from "../shared/state-query.js";
 import { assertTimeRoundTrip } from "../shared/time-roundtrip.js";
@@ -33,4 +34,5 @@ test("real WASM backend initializes and reports the shared core health", async (
   await assertFrameGraph(backend);
   await assertTwoBodyModel(backend);
   await assertStateQueryIntegration(backend);
+  await assertOepRuntime(engine);
 });
