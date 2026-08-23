@@ -32,6 +32,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 26. [Trajectory Planning, Transfers, Rendezvous, and Intercepts](26-trajectory-planning-transfers-rendezvous-and-intercepts.md) — read-only zero-revolution Lambert planning, moving targets, explicit central-body/frame assumptions, bounded search, stale-plan validation, maneuver application and numerical analysis.
 27. [Optional Reusable Three.js Visualization Package](27-optional-threejs-visualization-package.md) — separate `orbit-engine-three` package, snapshot-driven rendering, semantic appearance/lighting, render-space precision, LOD/batching, resource ownership, demo migration, packaging and CI.
 28. [Higher-Order Perturbation and Semi-Analytical Propagation](28-higher-order-perturbation-and-semi-analytical-propagation.md) — bounded `semiAnalytical/j2Secular` middle tier, shared physical J2 source, numerical J2 reference force, pole dependency, validity certificates, Fidelity switching and parity/performance contracts.
+29. [Natural-Body Orientation, Rotation, and Body-Fixed Sources](29-natural-body-orientation-rotation-and-body-fixed-sources.md) — IAU/IERS/JPL/NAIF source precedence, separate ORP dataset, normalized quaternion Chebyshev evaluation, angular velocity, body-fixed registration, surface motion, J2 dependency and parity/caching.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -58,13 +59,15 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - Canonical dynamic translational handoff state is Cartesian position/velocity at an exact epoch in a defined frame.
 - The canonical root is SSB-centered and ICRS/ICRF-aligned; local/reference-frame state is preserved so precision-sensitive work is not forced through giant root coordinates.
 - Frame transforms are geometric and same-epoch; propagation changes time, frame transforms do not.
+- Natural-body orientation is pinned reference data independent from translation: ORP sources reproduce explicit IAU/IERS/JPL/NAIF orientation baselines as quaternion + angular velocity and never fall back silently to constant spin.
+- Body-fixed/surface-attached motion uses the ordinary frame graph; shared orientation sources are cached and also provide pole dependencies to J2/force models without introducing a second rotation authority.
 - Public simulation behavior is exposed through TypeScript even when calculations execute in C++.
 - The portable C++ core must not depend on Node.js or Emscripten APIs.
 - Native and WASM backends must preserve equivalent public semantics.
 - `orbit-engine` and the portable core remain free of Three.js/WebGL/DOM/rendering dependencies. Optional reusable rendering lives in the separate `orbit-engine-three` companion package defined by document 27.
 - `orbit-engine-three` consumes authoritative snapshots/public read APIs and is never physical authority; visual size, camera, selection, shader state and render cadence cannot alter simulation semantics.
 - Appearance/atmosphere/stellar-rendering metadata remains presentation/dataset data rather than `orbit-engine` physical state unless a separately designed physical engine capability explicitly requires equivalent physical information.
-- Production reference ephemerides are pinned, offline-normalized scenario data evaluated by the shared portable core; live astronomy services and mutable external kernels never define normal runtime state.
+- Production reference ephemerides and orientation sources are pinned, offline-normalized scenario data evaluated by the shared portable core; live astronomy services and mutable external kernels never define normal runtime state.
 - Every issue must declare exactly one authoritative task type before execution.
 
 When an architectural decision changes, update the relevant document in the same pull request.
