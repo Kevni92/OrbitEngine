@@ -281,6 +281,18 @@ The scheduled promotion instant is early enough that the selected higher-fidelit
 
 After the encounter window, the encounter requirement expires and normal document-22 demotion/hysteresis rules apply.
 
+The TypeScript facade exposes the integration boundary without exposing propagation authority mutation:
+
+```text
+scheduleEncounterMaintenance(input)
+scheduleEncounterFidelity(input)
+encounterSchedulingStatus()
+assessEncounterMutualCoupling(input)
+mergeEncounterCouplingWindows(proposals, groupLimit?)
+```
+
+Maintenance and refinement calls create deterministic scheduled work. Fidelity scheduling creates a semantic requirement with `validFrom` and `reevaluateBy`, then requests it through the Fidelity Manager at the scheduled transition instant. Encounter code does not select or switch a propagator directly.
+
 ## Coupled N-body integration trigger
 
 An encounter requests `requiresMutualCoupling` only when the configured physical criterion predicts that independent prescribed-source propagation cannot meet the encounter error budget.

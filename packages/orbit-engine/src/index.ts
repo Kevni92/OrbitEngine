@@ -6,7 +6,15 @@ import { referenceFrameId, type ReferenceFrameId } from "./frames.js";
 import { objectId, type ObjectId } from "./objects.js";
 import { type PropagationModel, type PropagationState, type RevisionId } from "./propagation.js";
 import { ObjectStateQueries } from "./state-query.js";
-import { type Duration, type SimulationInstant } from "./time.js";
+import {
+  addDurationToInstant,
+  compareDurations,
+  compareSimulationInstants,
+  duration,
+  simulationInstant,
+  type Duration,
+  type SimulationInstant,
+} from "./time.js";
 import {
   ScheduledWorkQueue,
   type ScheduledWorkInput,
@@ -68,6 +76,20 @@ import {
   type RefinedClosestApproachResult,
 } from "./closest-approach.js";
 import {
+  EncounterSchedulingManager,
+  type EncounterCouplingAssessmentInput,
+  type EncounterCouplingAssessment,
+  type EncounterCouplingWindowInput,
+  type EncounterCoupledGroupPlan,
+  type EncounterFidelitySchedule,
+  type EncounterFidelitySchedulingInput,
+  type EncounterMaintenanceCoverage,
+  type EncounterMaintenanceInput,
+  type EncounterSchedulingStatus,
+  assessEncounterMutualCoupling,
+  mergeEncounterCouplingWindows,
+} from "./encounter-scheduling.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -91,6 +113,7 @@ export * from "./invalidation.js";
 export * from "./encounter.js";
 export * from "./broad-phase.js";
 export * from "./closest-approach.js";
+export * from "./encounter-scheduling.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -154,6 +177,7 @@ export class OrbitEngine {
   readonly #encounterPolicyManager: EncounterPolicyManager;
   readonly #encounterDomainRegistry: EncounterDomainRegistry;
   readonly #encounterBroadPhaseIndex: EncounterBroadPhaseIndex;
+  readonly #encounterSchedulingManager: EncounterSchedulingManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -170,6 +194,12 @@ export class OrbitEngine {
     });
     this.#encounterDomainRegistry = new EncounterDomainRegistry();
     this.#encounterBroadPhaseIndex = new EncounterBroadPhaseIndex();
+    this.#encounterSchedulingManager = new EncounterSchedulingManager({
+      currentTime: () => this.currentTime,
+      scheduleWork: (input) => this.scheduleWork(input),
+      cancelScheduledWork: (id, generation) => this.cancelScheduledWork(id, generation),
+      setFidelitySignal: (id, signalId, requirement) => this.#fidelityManager.setSignal(id, signalId, requirement, this.currentTime),
+    });
   }
 
   static async create(options: OrbitEngineCreateOptions = {}): Promise<OrbitEngine> {
@@ -213,13 +243,76 @@ export class OrbitEngine {
   }
 
   advanceTo(target: SimulationInstant): AdvanceResult {
-    this.#invalidationManager.prepareAdvance(this.currentTime);
-    const result = this.#scheduledWorkQueue.advanceTo(target);
-    this.#invalidationManager.afterAdvance(result.currentTime);
-    return result;
+    const normalizedTarget = simulationInstant(target.seconds, target.nanoseconds);
+    let current = this.currentTime;
+    let processedTimestampCount = 0;
+    let processedWorkCount = 0;
+    for (;;) {
+      const nextEncounterInstant = this.#encounterSchedulingManager.nextScheduledInstant();
+      if (compareSimulationInstants(current, normalizedTarget) < 0
+        && nextEncounterInstant !== undefined
+        && compareSimulationInstants(nextEncounterInstant, current) <= 0) {
+        this.#encounterSchedulingManager.applyDue(current);
+        current = this.currentTime;
+        continue;
+      }
+      const stepTarget = nextEncounterInstant !== undefined
+        && compareSimulationInstants(nextEncounterInstant, current) > 0
+        && compareSimulationInstants(nextEncounterInstant, normalizedTarget) < 0
+        ? nextEncounterInstant
+        : normalizedTarget;
+      this.#invalidationManager.prepareAdvance(current);
+      const result = this.#scheduledWorkQueue.advanceTo(stepTarget);
+      this.#invalidationManager.afterAdvance(result.currentTime);
+      processedTimestampCount += result.processedTimestampCount;
+      processedWorkCount += result.processedWorkCount;
+      current = result.currentTime;
+      if (result.status === "failed") {
+        return {
+          status: "failed",
+          reachedTarget: false,
+          currentTime: current,
+          targetTime: normalizedTarget,
+          processedTimestampCount,
+          processedWorkCount,
+          failure: result.failure,
+        };
+      }
+      if (compareSimulationInstants(current, stepTarget) === 0) {
+        this.#encounterSchedulingManager.applyDue(current);
+      }
+      if (compareSimulationInstants(current, normalizedTarget) === 0) {
+        return {
+          status: "reachedTarget",
+          reachedTarget: true,
+          currentTime: current,
+          targetTime: normalizedTarget,
+          processedTimestampCount,
+          processedWorkCount,
+        };
+      }
+      if (compareSimulationInstants(current, normalizedTarget) > 0) {
+        return {
+          status: "failed",
+          reachedTarget: false,
+          currentTime: current,
+          targetTime: normalizedTarget,
+          processedTimestampCount,
+          processedWorkCount,
+        };
+      }
+    }
   }
 
   advanceBy(value: Duration): AdvanceResult {
+    try {
+      const normalized = duration(value.seconds, value.nanoseconds);
+      if (compareDurations(normalized, duration(0)) >= 0) {
+        return this.advanceTo(addDurationToInstant(this.currentTime, normalized));
+      }
+    } catch {
+      // Preserve the scheduler's deterministic invalid-duration result below.
+    }
     this.#invalidationManager.prepareAdvance(this.currentTime);
     const result = this.#scheduledWorkQueue.advanceBy(value);
     this.#invalidationManager.afterAdvance(result.currentTime);
@@ -267,6 +360,33 @@ export class OrbitEngine {
 
   encounterBroadPhase(): EncounterBroadPhaseIndex {
     return this.#encounterBroadPhaseIndex;
+  }
+
+  encounterScheduling(): EncounterSchedulingManager {
+    return this.#encounterSchedulingManager;
+  }
+
+  scheduleEncounterMaintenance(input: EncounterMaintenanceInput): EncounterMaintenanceCoverage {
+    return this.#encounterSchedulingManager.scheduleMaintenance(input);
+  }
+
+  scheduleEncounterFidelity(input: EncounterFidelitySchedulingInput): EncounterFidelitySchedule {
+    return this.#encounterSchedulingManager.scheduleEncounterFidelity(input);
+  }
+
+  encounterSchedulingStatus(): EncounterSchedulingStatus {
+    return this.#encounterSchedulingManager.status();
+  }
+
+  assessEncounterMutualCoupling(input: EncounterCouplingAssessmentInput): EncounterCouplingAssessment {
+    return assessEncounterMutualCoupling(input);
+  }
+
+  mergeEncounterCouplingWindows(
+    values: readonly EncounterCouplingWindowInput[],
+    groupLimit?: number,
+  ): readonly EncounterCoupledGroupPlan[] {
+    return mergeEncounterCouplingWindows(values, groupLimit);
   }
 
   coarseClosestApproach(input: CoarseClosestApproachInput): CoarseClosestApproachResult {

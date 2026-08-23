@@ -317,6 +317,8 @@ If huge time warp reaches many events, normal queue budgets apply. The engine re
 
 Consumers may observe committed timestamp boundaries through a batched advancement result/diagnostic stream. Observation cadence does not change event ordering or propagation.
 
+Encounter maintenance, refinement, fidelity-promotion, and fidelity-expiry work are ordinary scheduled events. A large advancement is partitioned at their exact instants; required encounter coverage is never skipped merely because the caller requested a sparse time warp.
+
 ## Public API shape
 
 The TypeScript facade exposes backend-neutral operations equivalent to:
