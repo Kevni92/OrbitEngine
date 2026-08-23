@@ -6,7 +6,7 @@ import {
   type OepLoadInput,
 } from "../../src/index.js";
 
-const SHARD_SHA256 = "df9b3ecfa78334c3b0c625174623d69880390f8d050e89d151377e9ce8c6adbf";
+const SHARD_SHA256 = "34ce281d4be0787d0290e8910749e99936c682a58a3a6e90db58cff1a04b5c4e";
 const MANIFEST_SHA256 = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
 const TWO_TO_32 = 4_294_967_296;
 
@@ -43,12 +43,12 @@ class Writer {
 }
 
 export function syntheticOepShard(): Uint8Array {
-  const writer = new Writer(296);
+  const writer = new Writer(456);
   writer.raw("OEPB");
   writer.u16(1);
   writer.u16(0);
-  writer.u32(296);
-  writer.u32(2);
+  writer.u32(456);
+  writer.u32(3);
   writer.u32(0);
   writer.u32(0);
 
@@ -60,7 +60,7 @@ export function syntheticOepShard(): Uint8Array {
   writer.f64(0);
   writer.f64(10);
   writer.u32(2);
-  writer.u32(152);
+  writer.u32(216);
   writer.u32(48);
   writer.u32(0);
 
@@ -72,19 +72,39 @@ export function syntheticOepShard(): Uint8Array {
   writer.f64(0);
   writer.f64(5);
   writer.u32(2);
-  writer.u32(200);
+  writer.u32(264);
+  writer.u32(96);
+  writer.u32(0);
+
+  writer.u32(3);
+  writer.u16(2);
+  writer.u16(6);
+  writer.time(-5);
+  writer.time(5);
+  writer.f64(0);
+  writer.f64(5);
+  writer.u32(2);
+  writer.u32(360);
   writer.u32(96);
   writer.u32(0);
 
   writer.coefficients([100, 20]);
   writer.coefficients([0, 0]);
   writer.coefficients([0, 0]);
+
   writer.coefficients([10, 5]);
   writer.coefficients([20, 0]);
   writer.coefficients([30, 0]);
   writer.coefficients([1, 0.5]);
   writer.coefficients([2, 0]);
   writer.coefficients([3, 0]);
+
+  writer.coefficients([-10, 2]);
+  writer.coefficients([-20, 0]);
+  writer.coefficients([-30, 0]);
+  writer.coefficients([-1, 0.25]);
+  writer.coefficients([-2, 0]);
+  writer.coefficients([-3, 0]);
 
   if (writer.offset !== writer.bytes.byteLength) throw new Error("Synthetic OEP fixture size mismatch");
   return writer.bytes;
@@ -116,6 +136,15 @@ export function syntheticOepInput(): OepLoadInput {
           representation: OepRepresentation.stateChebyshev,
           validity: propagationTimeInterval(simulationInstant(-5), simulationInstant(5)),
           sourceRevision: revisionId("11"),
+          normalizedAxes: "ICRS/ICRF-aligned" as const,
+          normalizationErrorBudget: Object.freeze({ positionMeters: 0.02, velocityMetersPerSecond: 0.002 }),
+        }),
+        Object.freeze({
+          id: 3,
+          center: 1,
+          representation: OepRepresentation.stateChebyshev,
+          validity: propagationTimeInterval(simulationInstant(-5), simulationInstant(5)),
+          sourceRevision: revisionId("13"),
           normalizedAxes: "ICRS/ICRF-aligned" as const,
           normalizationErrorBudget: Object.freeze({ positionMeters: 0.02, velocityMetersPerSecond: 0.002 }),
         }),
