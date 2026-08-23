@@ -6,7 +6,7 @@ import type { RegistryWire } from "../registry-wire.js";
 import type { FrameRegistryWire } from "../frame-registry-wire.js";
 import type { TwoBodyWire } from "../two-body-wire.js";
 
-export const BINDING_PROTOCOL_VERSION = 9;
+export const BINDING_PROTOCOL_VERSION = 8;
 
 export type BackendKind = "native" | "wasm";
 
