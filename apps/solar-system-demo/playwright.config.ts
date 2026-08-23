@@ -7,7 +7,7 @@ export default defineConfig({
   // The production OEP pack is intentionally large. Serialise CI browser
   // workers so each test does not load the complete static dataset in
   // parallel and exhaust the hosted runner's memory.
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI ? 2 : undefined,
   expect: {
     timeout: 90_000,
   },
