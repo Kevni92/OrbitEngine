@@ -6,6 +6,7 @@
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
+#include "orbit_engine/scheduler.hpp"
 #include "orbit_engine/time.hpp"
 #include "orbit_engine/two_body.hpp"
 
@@ -18,6 +19,7 @@ extern "C" {
 
 orbit_engine::registry::Registry g_registry;
 orbit_engine::frame_registry::Registry g_frame_registry;
+orbit_engine::scheduler::Scheduler g_scheduler;
 
 EMSCRIPTEN_KEEPALIVE int orbit_engine_binding_protocol_version() {
   return orbit_engine::kBindingProtocolVersion;
@@ -993,6 +995,22 @@ EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_coupled(
   wire = orbit_engine::coupled_operation::evaluate(std::move(wire));
   if (!orbit_engine::coupled_operation::encode_packet(
         wire, std::span<double>(output, output_length))) return 0;
+  return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_scheduler(
+  const double* input,
+  std::uint32_t input_length,
+  double* output,
+  std::uint32_t output_length
+) {
+  if (input == nullptr || output == nullptr) return 0;
+  orbit_engine::scheduler::SchedulerWire wire;
+  if (!orbit_engine::scheduler::decode_packet(std::span<const double>(input, input_length), wire)) return 0;
+  wire = g_scheduler.command(wire);
+  if (!orbit_engine::scheduler::encode_packet(wire, std::span<double>(output, output_length))) return 0;
+  return 1;
+  if (!orbit_engine::scheduler::encode_packet(wire, std::span<double>(output, output_length))) return 0;
   return 1;
 }
 

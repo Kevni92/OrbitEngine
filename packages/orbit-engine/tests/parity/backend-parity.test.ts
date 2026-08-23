@@ -13,6 +13,7 @@ import { assertTwoBodyModel } from "../shared/two-body.js";
 import { assertStateQueryIntegration } from "../shared/state-query.js";
 import { assertNumericalMotion } from "../shared/numerical.js";
 import { assertCoupledMotion } from "../shared/coupled.js";
+import { assertScheduledWorkQueue } from "../shared/scheduler.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -20,7 +21,7 @@ for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngine
     const health = engine.health();
 
     assert.equal(health.backend, backend);
-    assert.equal(health.protocolVersion, 9);
+    assert.equal(health.protocolVersion, 10);
     assert.equal(health.coreVersion, 1);
     assert.equal(health.healthCode, 42);
   });
@@ -53,5 +54,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`coupled numerical batch and removal have parity on ${name}`, async () => {
     await assertCoupledMotion(name);
+  });
+  test(`exact clock and scheduled work queue have parity on ${name}`, async () => {
+    assertScheduledWorkQueue(await OrbitEngine.create({ backend: name }));
   });
 }

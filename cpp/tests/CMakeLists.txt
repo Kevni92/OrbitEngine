@@ -61,3 +61,11 @@ add_executable(orbit_engine_coupled_operation_test
 target_link_libraries(orbit_engine_coupled_operation_test PRIVATE orbit_engine_core)
 
 add_test(NAME orbit_engine_coupled_operation_test COMMAND orbit_engine_coupled_operation_test)
+
+add_executable(orbit_engine_scheduler_test
+  scheduler_test.cpp
+)
+
+target_link_libraries(orbit_engine_scheduler_test PRIVATE orbit_engine_core)
+
+add_test(NAME orbit_engine_scheduler_test COMMAND orbit_engine_scheduler_test)

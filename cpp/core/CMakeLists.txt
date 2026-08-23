@@ -12,6 +12,7 @@ add_library(orbit_engine_core STATIC
   src/oep.cpp
   src/propagation.cpp
   src/registry.cpp
+  src/scheduler.cpp
   src/two_body.cpp
   src/time.cpp
 )
