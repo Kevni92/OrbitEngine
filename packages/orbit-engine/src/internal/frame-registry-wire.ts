@@ -25,6 +25,7 @@ export const FrameRegistryProviderCode = Object.freeze({
   bodyFixed: 3,
   staticLocal: 4,
   objectAttached: 5,
+  ephemerisSourceCentered: 6,
 } as const);
 
 export const FrameRegistryResultCode = Object.freeze({
@@ -161,7 +162,7 @@ export function validateFrameRegistryWire(value: unknown): FrameRegistryWire {
   if (parentPresent && parentHigh === 0 && parentLow === 0) throw new RangeError("Parent frame must be non-zero");
   if (!parentPresent && (parentHigh !== 0 || parentLow !== 0)) throw new RangeError("Absent parent must use zero words");
   const providerCode = integer(candidate.providerCode, "providerCode");
-  if (providerCode < 0 || providerCode > FrameRegistryProviderCode.objectAttached) throw new RangeError("Unknown frame provider code");
+  if (providerCode < 0 || providerCode > FrameRegistryProviderCode.ephemerisSourceCentered) throw new RangeError("Unknown frame provider code");
   const dependencyPresent = candidate.dependencyPresent;
   if (typeof dependencyPresent !== "boolean") throw new TypeError("dependencyPresent must be boolean");
   const dependencyHigh = uint32(candidate.dependencyHigh, "dependencyHigh");
