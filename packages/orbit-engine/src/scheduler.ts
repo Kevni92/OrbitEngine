@@ -1,4 +1,5 @@
 import type { Backend } from "./internal/backends/contract.js";
+import { dependencyRevisionDigest, normalizeDependencyRevisions, type DependencyRevision } from "./dependency.js";
 import { objectId, type ObjectId } from "./objects.js";
 import { revisionId, type RevisionId } from "./propagation.js";
 import { addDurationToInstant, compareDurations, duration, simulationInstant, type Duration, type SimulationInstant } from "./time.js";
@@ -71,6 +72,7 @@ export interface ScheduledWorkInput {
   readonly sourceId: ObjectId;
   readonly sourceOrdinal?: RevisionId;
   readonly dependencyRevisionDigest?: RevisionId;
+  readonly dependencies?: readonly DependencyRevision[];
   readonly payload: ScheduledWorkPayload;
 }
 
@@ -282,7 +284,12 @@ export class ScheduledWorkQueue {
 
   #inputWire(operationCode: number, input: ScheduledWorkInput, allowCurrentTime: boolean): SchedulerWire {
     const normalizedPayload = payload(input.payload);
-    const work: SchedulerWorkValue = { id: "0", generation: revisionId("1"), instant: simulationInstant(input.instant.seconds, input.instant.nanoseconds), phase: phase(input.phase), sourceKind: input.sourceKind, sourceId: objectId(input.sourceId), sourceOrdinal: revisionId(input.sourceOrdinal ?? "0"), dependencyRevisionDigest: revisionId(input.dependencyRevisionDigest ?? "0"), payloadKind: normalizedPayload.kind, payloadObjectId: normalizedPayload.objectId, relatedWorkId: normalizedPayload.relatedWorkId, relatedGeneration: normalizedPayload.relatedGeneration, payloadValue: normalizedPayload.value };
+    const dependencies = normalizeDependencyRevisions(input.dependencies);
+    const derivedDigest = dependencyRevisionDigest(dependencies);
+    if (input.dependencyRevisionDigest !== undefined && derivedDigest !== undefined && revisionId(input.dependencyRevisionDigest) !== derivedDigest) {
+      throw new SchedulerError(SchedulerErrorCode.invalidInput, "Explicit dependencyRevisionDigest does not match dependencies");
+    }
+    const work: SchedulerWorkValue = { id: "0", generation: revisionId("1"), instant: simulationInstant(input.instant.seconds, input.instant.nanoseconds), phase: phase(input.phase), sourceKind: input.sourceKind, sourceId: objectId(input.sourceId), sourceOrdinal: revisionId(input.sourceOrdinal ?? "0"), dependencyRevisionDigest: revisionId(input.dependencyRevisionDigest ?? derivedDigest ?? "0"), payloadKind: normalizedPayload.kind, payloadObjectId: normalizedPayload.objectId, relatedWorkId: normalizedPayload.relatedWorkId, relatedGeneration: normalizedPayload.relatedGeneration, payloadValue: normalizedPayload.value };
     return { ...emptySchedulerWire(operationCode), allowCurrentTime, work: encodeWork(work, true) };
   }
 

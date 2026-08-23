@@ -145,6 +145,21 @@ Requirements combine monotonically: stricter error budgets use the smaller bound
 
 Configured executable candidates may additionally be bound to the existing exact-time `MotionAuthority` transaction. Promotion evaluates and validates the canonical handoff before committing; demotion requires the configured minimum dwell, quiet-window, bounded retry/backoff, and future acceptance-horizon representability checks. A failed promotion or demotion leaves the previous authority and segment history unchanged. The motion authority's one-way `followingReference` → `diverged` rule remains in force, including after later demotion or coupled-authority exit.
 
+Scheduled work may declare normalized dependency revisions and derive its deterministic dependency digest at the TypeScript boundary:
+
+```ts
+engine.scheduleWork({
+  instant, phase, sourceKind, sourceId, payload,
+  dependencies: [{ kind: "motion", id: "42", revision: "7" }],
+})
+engine.invalidateDependency({ kind: "motion", id: "42", revision: "8" }, effectiveFrom, {
+  rebuild: { work: [replacementWork], maxItems: 64 },
+})
+engine.listInvalidationDiagnostics()
+```
+
+Invalidation is indexed by dependency identity, retires only affected work at or after the exact effective instant, and rechecks stale revisions immediately before advancement. Work strictly before the boundary remains eligible; rebuilds are explicitly bounded and scheduled through the same queue. The API exposes reports and read-only diagnostics, never queue nodes or backend mutation state.
+
 Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense indexes, propagator/provider vtables, integrator work arrays, cache handles, and pointers are not exported from the normal public package entry point.
 
 ## Numeric, time, object, frame, and propagation transfer contract
