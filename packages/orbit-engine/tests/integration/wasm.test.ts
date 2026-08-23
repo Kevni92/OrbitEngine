@@ -19,6 +19,7 @@ import { assertFidelityManager } from "../shared/fidelity.js";
 import { assertFidelityTransitions } from "../shared/fidelity-transitions.js";
 import { assertRevisionInvalidation } from "../shared/invalidation.js";
 import { assertEncounterPrimitives } from "../shared/encounter.js";
+import { assertBroadPhasePrimitives } from "../shared/broad-phase.js";
 
 test("real WASM backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "wasm" });
@@ -49,4 +50,5 @@ test("real WASM backend initializes and reports the shared core health", async (
   await assertFidelityTransitions(await OrbitEngine.create({ backend: "wasm" }));
   await assertRevisionInvalidation(engine);
   await assertEncounterPrimitives(await OrbitEngine.create({ backend: "wasm" }));
+  await assertBroadPhasePrimitives(await OrbitEngine.create({ backend: "wasm" }));
 });

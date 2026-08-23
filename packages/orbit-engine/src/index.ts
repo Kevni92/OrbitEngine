@@ -56,6 +56,10 @@ import {
   type EncounterPolicyResolution,
 } from "./encounter.js";
 import {
+  EncounterBroadPhaseIndex,
+  EncounterDomainRegistry,
+} from "./broad-phase.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -77,6 +81,7 @@ export * from "./fidelity.js";
 export * from "./dependency.js";
 export * from "./invalidation.js";
 export * from "./encounter.js";
+export * from "./broad-phase.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -138,6 +143,8 @@ export class OrbitEngine {
   readonly #fidelityManager: FidelityManager;
   readonly #invalidationManager: RevisionInvalidationManager;
   readonly #encounterPolicyManager: EncounterPolicyManager;
+  readonly #encounterDomainRegistry: EncounterDomainRegistry;
+  readonly #encounterBroadPhaseIndex: EncounterBroadPhaseIndex;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -152,6 +159,8 @@ export class OrbitEngine {
         this.currentTime,
       );
     });
+    this.#encounterDomainRegistry = new EncounterDomainRegistry();
+    this.#encounterBroadPhaseIndex = new EncounterBroadPhaseIndex();
   }
 
   static async create(options: OrbitEngineCreateOptions = {}): Promise<OrbitEngine> {
@@ -241,6 +250,14 @@ export class OrbitEngine {
     facts?: EncounterPairFactsInput,
   ): EncounterPolicyResolution {
     return this.#encounterPolicyManager.resolve(pair.objectA, pair.objectB, facts);
+  }
+
+  encounterDomains(): EncounterDomainRegistry {
+    return this.#encounterDomainRegistry;
+  }
+
+  encounterBroadPhase(): EncounterBroadPhaseIndex {
+    return this.#encounterBroadPhaseIndex;
   }
 
   getFidelityStatus(id: ObjectId): FidelityStatus {
