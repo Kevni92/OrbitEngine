@@ -108,6 +108,13 @@ import {
   type CollisionPolicyResolution,
 } from "./collision.js";
 import {
+  buildCollisionSweptBound,
+  predictCollisionContact,
+  type CollisionContactPredictionInput,
+  type CollisionContactPredictionResult,
+  type CollisionSweptBoundBuildInput,
+} from "./collision-detection.js";
+import {
   RevisionInvalidationManager,
   type DependencyInvalidationOptions,
   type DependencyInvalidationTarget,
@@ -134,6 +141,7 @@ export * from "./closest-approach.js";
 export * from "./encounter-scheduling.js";
 export * from "./encounter-lifecycle.js";
 export * from "./collision.js";
+export * from "./collision-detection.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -402,6 +410,14 @@ export class OrbitEngine {
     facts?: CollisionPairFactsInput,
   ): CollisionPolicyResolution {
     return this.#collisionPolicyManager.resolve(pair.objectA, pair.objectB, facts);
+  }
+
+  buildCollisionSweptBound(input: CollisionSweptBoundBuildInput) {
+    return buildCollisionSweptBound(input);
+  }
+
+  predictCollisionContact(input: CollisionContactPredictionInput): CollisionContactPredictionResult {
+    return predictCollisionContact(input);
   }
 
   encounterDomains(): EncounterDomainRegistry {

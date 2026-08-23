@@ -313,6 +313,20 @@ listCollisionContacts({objectId?, from?, to?})
 getCollisionDiagnostics(contactId)
 ```
 
+The continuous-detection primitive also exposes the encounter-fed operations needed by
+the v1 detector without exposing index internals:
+
+```text
+buildCollisionSweptBound({sphere, profile, interval, domainId, ...})
+predictCollisionContact({interval, sphereA, sphereB, source, profile, boundaries?})
+```
+
+`predictCollisionContact` returns an explicit `contact`, `noContact`, `incomplete`, or
+`failed` result. Its contact result carries the exact selected nanosecond instant,
+continuous bracket, time/separation uncertainty, and refinement quality. An
+`incomplete` result is not a safe rejection; it indicates that the configured work
+budget or convergence contract could not certify the interval.
+
 Collision geometry/property updates remain exact-time physical/configuration operations and create revision changes.
 
 The public API never exposes BVH nodes, dense-output buffers, C++ pointers or mutable event-queue internals.
