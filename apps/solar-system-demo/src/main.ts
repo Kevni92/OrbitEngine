@@ -45,6 +45,8 @@ interface BrowserRenderBodyDiagnostics {
   readonly orbitVisible: boolean;
   readonly inFront: boolean;
   readonly inViewport: boolean;
+  readonly ndcX: number;
+  readonly ndcY: number;
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
   readonly physicalIrradianceWattsPerSquareMeter?: number;
@@ -498,6 +500,8 @@ async function bootstrap(): Promise<void> {
           orbitVisible: diagnostics?.orbitVisible ?? false,
           inFront: diagnostics?.inFront ?? false,
           inViewport: diagnostics?.inViewport ?? false,
+          ndcX: diagnostics?.ndcX ?? 0,
+          ndcY: diagnostics?.ndcY ?? 0,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
           surfaceReflectanceSource: diagnostics?.surfaceReflectanceSource,
           physicalIrradianceWattsPerSquareMeter: diagnostics?.physicalIrradianceWattsPerSquareMeter,

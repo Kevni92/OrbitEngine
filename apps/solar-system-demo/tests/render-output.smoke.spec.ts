@@ -3,6 +3,8 @@ import { expect, test, type Page } from "@playwright/test";
 interface BodyDiagnostics {
   readonly objectId: string;
   readonly representation: string;
+  readonly ndcX: number;
+  readonly ndcY: number;
   readonly atmosphere: {
     readonly projectedDiameterPixels: number;
   };
@@ -183,6 +185,16 @@ async function analyzeImage(
   }, { source: dataUrl, diameter: bodyDiameterPixels, requestedCenter: fixedCenter });
 }
 
+async function canvasCenterForBody(page: Page, body: BodyDiagnostics): Promise<readonly [number, number]> {
+  return page.locator("#scene").evaluate((element, ndc) => {
+    if (!(element instanceof HTMLCanvasElement)) throw new Error("Scene canvas is missing");
+    return [
+      (ndc.x + 1) * element.width / 2,
+      (1 - ndc.y) * element.height / 2,
+    ] as const;
+  }, { x: body.ndcX, y: body.ndcY });
+}
+
 test("Earth focus produces a visible blue atmospheric limb in actual canvas pixels", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
@@ -202,13 +214,14 @@ test("Neptune Enhanced mode is visibly blue and materially brighter than Physica
   await page.goto("/");
   await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
   const neptune = await setFocus(page, "1009");
+  const neptuneCenter = await canvasCenterForBody(page, neptune);
   await setLightingMode(page, "physical");
   await prepareCleanScene(page);
   const physicalImage = await screenshotDataUrl(page);
   await setLightingMode(page, "enhanced");
   const enhancedImage = await screenshotDataUrl(page);
-  const enhanced = await analyzeImage(page, enhancedImage, neptune.atmosphere.projectedDiameterPixels);
-  const physical = await analyzeImage(page, physicalImage, neptune.atmosphere.projectedDiameterPixels, enhanced.center);
+  const enhanced = await analyzeImage(page, enhancedImage, neptune.atmosphere.projectedDiameterPixels, neptuneCenter);
+  const physical = await analyzeImage(page, physicalImage, neptune.atmosphere.projectedDiameterPixels, neptuneCenter);
   expect(enhanced.diskLuminance).toBeGreaterThan(20);
   expect(enhanced.diskLuminance - physical.diskLuminance).toBeGreaterThan(15);
   expect(enhanced.disk[2] - enhanced.disk[0]).toBeGreaterThan(10);
