@@ -153,7 +153,10 @@ jobs:
       - run: pnpm browser:smoke
       - run: pnpm demo:build
       - run: pnpm demo:test
-      - run: pnpm demo:smoke
+      # The production OEP browser regression is the CI gate. The complete
+      # visual suite remains part of the local demo validation; running all
+      # 15 large-dataset pages here exhausts the hosted runner over time.
+      - run: pnpm --filter orbit-engine-solar-system-demo exec playwright test tests/production-oep.smoke.spec.ts
 
   parity:
     name: Backend parity (Node ${{ matrix.node }})
