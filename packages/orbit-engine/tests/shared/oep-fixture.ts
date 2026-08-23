@@ -158,6 +158,7 @@ export function syntheticOepInput(): OepLoadInput {
 export function corruptedSyntheticOepInput(): OepLoadInput {
   const base = syntheticOepInput();
   const bytes = new Uint8Array(base.shards[0]!.bytes);
-  bytes[bytes.length - 1] ^= 0xff;
+  const last = bytes.length - 1;
+  bytes[last] = bytes[last]! ^ 0xff;
   return Object.freeze({ ...base, shards: Object.freeze([Object.freeze({ id: "system", bytes })]) });
 }
