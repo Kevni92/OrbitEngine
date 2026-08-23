@@ -1,13 +1,16 @@
-# Deterministic Solar-System demo fixture
+# Production Solar-System demo scenario
 
-This directory contains the application-owned, offline catalog used by the reference demo. It currently registers 48 bodies: the Sun, eight planets, the required major moons, five dwarf planets, and seven representative asteroids. OrbitEngine registers and propagates the supplied objects but does not generate a Solar System or fetch ephemerides.
+This directory contains the application-owned catalog used by the reference demo. It registers 48 bodies: eleven production OEP objects (Sun, Mercury, Venus, Earth, Moon, Mars, Jupiter, Saturn, Uranus, Neptune, and Pluto) plus supplemental display fixtures for the remaining catalog entries. OrbitEngine registers and propagates supplied objects; it does not generate a Solar System or fetch astronomy data from the network.
 
 ## Provenance
 
-- Source families: [NASA/JPL Horizons API documentation](https://ssd-api.jpl.nasa.gov/doc/horizons.html), [NASA/JPL Horizons documentation](https://ssd.jpl.nasa.gov/horizons/manual.html), and [JPL planetary orbit reference material](https://ssd.jpl.nasa.gov/planets/orbits.html).
-- Retrieval/version date recorded in code: `2026-08-21`.
+- Production source: the committed [NASA/JPL DE441 part-2 source product](https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de441_part-2.bsp), imported into `data/solar-system-oep/` by the OEP importer.
+- Dataset identity: `solar-system-reference@1.0.0-de441-major`; the manifest and four shard checksums are pinned by the loader and bundled into the application during `prepare:oep`.
+- Retrieval/version date recorded in code and the manifest: `2026-08-23`.
 - Source epoch/time scale: J2000, TDB.
-- Source spatial frame: right-handed ICRS/ICRF-aligned axes, represented in the engine's root inertial frame.
-- Normalization: explicit canonical decimal IDs, SI metres, metres per second, kilograms, gravitational parameter in m³/s², and simulation seconds/nanoseconds from J2000 TDB.
+- Source spatial frame: SSB plus right-handed ICRS/ICRF-aligned axes, represented in the engine's root inertial frame.
+- Normalization: explicit canonical decimal IDs, SI metres, metres per second, kilograms, and exact simulation seconds/nanoseconds from J2000 TDB.
 
-Earth now uses its normalized JPL Horizons J2000/TDB heliocentric state vector as well. The other original planet fixture anchors remain deterministic, circularized educational values; their ecliptic-plane vectors are rotated once at the scenario boundary into the engine's ICRS/ICRF-aligned axes so Earth's orbit is coplanar with the primary-planet fixtures. The added moons, dwarf planets, and asteroids carry one normalized JPL Horizons J2000/TDB vector per body and are propagated by the demo's educational two-body model; they are not precision long-term ephemerides or production navigation data. The catalog keeps physical central-body relationships separate from display categories and validates deterministic topological registration, centered-frame dependencies, aliases, and per-body provenance. Runtime execution has no network dependency; the URLs above are provenance only.
+The production bodies use the public `OrbitEngine.loadEphemerisPack`, `registerEphemerisSourceFrame`, `bindReferenceEphemeris`, `stateAt`, `statesAt`, and `relativeStateAt` APIs. Mercury, Venus, and the Earth/Moon barycenter use source-centered frames `201`, `202`, and `203`; the catalog's physical hierarchy still exposes Sun/Earth/Moon relationships through the application-owned centered frames. The source validity interval is enforced as bounded OEP validity, so out-of-range queries fail instead of silently extrapolating.
+
+The remaining catalog entries are explicitly marked supplemental educational fixtures in provenance and diagnostics. They retain the demo's isolated two-body presentation coverage until corresponding production OEP bindings exist; they are not presented as authoritative ephemerides. In particular, the Moon is no longer represented by the former z=0 circularized fixture. Runtime execution has no network dependency; source URLs are provenance only.

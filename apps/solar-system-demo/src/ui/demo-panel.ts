@@ -1,4 +1,4 @@
-import { objectId, type ObjectId, type OrbitEngine, type PropagationState, type SimulationInstant } from "orbit-engine";
+import { objectId, type ObjectId, type OrbitEngine, type OepDatasetIdentity, type OepSourceIdentity, type PropagationState, type SimulationInstant } from "orbit-engine";
 import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
 import type { LodDiagnostics } from "../rendering/representation-lod.js";
 import type { RepresentationLevel } from "../rendering/representation-lod.js";
@@ -71,6 +71,8 @@ export class DemoPanel {
   readonly #populationLiveStatus = element<HTMLElement>("population-live-status");
   readonly #populationStatus = element<HTMLElement>("population-status");
   readonly #populationDiagnostics = element<HTMLElement>("population-diagnostics");
+  readonly #referenceDatasetDiagnostics = element<HTMLElement>("reference-dataset-diagnostics");
+  readonly #eclipseDiagnostics = element<HTMLElement>("eclipse-diagnostics");
   readonly #hierarchyDiagnostics = element<HTMLElement>("hierarchy-diagnostics");
   readonly #focusSelected = element<HTMLButtonElement>("focus-selected");
   readonly #jumpSeconds = element<HTMLInputElement>("jump-seconds");
@@ -208,6 +210,18 @@ export class DemoPanel {
     setStatus(this.#scenarioNote, state, message);
   }
 
+  setReferenceDataset(identity: OepDatasetIdentity, validity: { readonly start: { readonly seconds: number }; readonly end?: { readonly seconds: number } }): void {
+    this.#referenceDatasetDiagnostics.textContent = [
+      `${identity.datasetId}@${identity.datasetVersion}`,
+      `manifest ${identity.manifestSha256.slice(0, 12)}…`,
+      `validity ${validity.start.seconds}s–${validity.end?.seconds ?? "open"}s TDB`,
+    ].join(" · ");
+  }
+
+  setEclipseDiagnostics(message: string): void {
+    this.#eclipseDiagnostics.textContent = message;
+  }
+
   setControlsReady(ready: boolean): void {
     this.#playPause.disabled = !ready;
     this.#focusSelected.disabled = !ready;
@@ -231,6 +245,8 @@ export class DemoPanel {
   setSimulationTime(instant: SimulationInstant, playing: boolean): void {
     const formatted = formatSimulationTime(instant);
     this.#simulationTime.textContent = formatted;
+    this.#simulationTime.dataset.seconds = String(instant.seconds);
+    this.#simulationTime.dataset.nanoseconds = String(instant.nanoseconds);
     this.#compactSimulationTime.textContent = formatted;
     this.#compactSimulationState.textContent = playing ? "Playing" : "Paused";
     if (!this.#localDateTimeDraft) this.#localDateTime.value = formatLocalDateTimeInput(instant);
@@ -358,6 +374,7 @@ export class DemoPanel {
     state: PropagationState,
     focusId: ObjectId,
     health: ReturnType<OrbitEngine["health"]>,
+    source: OepSourceIdentity | undefined,
   ): void {
     const properties = entry.record.properties;
     this.#technicalDetails.textContent = [
@@ -374,6 +391,11 @@ export class DemoPanel {
       `Motion revision: ${entry.record.motion.motionRevision}`,
       `Configuration revision: ${entry.record.motion.configurationRevision}`,
       `Reference status: ${entry.record.referenceStatus}`,
+      `Reference source: ${source === undefined ? "educational fixture (supplemental only)" : `OEP source node ${source.sourceNodeId}`}`,
+      ...(source === undefined ? [] : [
+        `Source validity (TDB s): ${source.effectiveValidity.start.seconds}–${source.effectiveValidity.end?.seconds ?? "open"}`,
+        `Source representation: ${source.representation}`,
+      ]),
       `Backend: WASM · protocol ${health.protocolVersion} · core ${health.coreVersion}`,
     ].join("\n");
   }

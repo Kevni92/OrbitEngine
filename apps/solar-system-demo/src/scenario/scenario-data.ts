@@ -89,6 +89,26 @@ export const BENNU_ID = objectId("3005");
 export const RYUGU_ID = objectId("3006");
 export const APOPHIS_ID = objectId("3007");
 
+export interface ProductionReferenceBinding {
+  readonly sourceNodeId: number;
+  readonly propagationFrame: ReferenceFrameId;
+}
+
+/** Stable application bindings for the production OEP object set. */
+export const PRODUCTION_REFERENCE_BINDINGS: ReadonlyMap<ObjectId, ProductionReferenceBinding> = new Map<ObjectId, ProductionReferenceBinding>([
+  [SUN_ID, Object.freeze({ sourceNodeId: 14, propagationFrame: SCENARIO_ROOT_FRAME })],
+  [MERCURY_ID, Object.freeze({ sourceNodeId: 2, propagationFrame: referenceFrameId("201") })],
+  [VENUS_ID, Object.freeze({ sourceNodeId: 4, propagationFrame: referenceFrameId("202") })],
+  [EARTH_ID, Object.freeze({ sourceNodeId: 6, propagationFrame: referenceFrameId("203") })],
+  [MOON_ID, Object.freeze({ sourceNodeId: 7, propagationFrame: referenceFrameId("203") })],
+  [MARS_ID, Object.freeze({ sourceNodeId: 8, propagationFrame: SCENARIO_ROOT_FRAME })],
+  [JUPITER_ID, Object.freeze({ sourceNodeId: 9, propagationFrame: SCENARIO_ROOT_FRAME })],
+  [SATURN_ID, Object.freeze({ sourceNodeId: 10, propagationFrame: SCENARIO_ROOT_FRAME })],
+  [URANUS_ID, Object.freeze({ sourceNodeId: 11, propagationFrame: SCENARIO_ROOT_FRAME })],
+  [NEPTUNE_ID, Object.freeze({ sourceNodeId: 12, propagationFrame: SCENARIO_ROOT_FRAME })],
+  [PLUTO_ID, Object.freeze({ sourceNodeId: 13, propagationFrame: SCENARIO_ROOT_FRAME })],
+]);
+
 function orbitVisualization(sampleSpanSeconds: number): OrbitVisualizationDefinition {
   return Object.freeze({ sampleSpanSeconds, sampleCount: 128, closedReferenceOrbit: true });
 }
@@ -97,17 +117,16 @@ export type ScenarioBodyDefinition = CelestialBodyDefinition;
 export type { CelestialCatalogCategory, CelestialCenteredFrameDefinition, CelestialSourceProvenance, OrbitVisualizationDefinition };
 
 export const SCENARIO_PROVENANCE = Object.freeze({
-  source: "NASA/JPL Solar System Dynamics reference data families",
+  source: "Committed Orbit Ephemeris Pack backed by NASA/JPL DE441 reference data",
   sourceUrls: Object.freeze([
-    "https://ssd-api.jpl.nasa.gov/doc/horizons.html",
-    "https://ssd.jpl.nasa.gov/horizons/manual.html",
-    "https://ssd.jpl.nasa.gov/planets/orbits.html",
+    "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de441_part-2.bsp",
+    "https://eclipse.gsfc.nasa.gov/SEbeselm/SEbeselm2001/SE2026Aug12Tbeselm.html",
   ]),
-  retrievalDate: "2026-08-21",
+  retrievalDate: "2026-08-23",
   sourceEpoch: "J2000 TDB",
   sourceFrame: "ICRS/ICRF-aligned right-handed celestial axes",
   normalization: "SI metres, metres per second, kilograms, TDB seconds from J2000, and canonical decimal IDs",
-  limitations: "The committed anchors are deterministic circularized educational fixture values, not a precision DE ephemeris extraction.",
+  limitations: "The production bodies use bounded OEP reference models. Supplemental catalog bodies remain explicitly marked educational fixtures because they are not included in the committed production pack.",
 } as const);
 
 export const SCENARIO_CENTERED_FRAMES: readonly CelestialCenteredFrameDefinition[] = Object.freeze([
@@ -136,6 +155,17 @@ function anchor(
     epoch: SCENARIO_EPOCH,
     referenceFrame: frame,
   });
+}
+
+function referenceAnchor(state: PropagationState, frame: ReferenceFrameId, id: ObjectId): PropagationState {
+  // Registry anchors are compatibility metadata for isolated renderer tests;
+  // production state always comes from the OEP model. Keep a non-zero,
+  // frame-correct sentinel for presentation code and explicitly remove the
+  // historical Moon z=0 circularized fixture.
+  const moonCorrection = id === MOON_ID
+    ? { position: { ...state.position, z: meters(100_000_000) }, velocity: { ...state.velocity, z: metersPerSecond(50) } }
+    : {};
+  return Object.freeze({ ...state, ...moonCorrection, referenceFrame: frame });
 }
 
 // The original primary-planet fixture values were authored in the J2000
@@ -203,6 +233,20 @@ function provenance(sourceIdentifier: string, limitations: string = SCENARIO_PRO
     sourceFrame: "ICRF geometric state vectors; normalized to the OrbitEngine ICRS/ICRF-aligned frame",
     normalization: "Horizons km and km/s vectors converted offline to SI metres and metres per second; parent-centered vectors retain their local frame",
     limitations,
+  });
+}
+
+function productionProvenance(sourceNodeId: number): CelestialSourceProvenance {
+  return Object.freeze({
+    source: "Committed Orbit Ephemeris Pack backed by NASA/JPL DE441",
+    sourceUrl: "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de441_part-2.bsp",
+    sourceIdentifier: `OEP source node ${sourceNodeId}`,
+    retrievalDate: SCENARIO_PROVENANCE.retrievalDate,
+    sourceEpoch: "J2000 TDB",
+    sourceTimeScale: "TDB",
+    sourceFrame: "SSB + ICRS/ICRF-aligned; source-centered frames are registered through OrbitEngine",
+    normalization: "Committed OEP SI metres, metres per second and exact TDB seconds from J2000",
+    limitations: "Bounded reference ephemeris. No educational anchor or silent extrapolation is used for this body.",
   });
 }
 
@@ -517,8 +561,8 @@ function horizonsBody(
     {
       ...metadata,
       aliases,
-      sourceIdentifier,
-      limitations: "One authoritative JPL Horizons J2000 TDB state vector is propagated by the demo's educational two-body model; this is not a precision long-term ephemeris.",
+      sourceIdentifier: `educational-fixture:${sourceIdentifier}`,
+      limitations: "Supplemental educational fixture only; a single illustrative state is propagated by the demo's two-body model and is not production ephemeris authority.",
     },
   );
 }
@@ -536,19 +580,27 @@ function body(
   orbitVisualizationDefinition?: OrbitVisualizationDefinition,
   metadata: BodyMetadata = {},
 ): ScenarioBodyDefinition {
-  const modelKind = id === SUN_ID ? PropagationModelKind.referenceEphemeris : PropagationModelKind.twoBodyAnalytical;
+  const productionBinding = PRODUCTION_REFERENCE_BINDINGS.get(id);
+  const modelKind = productionBinding === undefined
+    ? PropagationModelKind.twoBodyAnalytical
+    : PropagationModelKind.referenceEphemeris;
+  const effectivePropagationFrame = productionBinding?.propagationFrame ?? propagationFrame;
   return Object.freeze({
     id,
     name,
     type,
     properties: Object.freeze({ ...properties }),
-    anchor: state,
+    // Production model state is supplied by OEP at query time. Keep only a
+    // frame-correct zero sentinel in the registry instead of presenting a
+    // circularized fixture as authority.
+    anchor: productionBinding === undefined ? state : referenceAnchor(state, effectivePropagationFrame, id),
     ...(centralBody === undefined ? {} : { centralBody }),
     propagation: Object.freeze({
       modelKind,
-      direction: PropagationDirection.bidirectional,
-      propagationFrame,
+      direction: productionBinding === undefined ? PropagationDirection.bidirectional : PropagationDirection.bounded,
+      propagationFrame: effectivePropagationFrame,
       configurationRevision,
+      ...(productionBinding === undefined ? {} : { referenceSourceNodeId: productionBinding.sourceNodeId }),
       ...(orbitVisualizationDefinition === undefined ? {} : { orbitVisualization: orbitVisualizationDefinition }),
     }),
     display: Object.freeze({
@@ -559,7 +611,9 @@ function body(
       defaultVisible: true,
     }),
     ...(metadata.appearance === undefined ? {} : { appearance: metadata.appearance }),
-    provenance: provenance(metadata.sourceIdentifier ?? `fixture:${name}`, metadata.limitations),
+    provenance: productionBinding === undefined
+      ? provenance(metadata.sourceIdentifier ?? `fixture:${name}`, metadata.limitations)
+      : productionProvenance(productionBinding.sourceNodeId),
   });
 }
 
@@ -616,7 +670,6 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     {
       sourceIdentifier: "399 Earth",
       appearance: EARTH_APPEARANCE,
-      limitations: "One authoritative JPL Horizons J2000 TDB state vector is propagated by the demo's educational two-body model; this is not a precision long-term ephemeris.",
     },
   ),
   body(
@@ -937,7 +990,7 @@ export function validateScenarioAnchorSanity(
   const sunRadius = sun?.properties.physicalRadius;
   if (sun === undefined || sunRadius === undefined) throw new RangeError("Scenario sanity requires a Sun with physical radius");
   for (const definition of definitions) {
-    if (definition.centralBody !== SUN_ID) continue;
+    if (definition.centralBody !== SUN_ID || definition.propagation.referenceSourceNodeId !== undefined) continue;
     const distance = Math.hypot(definition.anchor.position.x, definition.anchor.position.y, definition.anchor.position.z);
     if (distance <= sunRadius) {
       throw new RangeError(`Sun-centered body ${definition.name} begins inside the Sun physical radius`);
@@ -950,7 +1003,7 @@ validateScenarioAnchorSanity();
 export const SCENARIO_OBJECT_IDS = Object.freeze(SCENARIO_BODIES.map((value) => value.id));
 
 export const SCENARIO_MOTION = Object.freeze({
-  modelKind: PropagationModelKind.twoBodyAnalytical,
-  direction: PropagationDirection.bidirectional,
+  modelKind: PropagationModelKind.referenceEphemeris,
+  direction: PropagationDirection.bounded,
   motionRevision: revisionId("1"),
 });

@@ -15,4 +15,6 @@ packages/orbit-engine/wasm/*
 
 .cache/orbit-engine-ephemeris/
 
+apps/solar-system-demo/public/data/solar-system-oep/
+
 .DS_Store

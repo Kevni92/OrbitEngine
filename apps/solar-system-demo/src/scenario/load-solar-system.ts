@@ -1,13 +1,16 @@
 import {
-  createReferenceEphemerisModel,
   PropagationModelKind,
   ReferenceStatus,
   revisionId,
+  referenceFrameId,
   type ObjectRecord,
   type ObjectId,
+  type OepDataset,
+  type OepDatasetIdentity,
   type OrbitEngine,
   type PropagationModel,
   type ReferenceFrameId,
+  type RegisteredEphemerisFrameHandle,
 } from "orbit-engine";
 import {
   createCelestialCatalog,
@@ -27,6 +30,7 @@ import {
   validateScenarioAnchorSanity,
   type ScenarioBodyDefinition,
 } from "./scenario-data.js";
+import type { EclipseOracleAsset } from "./load-reference-dataset.js";
 
 export interface RegisteredScenarioBody {
   readonly definition: ScenarioBodyDefinition;
@@ -46,46 +50,49 @@ export interface SolarSystemScenario {
   readonly bodies: readonly RegisteredScenarioBody[];
   readonly bodyById: ReadonlyMap<ObjectId, RegisteredScenarioBody>;
   readonly objectIds: readonly ObjectId[];
+  /** Present for the production-loaded demo; omitted by isolated rendering fixtures. */
+  readonly referenceDataset?: OepDatasetIdentity;
+  readonly referenceSources?: ReadonlyMap<ObjectId, ReturnType<OepDataset["sourceInfo"]>>;
+  readonly sourceFrameHandles?: readonly RegisteredEphemerisFrameHandle[];
+  readonly eclipseOracle?: EclipseOracleAsset;
 }
 
-function motionMetadata(definition: CelestialBodyDefinition) {
+function motionMetadata(definition: CelestialBodyDefinition, validity = SCENARIO_VALIDITY, sourceRevision = definition.propagation.configurationRevision) {
   return {
     modelKind: definition.propagation.modelKind,
     direction: definition.propagation.direction,
     propagationFrame: definition.propagation.propagationFrame,
-    segmentStart: SCENARIO_EPOCH,
-    segmentEnd: SCENARIO_VALIDITY.end,
-    configurationRevision: revisionId(definition.propagation.configurationRevision),
+    segmentStart: validity.start,
+    segmentEnd: validity.end,
+    configurationRevision: revisionId(sourceRevision),
     motionRevision: revisionId("1"),
   } as const;
 }
 
-function registerRoot(engine: OrbitEngine, definition: CelestialBodyDefinition): RegisteredScenarioBody {
-  if (definition.propagation.modelKind !== PropagationModelKind.referenceEphemeris) {
-    throw new RangeError(`Catalog root ${definition.id} must use a reference ephemeris model`);
+function registerReferenceBody(
+  engine: OrbitEngine,
+  dataset: OepDataset,
+  definition: CelestialBodyDefinition,
+): RegisteredScenarioBody {
+  const sourceNodeId = definition.propagation.referenceSourceNodeId;
+  if (sourceNodeId === undefined || definition.propagation.modelKind !== PropagationModelKind.referenceEphemeris) {
+    throw new RangeError(`Catalog body ${definition.id} is not a reference-ephemeris body`);
   }
+  const source = dataset.sourceInfo(sourceNodeId);
   const record = engine.registry().register({
     id: definition.id,
     type: definition.type,
     properties: definition.properties,
     state: definition.anchor,
-    motion: motionMetadata(definition),
+    motion: motionMetadata(definition, source.effectiveValidity, source.sourceRevision),
     referenceStatus: ReferenceStatus.followingReference,
   });
-  const direction = definition.propagation.direction;
-  if (direction !== "bidirectional" && direction !== "bounded") {
-    throw new RangeError(`Catalog root ${definition.id} uses unsupported reference direction ${direction}`);
-  }
-  const model = createReferenceEphemerisModel({
-    validity: SCENARIO_VALIDITY,
-    direction,
-    propagationFrame: definition.propagation.propagationFrame,
-    sourceRevision: revisionId(definition.propagation.configurationRevision),
-    dependencies: [],
-    errorContract: {},
-    evaluate: (target) => ({ ...definition.anchor, epoch: target }),
-  });
-  engine.bindMotionModel(definition.id, model);
+  engine.bindReferenceEphemeris(
+    definition.id,
+    dataset,
+    sourceNodeId,
+    definition.propagation.propagationFrame,
+  );
   return Object.freeze({ definition, record });
 }
 
@@ -143,18 +150,27 @@ function registerCenteredFrame(engine: OrbitEngine, frame: CelestialCenteredFram
   });
 }
 
-export function loadSolarSystemScenario(engine: OrbitEngine): SolarSystemScenario {
+export function loadSolarSystemScenario(engine: OrbitEngine, dataset: OepDataset, eclipseOracle: EclipseOracleAsset): SolarSystemScenario {
   validateScenarioAnchorSanity();
   const catalog = createCelestialCatalog(SCENARIO_BODIES, SCENARIO_CENTERED_FRAMES);
   const definitions = catalog.bodyById;
   const registered = new Map<ObjectId, RegisteredScenarioBody>();
   const centeredFrames = new Map(catalog.frameByCenterBody);
+  const sourceFrameHandles = [
+    engine.registerEphemerisSourceFrame(dataset, referenceFrameId("201"), 1),
+    engine.registerEphemerisSourceFrame(dataset, referenceFrameId("202"), 3),
+    engine.registerEphemerisSourceFrame(dataset, referenceFrameId("203"), 5),
+  ];
+  const referenceSources = new Map<ObjectId, ReturnType<OepDataset["sourceInfo"]>>();
 
   for (const id of catalog.registrationOrder) {
     const definition = definitions.get(id)!;
-    const value = definition.centralBody === undefined
-      ? registerRoot(engine, definition)
-      : registerScenarioChild(engine, definition, registered.get(definition.centralBody)!);
+    const value = definition.propagation.referenceSourceNodeId === undefined
+      ? registerScenarioChild(engine, definition, registered.get(definition.centralBody!)!)
+      : registerReferenceBody(engine, dataset, definition);
+    if (definition.propagation.referenceSourceNodeId !== undefined) {
+      referenceSources.set(id, dataset.sourceInfo(definition.propagation.referenceSourceNodeId));
+    }
     registered.set(id, value);
 
     const centeredFrame = centeredFrames.get(id);
@@ -170,7 +186,7 @@ export function loadSolarSystemScenario(engine: OrbitEngine): SolarSystemScenari
   }
   return Object.freeze({
     epoch: SCENARIO_EPOCH,
-    validity: SCENARIO_VALIDITY,
+    validity: dataset.sourceInfo(14).effectiveValidity,
     provenance: SCENARIO_PROVENANCE,
     catalog,
     centeredFrames: SCENARIO_CENTERED_FRAMES,
@@ -180,5 +196,9 @@ export function loadSolarSystemScenario(engine: OrbitEngine): SolarSystemScenari
     bodies,
     bodyById,
     objectIds: catalog.registrationOrder,
+    referenceDataset: dataset.identity,
+    referenceSources,
+    sourceFrameHandles,
+    eclipseOracle,
   });
 }
