@@ -17,6 +17,7 @@ import { assertCoupledMotion } from "../shared/coupled.js";
 import { assertScheduledWorkQueue } from "../shared/scheduler.js";
 import { assertFidelityManager } from "../shared/fidelity.js";
 import { assertFidelityTransitions } from "../shared/fidelity-transitions.js";
+import { assertRevisionInvalidation } from "../shared/invalidation.js";
 
 test("real WASM backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "wasm" });
@@ -45,4 +46,5 @@ test("real WASM backend initializes and reports the shared core health", async (
   await assertScheduledWorkQueue(engine);
   await assertFidelityManager(await OrbitEngine.create({ backend: "wasm" }));
   await assertFidelityTransitions(await OrbitEngine.create({ backend: "wasm" }));
+  await assertRevisionInvalidation(engine);
 });

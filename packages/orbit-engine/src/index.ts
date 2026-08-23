@@ -47,6 +47,12 @@ import {
   type FidelityStatus,
 } from "./fidelity.js";
 import type { MotionAuthority } from "./propagation.js";
+import {
+  RevisionInvalidationManager,
+  type DependencyInvalidationOptions,
+  type DependencyInvalidationTarget,
+  type InvalidationReport,
+} from "./invalidation.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -60,6 +66,8 @@ export * from "./state-query.js";
 export * from "./ephemeris.js";
 export * from "./scheduler.js";
 export * from "./fidelity.js";
+export * from "./dependency.js";
+export * from "./invalidation.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -119,6 +127,7 @@ export class OrbitEngine {
   #stateQueries?: ObjectStateQueries;
   readonly #scheduledWorkQueue: ScheduledWorkQueue;
   readonly #fidelityManager: FidelityManager;
+  readonly #invalidationManager: RevisionInvalidationManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -126,6 +135,7 @@ export class OrbitEngine {
     this.#health = health;
     this.#scheduledWorkQueue = new ScheduledWorkQueue(backend, scheduler);
     this.#fidelityManager = new FidelityManager();
+    this.#invalidationManager = new RevisionInvalidationManager(this.#scheduledWorkQueue);
   }
 
   static async create(options: OrbitEngineCreateOptions = {}): Promise<OrbitEngine> {
@@ -147,15 +157,21 @@ export class OrbitEngine {
   }
 
   scheduleWork(input: ScheduledWorkInput, options?: { readonly allowCurrentTime?: boolean }): ScheduledWorkRecord {
-    return this.#scheduledWorkQueue.schedule(input, options);
+    const record = this.#scheduledWorkQueue.schedule(input, options);
+    this.#invalidationManager.track(record, input);
+    return record;
   }
 
   cancelScheduledWork(id: ScheduledWorkId, generation: RevisionId): ScheduledWorkRecord {
-    return this.#scheduledWorkQueue.cancel(id, generation);
+    const record = this.#scheduledWorkQueue.cancel(id, generation);
+    this.#invalidationManager.untrack(id);
+    return record;
   }
 
   replaceScheduledWork(id: ScheduledWorkId, generation: RevisionId, input: ScheduledWorkInput, options?: { readonly allowCurrentTime?: boolean }): ScheduledWorkRecord {
-    return this.#scheduledWorkQueue.replace(id, generation, input, options);
+    const record = this.#scheduledWorkQueue.replace(id, generation, input, options);
+    this.#invalidationManager.replace(record, input);
+    return record;
   }
 
   listScheduledWorkDiagnostics(limit = 64, offset = 0): readonly ScheduledWorkRecord[] {
@@ -163,11 +179,37 @@ export class OrbitEngine {
   }
 
   advanceTo(target: SimulationInstant): AdvanceResult {
-    return this.#scheduledWorkQueue.advanceTo(target);
+    this.#invalidationManager.prepareAdvance(this.currentTime);
+    const result = this.#scheduledWorkQueue.advanceTo(target);
+    this.#invalidationManager.afterAdvance(result.currentTime);
+    return result;
   }
 
   advanceBy(value: Duration): AdvanceResult {
-    return this.#scheduledWorkQueue.advanceBy(value);
+    this.#invalidationManager.prepareAdvance(this.currentTime);
+    const result = this.#scheduledWorkQueue.advanceBy(value);
+    this.#invalidationManager.afterAdvance(result.currentTime);
+    return result;
+  }
+
+  invalidateDependency(
+    dependency: DependencyInvalidationTarget,
+    effectiveFrom: SimulationInstant,
+    options?: DependencyInvalidationOptions,
+  ): InvalidationReport {
+    return this.#invalidationManager.invalidate(dependency, effectiveFrom, options);
+  }
+
+  invalidateFrom(
+    dependency: DependencyInvalidationTarget,
+    effectiveFrom: SimulationInstant,
+    options?: DependencyInvalidationOptions,
+  ): InvalidationReport {
+    return this.invalidateDependency(dependency, effectiveFrom, options);
+  }
+
+  listInvalidationDiagnostics(limit = 64): readonly InvalidationReport[] {
+    return this.#invalidationManager.diagnostics(limit);
   }
 
   getFidelityStatus(id: ObjectId): FidelityStatus {
