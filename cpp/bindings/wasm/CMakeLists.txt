@@ -1,4 +1,6 @@
 set(ORBIT_ENGINE_WASM_EXPORTS
+  _malloc
+  _free
   _orbit_engine_binding_protocol_version
   _orbit_engine_core_version
   _orbit_engine_health
@@ -178,6 +180,57 @@ set(ORBIT_ENGINE_WASM_EXPORTS
   _orbit_engine_two_body_result_velocity_x
   _orbit_engine_two_body_result_velocity_y
   _orbit_engine_two_body_result_velocity_z
+  _orbit_engine_oep_load
+  _orbit_engine_oep_retain
+  _orbit_engine_oep_release_reference
+  _orbit_engine_oep_unload
+  _orbit_engine_oep_source_info
+  _orbit_engine_oep_evaluate
+  _orbit_engine_oep_dataset_result_code
+  _orbit_engine_oep_dataset_handle_high
+  _orbit_engine_oep_dataset_handle_low
+  _orbit_engine_oep_dataset_revision_high
+  _orbit_engine_oep_dataset_revision_low
+  _orbit_engine_oep_dataset_source_count
+  _orbit_engine_oep_source_result_code
+  _orbit_engine_oep_source_handle_high
+  _orbit_engine_oep_source_handle_low
+  _orbit_engine_oep_source_node_id
+  _orbit_engine_oep_source_center_node_id
+  _orbit_engine_oep_source_representation_code
+  _orbit_engine_oep_source_revision_high
+  _orbit_engine_oep_source_revision_low
+  _orbit_engine_oep_source_validity_start_seconds_high
+  _orbit_engine_oep_source_validity_start_seconds_low
+  _orbit_engine_oep_source_validity_start_nanoseconds
+  _orbit_engine_oep_source_validity_end_seconds_high
+  _orbit_engine_oep_source_validity_end_seconds_low
+  _orbit_engine_oep_source_validity_end_nanoseconds
+  _orbit_engine_oep_source_effective_start_seconds_high
+  _orbit_engine_oep_source_effective_start_seconds_low
+  _orbit_engine_oep_source_effective_start_nanoseconds
+  _orbit_engine_oep_source_effective_end_seconds_high
+  _orbit_engine_oep_source_effective_end_seconds_low
+  _orbit_engine_oep_source_effective_end_nanoseconds
+  _orbit_engine_oep_source_position_error_meters
+  _orbit_engine_oep_source_velocity_error_meters_per_second
+  _orbit_engine_oep_evaluation_result_code
+  _orbit_engine_oep_evaluation_handle_high
+  _orbit_engine_oep_evaluation_handle_low
+  _orbit_engine_oep_evaluation_source_node_id
+  _orbit_engine_oep_evaluation_mode_code
+  _orbit_engine_oep_evaluation_record_index
+  _orbit_engine_oep_evaluation_source_revision_high
+  _orbit_engine_oep_evaluation_source_revision_low
+  _orbit_engine_oep_evaluation_epoch_seconds_high
+  _orbit_engine_oep_evaluation_epoch_seconds_low
+  _orbit_engine_oep_evaluation_epoch_nanoseconds
+  _orbit_engine_oep_evaluation_position_x
+  _orbit_engine_oep_evaluation_position_y
+  _orbit_engine_oep_evaluation_position_z
+  _orbit_engine_oep_evaluation_velocity_x
+  _orbit_engine_oep_evaluation_velocity_y
+  _orbit_engine_oep_evaluation_velocity_z
 )
 string(REPLACE ";" "\n" ORBIT_ENGINE_WASM_EXPORTS_FILE_CONTENT "${ORBIT_ENGINE_WASM_EXPORTS}")
 set(ORBIT_ENGINE_WASM_EXPORTS_FILE "${CMAKE_CURRENT_BINARY_DIR}/orbit_engine_wasm_exports.txt")
@@ -188,6 +241,7 @@ file(GENERATE
 
 add_executable(orbit_engine_wasm
   wasm_binding.cpp
+  oep_wasm_binding.cpp
 )
 
 target_link_libraries(orbit_engine_wasm PRIVATE orbit_engine_core)

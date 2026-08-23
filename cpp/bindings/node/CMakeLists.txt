@@ -2,19 +2,27 @@ add_library(orbit_engine_node MODULE
   addon.cpp
 )
 
-target_link_libraries(orbit_engine_node PRIVATE orbit_engine_core)
-
-target_include_directories(orbit_engine_node
-  PRIVATE
-    ${ORBIT_ENGINE_NODE_INCLUDE_DIR}
-    ${ORBIT_ENGINE_NODE_ADDON_API_DIR}
+add_library(orbit_engine_oep_node MODULE
+  oep_addon.cpp
 )
 
-target_compile_definitions(orbit_engine_node PRIVATE NAPI_VERSION=8 NAPI_CPP_EXCEPTIONS)
+foreach(ORBIT_ENGINE_NODE_TARGET orbit_engine_node orbit_engine_oep_node)
+  target_link_libraries(${ORBIT_ENGINE_NODE_TARGET} PRIVATE orbit_engine_core)
+
+  target_include_directories(${ORBIT_ENGINE_NODE_TARGET}
+    PRIVATE
+      ${ORBIT_ENGINE_NODE_INCLUDE_DIR}
+      ${ORBIT_ENGINE_NODE_ADDON_API_DIR}
+  )
+
+  target_compile_definitions(${ORBIT_ENGINE_NODE_TARGET} PRIVATE NAPI_VERSION=8 NAPI_CPP_EXCEPTIONS)
+
+  if(MSVC)
+    target_compile_options(${ORBIT_ENGINE_NODE_TARGET} PRIVATE /EHsc)
+  endif()
+endforeach()
 
 if(MSVC)
-  target_compile_options(orbit_engine_node PRIVATE /EHsc)
-
   get_filename_component(ORBIT_ENGINE_NODE_HEADERS_ROOT
     "${ORBIT_ENGINE_NODE_INCLUDE_DIR}/.."
     ABSOLUTE
@@ -42,14 +50,28 @@ if(MSVC)
   set_target_properties(orbit_engine_node_api_import PROPERTIES
     IMPORTED_LOCATION "${ORBIT_ENGINE_NODE_API_IMPORT_LIB}"
   )
-  add_dependencies(orbit_engine_node orbit_engine_node_api_import_lib)
-  target_link_libraries(orbit_engine_node PRIVATE orbit_engine_node_api_import)
+  foreach(ORBIT_ENGINE_NODE_TARGET orbit_engine_node orbit_engine_oep_node)
+    add_dependencies(${ORBIT_ENGINE_NODE_TARGET} orbit_engine_node_api_import_lib)
+    target_link_libraries(${ORBIT_ENGINE_NODE_TARGET} PRIVATE orbit_engine_node_api_import)
+  endforeach()
 endif()
 
 set_target_properties(orbit_engine_node PROPERTIES
   PREFIX ""
   SUFFIX ".node"
   OUTPUT_NAME "orbit_engine"
+  LIBRARY_OUTPUT_DIRECTORY "${ORBIT_ENGINE_NODE_OUTPUT_DIR}"
+  RUNTIME_OUTPUT_DIRECTORY "${ORBIT_ENGINE_NODE_OUTPUT_DIR}"
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/node-archive"
+  LIBRARY_OUTPUT_DIRECTORY_RELEASE "${ORBIT_ENGINE_NODE_OUTPUT_DIR}"
+  RUNTIME_OUTPUT_DIRECTORY_RELEASE "${ORBIT_ENGINE_NODE_OUTPUT_DIR}"
+  ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/node-archive"
+)
+
+set_target_properties(orbit_engine_oep_node PROPERTIES
+  PREFIX ""
+  SUFFIX ".node"
+  OUTPUT_NAME "orbit_engine_oep"
   LIBRARY_OUTPUT_DIRECTORY "${ORBIT_ENGINE_NODE_OUTPUT_DIR}"
   RUNTIME_OUTPUT_DIRECTORY "${ORBIT_ENGINE_NODE_OUTPUT_DIR}"
   ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/node-archive"

@@ -1,12 +1,20 @@
 import type { Backend, BackendHealth, BackendKind } from "./internal/backends/contract.js";
 import { initializeBackend, type BackendPreference } from "./internal/backends/selection.js";
 import { ObjectRegistry } from "./registry.js";
-import { FrameRegistry, type ObjectFrameStateSource } from "./frame-registry.js";
-import { type ReferenceFrameId } from "./frames.js";
-import { type ObjectId } from "./objects.js";
+import { FrameRegistry, type FrameNode, type ObjectFrameStateSource } from "./frame-registry.js";
+import { referenceFrameId, type ReferenceFrameId } from "./frames.js";
+import { objectId, type ObjectId } from "./objects.js";
 import { type PropagationModel, type PropagationState } from "./propagation.js";
 import { ObjectStateQueries } from "./state-query.js";
 import { type SimulationInstant } from "./time.js";
+import {
+  loadOepDataset,
+  type EphemerisSourceNodeId,
+  type OepDataset,
+  type OepFrameProviderHandle,
+  type OepLoadInput,
+  type OepReferenceModelHandle,
+} from "./ephemeris.js";
 import {
   createTwoBodyAnalyticalModel,
   type TwoBodyAnalyticalModelConfiguration,
@@ -21,6 +29,7 @@ export * from "./propagation.js";
 export * from "./registry.js";
 export * from "./frame-registry.js";
 export * from "./state-query.js";
+export * from "./ephemeris.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 
@@ -33,6 +42,11 @@ export interface OrbitEngineCreateOptions {
 
 export interface OrbitEngineHealth extends BackendHealth {
   readonly backend: OrbitEngineBackend;
+}
+
+export interface RegisteredEphemerisFrameHandle extends OepFrameProviderHandle {
+  readonly frame: FrameNode;
+  unregister(): void;
 }
 
 function validateOptions(options: OrbitEngineCreateOptions): OrbitEngineBackendPreference {
@@ -85,6 +99,58 @@ export class OrbitEngine {
   stateQueries(): ObjectStateQueries {
     this.#stateQueries ??= new ObjectStateQueries(this.registry(), this.frames());
     return this.#stateQueries;
+  }
+
+  async loadEphemerisPack(input: OepLoadInput): Promise<OepDataset> {
+    return loadOepDataset(this.backend, input);
+  }
+
+  registerEphemerisSourceFrame(
+    dataset: OepDataset,
+    frameId: ReferenceFrameId,
+    sourceNodeId: EphemerisSourceNodeId | number,
+  ): RegisteredEphemerisFrameHandle {
+    const id = referenceFrameId(frameId);
+    const handle = dataset.sourceCenterProvider(sourceNodeId);
+    let registered = false;
+    try {
+      const frame = this.frames().register({ id, parent: this.frames().root(), provider: handle.provider });
+      registered = true;
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        this.frames().remove(id);
+        handle.release();
+        closed = true;
+      };
+      return Object.freeze({
+        identity: handle.identity,
+        provider: handle.provider,
+        frame,
+        release: close,
+        unregister: close,
+      });
+    } catch (error) {
+      if (!registered) handle.release();
+      throw error;
+    }
+  }
+
+  bindReferenceEphemeris(
+    id: ObjectId,
+    dataset: OepDataset,
+    sourceNodeId: EphemerisSourceNodeId | number,
+    propagationFrame: ReferenceFrameId,
+  ): OepReferenceModelHandle {
+    const object = objectId(id);
+    const handle = dataset.referenceModel(sourceNodeId, referenceFrameId(propagationFrame), object);
+    try {
+      this.bindMotionModel(object, handle.model);
+      return handle;
+    } catch (error) {
+      handle.release();
+      throw error;
+    }
   }
 
   bindMotionModel(id: ObjectId, model: PropagationModel): void {

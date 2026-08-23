@@ -3,6 +3,7 @@ add_library(orbit_engine_core STATIC
   src/frame.cpp
   src/frame_registry.cpp
   src/object.cpp
+  src/oep.cpp
   src/propagation.cpp
   src/registry.cpp
   src/two_body.cpp

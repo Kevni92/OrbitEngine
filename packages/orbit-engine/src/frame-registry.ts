@@ -1,9 +1,6 @@
 import type { Backend } from "./internal/backends/contract.js";
 import {
   encodeFrameRegistryWire,
-  frameRegistryDependencyFromWire,
-  frameRegistryFrameIdFromWire,
-  frameRegistryParentFromWire,
   FrameRegistryOperationCode,
   FrameRegistryProviderCode,
   FrameRegistryResultCode,
@@ -24,7 +21,6 @@ import {
   type Vec3,
 } from "./frames.js";
 import {
-  PropagationModelKind,
   propagationState,
   revisionId,
   type PropagationState,
@@ -35,7 +31,7 @@ import {
   simulationInstant,
   type SimulationInstant,
 } from "./time.js";
-import { meters, metersPerSecond, radiansPerSecond, type Meters, type MetersPerSecond, type RadiansPerSecond } from "./units.js";
+import { radiansPerSecond, type Meters, type MetersPerSecond, type RadiansPerSecond } from "./units.js";
 
 export const FrameProviderKind = Object.freeze({
   staticRigid: "staticRigid",
@@ -43,6 +39,7 @@ export const FrameProviderKind = Object.freeze({
   bodyFixed: "bodyFixed",
   staticLocal: "staticLocal",
   objectAttached: "objectAttached",
+  ephemerisSourceCentered: "ephemerisSourceCentered",
 } as const);
 
 export type FrameProviderKind = (typeof FrameProviderKind)[keyof typeof FrameProviderKind];
@@ -61,6 +58,12 @@ export interface OrientationProvider {
 
 export interface ObjectFrameStateSource {
   readonly objectId: ObjectId;
+  readonly revision?: RevisionId;
+  stateAt(target: SimulationInstant): PropagationState;
+}
+
+export interface EphemerisFrameStateSource {
+  readonly sourceIdentity: string;
   readonly revision?: RevisionId;
   stateAt(target: SimulationInstant): PropagationState;
 }
@@ -91,16 +94,27 @@ export interface ObjectAttachedFrameProvider {
   readonly revision?: RevisionId;
 }
 
+export interface EphemerisSourceCenteredFrameProvider {
+  readonly kind: "ephemerisSourceCentered";
+  readonly source: EphemerisFrameStateSource;
+  readonly revision?: RevisionId;
+}
+
 export type FrameProvider =
   | StaticRigidFrameProvider
   | ObjectCenteredFrameProvider
   | BodyFixedFrameProvider
-  | ObjectAttachedFrameProvider;
+  | ObjectAttachedFrameProvider
+  | EphemerisSourceCenteredFrameProvider;
 
-type DynamicFrameProvider = Exclude<FrameProvider, StaticRigidFrameProvider>;
+type ObjectDynamicFrameProvider = ObjectCenteredFrameProvider | BodyFixedFrameProvider | ObjectAttachedFrameProvider;
 
 function isStaticProvider(provider: FrameProvider): provider is StaticRigidFrameProvider {
   return provider.kind === "staticRigid" || provider.kind === "staticLocal";
+}
+
+function isEphemerisProvider(provider: FrameProvider): provider is EphemerisSourceCenteredFrameProvider {
+  return provider.kind === "ephemerisSourceCentered";
 }
 
 export interface FrameRegistration {
@@ -188,11 +202,13 @@ function providerCode(provider: FrameProvider): number {
     case FrameProviderKind.bodyFixed: return FrameRegistryProviderCode.bodyFixed;
     case FrameProviderKind.staticLocal: return FrameRegistryProviderCode.staticLocal;
     case FrameProviderKind.objectAttached: return FrameRegistryProviderCode.objectAttached;
+    case FrameProviderKind.ephemerisSourceCentered: return FrameRegistryProviderCode.ephemerisSourceCentered;
   }
 }
 
 function providerDependency(provider: FrameProvider): ObjectId | undefined {
-  return isStaticProvider(provider) ? undefined : provider.source.objectId;
+  if (isStaticProvider(provider) || isEphemerisProvider(provider)) return undefined;
+  return provider.source.objectId;
 }
 
 function validateProvider(provider: FrameProvider): FrameProvider {
@@ -204,7 +220,19 @@ function validateProvider(provider: FrameProvider): FrameProvider {
       revision: normalizedRevision(provider.revision),
     });
   }
-  const dynamicProvider = provider as DynamicFrameProvider;
+  if (isEphemerisProvider(provider)) {
+    if (typeof provider.source !== "object" || provider.source === null
+        || typeof provider.source.sourceIdentity !== "string" || provider.source.sourceIdentity.length === 0) {
+      throw new TypeError("Ephemeris frame provider requires a source identity");
+    }
+    if (typeof provider.source.stateAt !== "function") throw new TypeError("Ephemeris frame provider source must implement stateAt");
+    return Object.freeze({
+      ...provider,
+      revision: normalizedRevision(provider.revision),
+      source: Object.freeze({ ...provider.source, revision: normalizedRevision(provider.source.revision) }),
+    });
+  }
+  const dynamicProvider = provider as ObjectDynamicFrameProvider;
   objectId(dynamicProvider.source.objectId);
   if (typeof dynamicProvider.source.stateAt !== "function") throw new TypeError("Frame provider state source must implement stateAt");
   if (dynamicProvider.kind === "bodyFixed" && typeof dynamicProvider.orientation.evaluate !== "function") {
@@ -231,12 +259,21 @@ function providerAt(provider: FrameProvider, parent: ReferenceFrameId, target: S
     const staticTransform = provider.transform;
     return rigidStateTransform({ ...staticTransform, epoch: target });
   }
-  const dynamicProvider = provider as DynamicFrameProvider;
-  const state = propagationState(dynamicProvider.source.stateAt(target));
-  assertExactEpoch(state.epoch, target, "Object frame state source");
+  const state = propagationState(provider.source.stateAt(target));
+  assertExactEpoch(state.epoch, target, isEphemerisProvider(provider) ? "Ephemeris frame state source" : "Object frame state source");
   if (state.referenceFrame !== parent) {
-    throw new FrameRegistryError(FrameRegistryErrorCode.missingDependency, "Object frame state must be expressed in the frame parent");
+    throw new FrameRegistryError(FrameRegistryErrorCode.missingDependency, "Dynamic frame state must be expressed in the frame parent");
   }
+  if (isEphemerisProvider(provider)) {
+    return rigidStateTransform({
+      translation: state.position,
+      originVelocity: state.velocity,
+      rotation: { w: 1, x: 0, y: 0, z: 0 },
+      angularVelocity: { x: radiansPerSecond(0), y: radiansPerSecond(0), z: radiansPerSecond(0) },
+      epoch: target,
+    });
+  }
+  const dynamicProvider = provider as ObjectDynamicFrameProvider;
   const orientation = dynamicProvider.kind === "bodyFixed"
     ? dynamicProvider.orientation.evaluate(target)
     : dynamicProvider.kind === "objectAttached"
@@ -263,10 +300,11 @@ function providerAt(provider: FrameProvider, parent: ReferenceFrameId, target: S
 }
 
 function edgeRevision(provider: FrameProvider): string {
-  if (isStaticProvider(provider)) {
-    return provider.revision ?? "0";
+  if (isStaticProvider(provider)) return provider.revision ?? "0";
+  if (isEphemerisProvider(provider)) {
+    return `${provider.revision ?? "0"}:${provider.source.revision ?? "0"}`;
   }
-  const dynamicProvider = provider as DynamicFrameProvider;
+  const dynamicProvider = provider as ObjectDynamicFrameProvider;
   const sourceRevision = dynamicProvider.source.revision ?? "0";
   const orientationRevision = dynamicProvider.kind === "objectCentered"
     ? "0" : dynamicProvider.orientation?.revision ?? "0";

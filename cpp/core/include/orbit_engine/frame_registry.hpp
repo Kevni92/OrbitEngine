@@ -22,6 +22,7 @@ enum class ProviderCode : std::uint16_t {
   body_fixed = 3,
   static_local = 4,
   object_attached = 5,
+  ephemeris_source_centered = 6,
 };
 
 enum class ResultCode : std::uint16_t {
