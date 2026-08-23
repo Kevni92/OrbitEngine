@@ -32,7 +32,7 @@ bool is_valid_input(FrameRegistryWire value) noexcept {
   }
   if (value.parent_present && !frame::is_valid(parent_id(value))) return false;
   if (value.provider_code < static_cast<std::uint16_t>(ProviderCode::static_rigid)
-      || value.provider_code > static_cast<std::uint16_t>(ProviderCode::object_attached)) {
+      || value.provider_code > static_cast<std::uint16_t>(ProviderCode::ephemeris_source_centered)) {
     return false;
   }
   if (!valid_dependency(value)) return false;
