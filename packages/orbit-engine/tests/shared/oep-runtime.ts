@@ -139,6 +139,8 @@ export async function oepParitySnapshot(engine: OrbitEngine): Promise<OepParityS
   engine.registry().remove(id3);
   handle2.release();
   handle3.release();
+  engine.frames().setObjectPropagationFrame(id2, ROOT_REFERENCE_FRAME_ID);
+  engine.frames().setObjectPropagationFrame(id3, ROOT_REFERENCE_FRAME_ID);
   frameHandle.unregister();
   dataset.unload();
 
@@ -299,6 +301,8 @@ export async function assertOepRuntime(engine: OrbitEngine): Promise<void> {
   engine.registry().remove(id2);
   engine.registry().remove(id3);
   bound3.release();
+  engine.frames().setObjectPropagationFrame(id2, ROOT_REFERENCE_FRAME_ID);
+  engine.frames().setObjectPropagationFrame(id3, ROOT_REFERENCE_FRAME_ID);
   frameHandle.unregister();
   first.unload();
 
