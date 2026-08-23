@@ -31,6 +31,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 25. [Active Spacecraft Thrust, Mass Flow, and Maneuver Execution](25-active-spacecraft-thrust-mass-flow-and-maneuvers.md) — exact impulses, bounded finite-thrust stages, frame/body direction, prescribed attitude, integrated physical mass flow, maneuver editing, Fidelity handoff and parity.
 26. [Trajectory Planning, Transfers, Rendezvous, and Intercepts](26-trajectory-planning-transfers-rendezvous-and-intercepts.md) — read-only zero-revolution Lambert planning, moving targets, explicit central-body/frame assumptions, bounded search, stale-plan validation, maneuver application and numerical analysis.
 27. [Optional Reusable Three.js Visualization Package](27-optional-threejs-visualization-package.md) — separate `orbit-engine-three` package, snapshot-driven rendering, semantic appearance/lighting, render-space precision, LOD/batching, resource ownership, demo migration, packaging and CI.
+28. [Higher-Order Perturbation and Semi-Analytical Propagation](28-higher-order-perturbation-and-semi-analytical-propagation.md) — bounded `semiAnalytical/j2Secular` middle tier, shared physical J2 source, numerical J2 reference force, pole dependency, validity certificates, Fidelity switching and parity/performance contracts.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -46,6 +47,7 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - Stable astronomical trajectories should be cheap to query across large time jumps.
 - Expensive simulation is activated only where interaction, perturbation, maneuvering, or collision risk requires it.
 - Production numerical translation uses local adaptive DOP853 authorities with explicit force/source configuration; true mutual interaction is represented by bounded coupled authorities rather than global ticking or cyclic single-object dependencies.
+- The first production cheaper-than-numerical perturbation tier is an explicit `semiAnalytical/j2Secular` model for stable bound central-body motion; it uses the same revisioned J2 physical source as the numerical J2 force provider and never silently adds other perturbations.
 - Mutable time advancement is exact and event-driven: the engine jumps between scheduled instants, drains deterministic same-time transactions, and keeps pure state-at-time queries separate from mutable event processing.
 - Fidelity is a semantic accuracy/interaction requirement, not a rendering signal and not a direct propagator enum; promotion/demotion uses explicit exact-time authority transactions and anti-thrashing validation.
 - Encounter prediction is revision-aware derived scheduling data built from explicit policy, conservative broad-phase bounds and bounded refinement; it never becomes motion authority or a second global pair loop.
