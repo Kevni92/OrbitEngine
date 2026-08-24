@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
-#include <set>
+#include <limits>
 
 namespace orbit_engine::thrust {
 namespace {
@@ -385,8 +385,14 @@ force::Provider make_finite_thrust_provider(
     force::Failure& output
   ) {
     if (configuration.target_id != 0 && configuration.target_id != context.target_id) {
-      invalid(output, force::FailureCode::missing_dependency, "finite-thrust provider target does not match evaluation target");
-      return false;
+      // A coupled authority evaluates the shared provider runtime once for
+      // every member. A targeted thrust provider is therefore inactive for
+      // non-target members; it must not turn an otherwise valid member
+      // evaluation into a dependency failure.
+      acceleration = frame::Vec3{0.0, 0.0, 0.0};
+      mass_rate = 0.0;
+      output = {};
+      return true;
     }
     acceleration = frame::Vec3{0.0, 0.0, 0.0};
     mass_rate = 0.0;
@@ -401,11 +407,14 @@ force::Provider make_finite_thrust_provider(
     const double force = stage->force_magnitude_newtons * stage->throttle;
     const double flow = normalized_flows[stage_index] * stage->throttle;
     if (configuration.minimum_mass_kilograms.has_value() && context.target_mass.has_value()) {
-      if (*context.target_mass < *configuration.minimum_mass_kilograms) {
+      const double minimum_mass = *configuration.minimum_mass_kilograms;
+      const double minimum_mass_tolerance = 64.0 * std::numeric_limits<double>::epsilon()
+        * std::max(1.0, std::abs(minimum_mass));
+      if (*context.target_mass < minimum_mass - minimum_mass_tolerance) {
         invalid(output, force::FailureCode::minimum_mass_reached, "finite-thrust mass is below its configured minimum");
         return false;
       }
-      if (*context.target_mass == *configuration.minimum_mass_kilograms && flow > 0.0 && !context.left_limit) {
+      if (*context.target_mass <= minimum_mass + minimum_mass_tolerance && flow > 0.0 && !context.left_limit) {
         // The exact depletion boundary is a hard numerical boundary. At and
         // after it the burn contributes no further force or mass flow.
         output = {};
