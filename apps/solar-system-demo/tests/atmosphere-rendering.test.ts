@@ -117,8 +117,12 @@ test("atmosphere shell resources are allocated only for forced sphere bodies and
   assert.ok(mesh.material.fragmentShader.includes("raySphereInterval"));
   assert.ok(mesh.material.fragmentShader.includes("uLightChromaticities"));
   assert.ok(mesh.material.fragmentShader.includes("altitudeScaleHeights"));
+  assert.ok(mesh.material.fragmentShader.includes("bodyOccludesShell"));
   assert.equal(mesh.material.fragmentShader.includes("while"), false);
   assert.equal(mesh.material.fragmentShader.includes("uScaleHeight"), false);
+  assert.equal(mesh.material.fragmentShader.includes("DISPLAY_CHROMATICITY"), false);
+  assert.equal(mesh.material.fragmentShader.includes("* 4.0"), false);
+  assert.equal(mesh.material.fragmentShader.includes("* 0.3"), false);
   assert.equal(mesh.material.premultipliedAlpha, true);
   assert.equal(mesh.material.blending, THREE.NormalBlending);
 

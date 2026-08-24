@@ -130,7 +130,9 @@ test("resolved surfaces use lit materials while stellar illumination survives st
   const root = new THREE.Scene();
   const visual = new SolarSystemScene(root, scenario());
   visual.update(SCENARIO_BODIES.map((body) => body.anchor));
-  assert.ok(visual.meshFor(EARTH_ID)?.material instanceof THREE.MeshLambertMaterial);
+  const earthMaterial = visual.meshFor(EARTH_ID)?.material;
+  assert.ok(earthMaterial instanceof THREE.MeshLambertMaterial);
+  assert.equal(earthMaterial.emissiveMap, null);
   assert.ok(visual.meshFor(SUN_ID)?.material instanceof THREE.MeshStandardMaterial);
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10_000);
   camera.position.set(0, -1_000, 600);
