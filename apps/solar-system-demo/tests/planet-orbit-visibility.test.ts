@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { revisionId, simulationInstant } from "orbit-engine";
+import { meters, revisionId, simulationInstant } from "orbit-engine";
 import { SolarSystemScene } from "../src/rendering/solar-system-scene.js";
 import {
   EARTH_ID,
@@ -84,5 +84,60 @@ test("major planet orbits stay visible when planet bodies demote to markers", ()
   assert.equal(earthOrbit.visible, true, "entry visibility remains eligible while the root orbit layer is disabled");
   assert.equal(visual.renderDiagnosticsFor(EARTH_ID, camera)?.orbitVisible, false);
 
+  visual.dispose();
+});
+
+test("resolved child orbits keep their parent anchor while presentation radius changes", () => {
+  const root = new THREE.Scene();
+  const visual = new SolarSystemScene(root, scenario());
+  const states = SCENARIO_BODIES.map((body) => body.anchor);
+  visual.update(states);
+  visual.setPath(pathFor(EUROPA_ID, JUPITER_ID));
+  visual.setFocusId(JUPITER_ID);
+  visual.setSelected(EUROPA_ID);
+
+  const jupiterPosition = visual.positionFor(JUPITER_ID)!;
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.0001, 10_000);
+  camera.position.copy(jupiterPosition).add(new THREE.Vector3(0, -1.6, 0.96));
+  camera.lookAt(jupiterPosition);
+  visual.updatePresentation(camera, 900);
+
+  const orbitGroup = root.getObjectByName(`Orbit ${EUROPA_ID}`);
+  assert.ok(orbitGroup instanceof THREE.Group);
+  assert.equal(orbitGroup.visible, true);
+  assert.deepEqual(orbitGroup.position.toArray(), jupiterPosition.toArray());
+  const orbitLine = orbitGroup.children[0] as THREE.LineLoop;
+  const originalGeometry = Array.from((orbitLine.geometry.getAttribute("position") as THREE.BufferAttribute).array);
+  const selected = visual.orbitGuideDiagnostics().find((orbit) => orbit.objectId === EUROPA_ID)!;
+  assert.equal(selected.kind, "child");
+  assert.equal(selected.opacity, 1);
+
+  visual.setRadiusMode("physical");
+  visual.updatePresentation(camera, 900);
+  assert.deepEqual(
+    Array.from((orbitLine.geometry.getAttribute("position") as THREE.BufferAttribute).array),
+    originalGeometry,
+  );
+
+  const translatedStates = states.map((state, index) => index === SCENARIO_BODIES.findIndex((body) => body.id === JUPITER_ID)
+    ? {
+        ...state,
+        position: {
+          x: meters(state.position.x + 10_000_000),
+          y: meters(state.position.y - 20_000_000),
+          z: meters(state.position.z + 30_000_000),
+        },
+      }
+    : state);
+  visual.update(translatedStates);
+  const movedJupiterPosition = visual.positionFor(JUPITER_ID)!;
+  assert.deepEqual(orbitGroup.position.toArray(), movedJupiterPosition.toArray());
+  assert.deepEqual(
+    Array.from((orbitLine.geometry.getAttribute("position") as THREE.BufferAttribute).array),
+    originalGeometry,
+  );
+
+  visual.setSelected(undefined);
+  assert.equal(visual.orbitGuideDiagnostics().find((orbit) => orbit.objectId === EUROPA_ID)?.opacity, 0.3);
   visual.dispose();
 });
