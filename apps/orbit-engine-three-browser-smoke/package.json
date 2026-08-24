@@ -1,0 +1,23 @@
+{
+  "name": "orbit-engine-three-browser-smoke",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "smoke": "playwright test",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "orbit-engine": "workspace:*",
+    "orbit-engine-three": "workspace:*",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "22.13.10",
+    "@types/three": "0.185.4",
+    "typescript": "5.8.3",
+    "vite": "8.2.2"
+  }
+}

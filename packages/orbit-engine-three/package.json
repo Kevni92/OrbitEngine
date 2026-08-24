@@ -1,0 +1,39 @@
+{
+  "name": "orbit-engine-three",
+  "version": "0.1.0",
+  "description": "Optional Three.js presentation companion for OrbitEngine.",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.0.0 <25.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./presentation": {
+      "types": "./dist/presentation.d.ts",
+      "import": "./dist/presentation.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm build && node --test tests/public-api.test.mjs"
+  },
+  "peerDependencies": {
+    "orbit-engine": ">=0.1.0 <0.2.0",
+    "three": "^0.185.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.185.4",
+    "orbit-engine": "workspace:*",
+    "three": "0.185.1",
+    "typescript": "5.8.3"
+  }
+}

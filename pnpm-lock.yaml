@@ -34,6 +34,34 @@ importers:
         specifier: 8.2.2
         version: 8.2.2(@types/node@22.13.10)
 
+  apps/orbit-engine-three-browser-smoke:
+    dependencies:
+      orbit-engine:
+        specifier: workspace:*
+        version: link:../../packages/orbit-engine
+      orbit-engine-three:
+        specifier: workspace:*
+        version: link:../../packages/orbit-engine-three
+      three:
+        specifier: 0.185.1
+        version: 0.185.1
+    devDependencies:
+      '@playwright/test':
+        specifier: 1.62.1
+        version: 1.62.1
+      '@types/node':
+        specifier: 22.13.10
+        version: 22.13.10
+      '@types/three':
+        specifier: 0.185.4
+        version: 0.185.4
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+      vite:
+        specifier: 8.2.2
+        version: 8.2.2(@types/node@22.13.10)
+
   apps/solar-system-demo:
     dependencies:
       orbit-engine:
@@ -64,6 +92,21 @@ importers:
       '@types/node':
         specifier: 22.13.10
         version: 22.13.10
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+
+  packages/orbit-engine-three:
+    devDependencies:
+      '@types/three':
+        specifier: 0.185.4
+        version: 0.185.4
+      orbit-engine:
+        specifier: workspace:*
+        version: link:../orbit-engine
+      three:
+        specifier: 0.185.1
+        version: 0.185.1
       typescript:
         specifier: 5.8.3
         version: 5.8.3
