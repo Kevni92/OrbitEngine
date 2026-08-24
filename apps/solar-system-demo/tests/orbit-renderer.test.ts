@@ -63,6 +63,43 @@ test("orbit renderer anchors relative geometry and exposes selected direction st
   assert.equal(renderer.pathCount(), 0);
 });
 
+test("orbit renderer rebases distant geometry before GPU upload", () => {
+  const scene = new THREE.Scene();
+  const renderer = new OrbitRenderer(scene);
+  const bodyId = objectId("2004");
+  const centralId = objectId("1000");
+  const frame = referenceFrameId("1");
+  const path: OrbitPath = {
+    objectId: bodyId,
+    focusId: centralId,
+    outputFrame: frame,
+    interval: { start: simulationInstant(0), end: simulationInstant(10) },
+    sampleCount: 2,
+    motionRevision: revisionId("1"),
+    configurationRevision: revisionId("1"),
+    samples: [0, 1].map((second) => ({
+      instant: simulationInstant(second),
+      state: propagationState({
+        position: { x: meters(4_000 * 149_597_870_700), y: meters(0), z: meters(0) },
+        velocity: { x: metersPerSecond(0), y: metersPerSecond(1), z: metersPerSecond(0) },
+        epoch: simulationInstant(second),
+        referenceFrame: frame,
+      }),
+    })),
+  };
+
+  renderer.setPath(path, 0x4f83cc);
+  renderer.updateBodyPositions(new Map([[centralId, new THREE.Vector3(-4_000 * 100, 0, 0)]]));
+
+  const group = renderer.group.getObjectByName(`Orbit ${bodyId}`)!;
+  const line = group.children[0] as THREE.LineLoop;
+  const position = line.geometry.getAttribute("position") as THREE.BufferAttribute;
+  assert.deepEqual(group.position.toArray(), [0, 0, 0]);
+  assert.ok(Math.abs(position.getX(0)) < 1e-5, "large opposing parent/vertex coordinates are resolved before Float32 upload");
+
+  renderer.dispose();
+});
+
 test("orbit guide roles emphasize the active hierarchy without rebuilding geometry", () => {
   const scene = new THREE.Scene();
   const renderer = new OrbitRenderer(scene);

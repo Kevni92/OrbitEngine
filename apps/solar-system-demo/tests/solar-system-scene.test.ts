@@ -93,7 +93,7 @@ test("scene keys meshes by stable ObjectId and consumes returned positions", () 
     positions.getX(0),
     positions.getY(0),
     positions.getZ(0),
-  ).add(orbitGroup.position);
+  );
   // BufferGeometry position attributes are Float32, while body mesh positions
   // retain JavaScript double precision. They must coincide within GPU geometry precision.
   assert.ok(firstOrbitPoint.distanceTo(earthMesh.position) < FLOAT32_SCENE_POSITION_TOLERANCE);

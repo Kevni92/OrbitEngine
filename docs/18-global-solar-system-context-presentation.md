@@ -15,6 +15,8 @@ The browser demo therefore separates two presentation responsibilities:
 1. **Global Solar-System context** — the Sun and major planets remain represented during normal navigation.
 2. **Local-system detail** — moons and other subordinate bodies remain controlled by hierarchical LOD and may be hidden when their local system is unresolved.
 
+Orbit guides follow the same split: primary planet paths remain eligible in the global context, while direct non-asteroid child paths are visible when their parent local system is resolved. Asteroid paths are created only for the selected asteroid.
+
 For the committed Solar-System scenario, global context consists of the catalog star and `ObjectType.planet` entries: the Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, and Neptune.
 
 ## Global body-size mode
@@ -96,6 +98,8 @@ Three.js submission
 ```
 
 No presentation policy may mutate the authoritative state to satisfy visibility.
+
+Orbit guide vertices are rebased into the current focus-relative render space before Float32 GPU upload. Their logical parent anchor is applied in that same space rather than as a large parent matrix translation, preserving precision for distant heliocentric objects.
 
 ## Regression validation
 

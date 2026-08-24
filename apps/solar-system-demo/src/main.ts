@@ -26,6 +26,7 @@ import { simulationInstantFromLocalDateTimeInput } from "./ui/civil-time.js";
 import {
   compareSimulationInstants,
   objectId,
+  ObjectType,
   simulationInstant,
   type ObjectId,
   type OrbitEngine,
@@ -262,11 +263,20 @@ async function bootstrap(): Promise<void> {
   }
 
   function setSelectedBody(objectIdValue: ObjectId): void {
+    const previousSelectedId = selectedId;
     selectedId = objectIdValue;
     panel.setSelectedId(selectedId);
     updateSceneContext();
     if (scenario?.catalog.bodyById.has(selectedId)) browser?.setSelectedBody(selectedId);
     scene?.setSelected(selectedId);
+    const previousEntry = stateSource?.bodyFor(previousSelectedId);
+    if (previousSelectedId !== selectedId && previousEntry?.definition.type === ObjectType.asteroid) {
+      scene?.clearPath(previousSelectedId);
+    }
+    const selectedEntry = stateSource?.bodyFor(selectedId);
+    if (selectedEntry?.definition.type === ObjectType.asteroid) {
+      sampleReferenceOrbit(selectedEntry);
+    }
     if (scene?.selectedOrbitActive()) {
       panel.setOrbitStatus("ready", `${scene.pathCount()} reference orbits · selected direction highlighted`);
     } else if (scene !== undefined) {
@@ -290,8 +300,9 @@ async function bootstrap(): Promise<void> {
   }
 
   function orbitEntries(): readonly SolarSystemScenario["bodies"][number][] {
-    return scenario?.bodies.filter((entry) =>
-      entry.definition.centralBody !== undefined && entry.definition.propagation.orbitVisualization !== undefined) ?? [];
+    const entries = stateSource?.currentBodies() ?? scenario?.bodies ?? [];
+    return entries.filter((entry) => entry.definition.centralBody !== undefined
+      && (entry.definition.type !== ObjectType.asteroid || entry.definition.id === selectedId));
   }
 
   function sampleReferenceOrbit(entry: SolarSystemScenario["bodies"][number]): boolean {

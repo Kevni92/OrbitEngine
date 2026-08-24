@@ -75,6 +75,7 @@ interface OrbitEntry {
   readonly group: THREE.Group;
   readonly points: readonly THREE.Vector3[];
   readonly geometry: THREE.BufferGeometry;
+  readonly positionAttribute: THREE.BufferAttribute;
   readonly baseLine: THREE.LineLoop<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   readonly highlightLine: THREE.LineLoop<THREE.BufferGeometry, THREE.ShaderMaterial>;
   readonly baseMaterial: THREE.LineBasicMaterial;
@@ -169,14 +170,16 @@ export class OrbitRenderer {
 
   guideDiagnostics(): readonly OrbitGuideDiagnostics[] {
     return Object.freeze([...this.#entries.values()].map((entry) => {
-      const anchor = entry.group.position;
+      const anchor = this.#positions.get(entry.path.focusId);
       return Object.freeze({
         objectId: entry.path.objectId,
         kind: entry.kind,
         role: this.#roleFor(entry),
         opacity: entry.baseMaterial.opacity,
         visible: entry.group.visible,
-        anchorPosition: Object.freeze({ x: anchor.x, y: anchor.y, z: anchor.z }),
+        ...(anchor === undefined ? {} : {
+          anchorPosition: Object.freeze({ x: anchor.x, y: anchor.y, z: anchor.z }),
+        }),
       });
     }));
   }
@@ -194,7 +197,9 @@ export class OrbitRenderer {
       const position = positionToSceneUnits(sample.state.position);
       return new THREE.Vector3(position.x, position.y, position.z);
     }));
-    const geometry = new THREE.BufferGeometry().setFromPoints([...points]);
+    const geometry = new THREE.BufferGeometry();
+    const positionAttribute = new THREE.Float32BufferAttribute(new Array(points.length * 3).fill(0), 3);
+    geometry.setAttribute("position", positionAttribute);
     geometry.setAttribute("trailAlpha", new THREE.Float32BufferAttribute(new Array(points.length).fill(0), 1));
     const baseMaterial = new THREE.LineBasicMaterial({
       color: bodyColor,
@@ -221,6 +226,7 @@ export class OrbitRenderer {
       group,
       points,
       geometry,
+      positionAttribute,
       baseLine,
       highlightLine,
       baseMaterial,
@@ -229,14 +235,14 @@ export class OrbitRenderer {
     };
     this.#entries.set(path.objectId, entry);
     this.#updateEntryVisibility(entry);
-    this.#updateEntryAnchor(entry);
+    this.#updateEntryGeometry(entry);
     this.#root.userData.orbitCount = this.#entries.size;
     if (this.#selected === path.objectId) this.#updateSelectedGradient();
   }
 
   updateBodyPositions(positions: ReadonlyMap<ObjectId, THREE.Vector3>): void {
     this.#positions = new Map([...positions].map(([id, position]) => [id, position.clone()]));
-    for (const entry of this.#entries.values()) this.#updateEntryAnchor(entry);
+    for (const entry of this.#entries.values()) this.#updateEntryGeometry(entry);
     this.#updateSelectedGradient();
   }
 
@@ -307,9 +313,21 @@ export class OrbitRenderer {
     return "background";
   }
 
-  #updateEntryAnchor(entry: OrbitEntry): void {
-    const position = this.#positions.get(entry.path.focusId);
-    if (position !== undefined) entry.group.position.copy(position);
+  #updateEntryGeometry(entry: OrbitEntry): void {
+    const anchor = this.#positions.get(entry.path.focusId);
+    const anchorX = anchor?.x ?? 0;
+    const anchorY = anchor?.y ?? 0;
+    const anchorZ = anchor?.z ?? 0;
+    for (let index = 0; index < entry.points.length; index += 1) {
+      const point = entry.points[index]!;
+      entry.positionAttribute.setXYZ(index, point.x + anchorX, point.y + anchorY, point.z + anchorZ);
+    }
+    entry.positionAttribute.needsUpdate = true;
+    // Geometry is already in the current focus-relative render space. Keeping
+    // the group at the origin avoids large parent translations being added to
+    // large orbit vertices in the GPU, which loses precision for distant
+    // heliocentric objects such as Makemake.
+    entry.group.position.set(0, 0, 0);
   }
 
   #updateSelectedGradient(): void {

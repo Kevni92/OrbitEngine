@@ -10,7 +10,16 @@ import {
   objectId,
   type ObjectId,
 } from "orbit-engine";
-import { SCENARIO_BODIES, SCENARIO_OBJECT_IDS, SCENARIO_ROOT_FRAME, SCENARIO_VALIDITY, SUN_ID, EARTH_ID } from "../src/scenario/scenario-data.js";
+import {
+  AMALTHEA_ID,
+  EARTH_ID,
+  JUPITER_ID,
+  SCENARIO_BODIES,
+  SCENARIO_OBJECT_IDS,
+  SCENARIO_ROOT_FRAME,
+  SCENARIO_VALIDITY,
+  SUN_ID,
+} from "../src/scenario/scenario-data.js";
 import type { SolarSystemScenario } from "../src/scenario/load-solar-system.js";
 import { PathCache } from "../src/simulation/path-sampling.js";
 import { createOrbitPath } from "../src/simulation/orbit-visualization.js";
@@ -85,4 +94,31 @@ test("orbit visualization can be re-anchored at the current simulation instant",
   assert.ok(path !== undefined);
   assert.deepEqual(path!.interval.start, anchor);
   assert.equal(path!.samples[0]?.state.epoch.seconds, anchor.seconds);
+});
+
+test("orbit visualization infers a bounded sampling period from parent state when metadata is absent", () => {
+  const loaded = scenario();
+  const body = loaded.bodyById.get(AMALTHEA_ID)!;
+  const parent = loaded.bodyById.get(JUPITER_ID)!;
+  const radius = 83_500_000;
+  const speed = Math.sqrt(parent.record.properties.mu! / radius);
+  const path = createOrbitPath({
+    scenario: loaded,
+    body,
+    cache: new PathCache(12),
+    stateAt: (objectIdValue, centralBodyId, target, frame) => {
+      assert.equal(objectIdValue, AMALTHEA_ID);
+      assert.equal(centralBodyId, JUPITER_ID);
+      return propagationState({
+        position: { x: meters(radius), y: meters(0), z: meters(0) },
+        velocity: { x: metersPerSecond(0), y: metersPerSecond(speed), z: metersPerSecond(0) },
+        epoch: target,
+        referenceFrame: frame,
+      });
+    },
+  });
+  assert.ok(path !== undefined);
+  assert.equal(path!.sampleCount, 128);
+  assert.equal(path!.closedReferenceOrbit, true);
+  assert.ok(path!.interval.end.seconds > path!.interval.start.seconds);
 });

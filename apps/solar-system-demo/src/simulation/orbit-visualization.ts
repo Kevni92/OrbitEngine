@@ -11,6 +11,8 @@ import type { OrbitVisualizationDefinition } from "../scenario/scenario-data.js"
 import { PathCache, type OrbitPath } from "./path-sampling.js";
 
 export const ORBIT_CACHE_ENTRIES = 12;
+export const DEFAULT_ORBIT_SAMPLE_COUNT = 128;
+export const DEFAULT_ORBIT_SPAN_SECONDS = 31_557_600;
 
 export type OrbitStateAt = (
   objectId: ObjectId,
@@ -49,10 +51,53 @@ export function orbitInterval(
   return { start, end };
 }
 
+function estimateBoundOrbitPeriodSeconds(
+  state: PropagationState,
+  centralMu: number,
+): number | undefined {
+  const radius = Math.hypot(state.position.x, state.position.y, state.position.z);
+  const speedSquared = state.velocity.x ** 2 + state.velocity.y ** 2 + state.velocity.z ** 2;
+  if (!Number.isFinite(radius) || radius <= 0 || !Number.isFinite(speedSquared) || centralMu <= 0) return undefined;
+  const specificEnergy = speedSquared / 2 - centralMu / radius;
+  if (!Number.isFinite(specificEnergy) || specificEnergy >= 0) return undefined;
+  const semiMajorAxis = -centralMu / (2 * specificEnergy);
+  const period = 2 * Math.PI * Math.sqrt(semiMajorAxis ** 3 / centralMu);
+  if (!Number.isFinite(period) || period < 1 || period > Number.MAX_SAFE_INTEGER) return undefined;
+  return Math.max(1, Math.round(period));
+}
+
+function fallbackOrbitVisualization(request: OrbitVisualizationRequest, centralBodyId: ObjectId): OrbitVisualizationDefinition {
+  const centralBody = request.scenario.bodyById.get(centralBodyId);
+  const centralMu = centralBody?.record.properties.mu;
+  if (centralMu !== undefined) {
+    const anchorInstant = request.anchorInstant ?? request.scenario.validity.start;
+    const state = request.stateAt(
+      request.body.definition.id,
+      centralBodyId,
+      anchorInstant,
+      request.scenario.rootFrame,
+    );
+    const period = estimateBoundOrbitPeriodSeconds(state, centralMu);
+    if (period !== undefined) {
+      return Object.freeze({
+        sampleSpanSeconds: period,
+        sampleCount: DEFAULT_ORBIT_SAMPLE_COUNT,
+        closedReferenceOrbit: true,
+      });
+    }
+  }
+  return Object.freeze({
+    sampleSpanSeconds: DEFAULT_ORBIT_SPAN_SECONDS,
+    sampleCount: DEFAULT_ORBIT_SAMPLE_COUNT,
+    closedReferenceOrbit: false,
+  });
+}
+
 export function createOrbitPath(request: OrbitVisualizationRequest): OrbitPath | undefined {
   const centralBodyId = request.body.definition.centralBody;
-  const visualization = request.body.definition.propagation.orbitVisualization;
-  if (centralBodyId === undefined || visualization === undefined) return undefined;
+  if (centralBodyId === undefined) return undefined;
+  const visualization = request.body.definition.propagation.orbitVisualization
+    ?? fallbackOrbitVisualization(request, centralBodyId);
   const interval = orbitInterval(request.scenario, visualization, request.anchorInstant);
   return request.cache.getOrCreate({
     objectId: request.body.definition.id,

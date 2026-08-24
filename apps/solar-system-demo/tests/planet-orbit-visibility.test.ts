@@ -105,7 +105,7 @@ test("resolved child orbits keep their parent anchor while presentation radius c
   const orbitGroup = root.getObjectByName(`Orbit ${EUROPA_ID}`);
   assert.ok(orbitGroup instanceof THREE.Group);
   assert.equal(orbitGroup.visible, true);
-  assert.deepEqual(orbitGroup.position.toArray(), jupiterPosition.toArray());
+  assert.deepEqual(orbitGroup.position.toArray(), [0, 0, 0]);
   const orbitLine = orbitGroup.children[0] as THREE.LineLoop;
   const originalGeometry = Array.from((orbitLine.geometry.getAttribute("position") as THREE.BufferAttribute).array);
   const selected = visual.orbitGuideDiagnostics().find((orbit) => orbit.objectId === EUROPA_ID)!;
@@ -131,11 +131,12 @@ test("resolved child orbits keep their parent anchor while presentation radius c
     : state);
   visual.update(translatedStates);
   const movedJupiterPosition = visual.positionFor(JUPITER_ID)!;
-  assert.deepEqual(orbitGroup.position.toArray(), movedJupiterPosition.toArray());
-  assert.deepEqual(
-    Array.from((orbitLine.geometry.getAttribute("position") as THREE.BufferAttribute).array),
-    originalGeometry,
-  );
+  assert.deepEqual(orbitGroup.position.toArray(), [0, 0, 0]);
+  const movedGeometry = Array.from((orbitLine.geometry.getAttribute("position") as THREE.BufferAttribute).array);
+  const delta = movedJupiterPosition.clone().sub(jupiterPosition);
+  const originalPoint = new THREE.Vector3(originalGeometry[0]!, originalGeometry[1]!, originalGeometry[2]!);
+  const movedPoint = new THREE.Vector3(movedGeometry[0]!, movedGeometry[1]!, movedGeometry[2]!);
+  assert.ok(movedPoint.distanceTo(originalPoint.add(delta)) < 1e-4);
 
   visual.setSelected(undefined);
   assert.equal(visual.orbitGuideDiagnostics().find((orbit) => orbit.objectId === EUROPA_ID)?.opacity, 0.3);

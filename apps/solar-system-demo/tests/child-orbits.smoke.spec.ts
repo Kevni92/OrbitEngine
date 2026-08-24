@@ -55,7 +55,7 @@ test("resolved planetary child orbits are local, selectable, and parent-anchored
   await expect(page.locator("#rendering-status")).toHaveAttribute("data-state", "ready");
 
   let diagnostics = await focus(page, "1006");
-  for (const objectId of ["1201", "1202", "1203", "1204"]) {
+  for (const objectId of ["1201", "1202", "1203", "1204", "1205"]) {
     const childOrbit = orbit(diagnostics, objectId);
     expect(childOrbit.kind).toBe("child");
     expect(childOrbit.role).toBe("local-system");
@@ -101,7 +101,30 @@ test("resolved planetary child orbits are local, selectable, and parent-anchored
   expect(orbit(diagnostics, "1203").opacity).toBe(1);
 
   diagnostics = await focus(page, "1008");
-  for (const objectId of ["1201", "1202", "1203", "1204"]) {
+  for (const objectId of ["1201", "1202", "1203", "1204", "1205"]) {
     expect(orbit(diagnostics, objectId).visible, `Jupiter child orbit ${objectId}`).toBe(false);
   }
+
+  diagnostics = await focus(page, "1005");
+  for (const objectId of ["1101", "1102"]) {
+    expect(orbit(diagnostics, objectId).kind).toBe("child");
+    expect(orbit(diagnostics, objectId).visible, `Mars child orbit ${objectId}`).toBe(true);
+  }
+
+  diagnostics = await focus(page, "1007");
+  for (const objectId of ["1301", "1302", "1303", "1304", "1305", "1306", "1307", "1308", "1309"]) {
+    expect(orbit(diagnostics, objectId).kind).toBe("child");
+    expect(orbit(diagnostics, objectId).visible, `Saturn child orbit ${objectId}`).toBe(true);
+  }
+
+  await page.selectOption("#selected-select", "3001");
+  await expect.poll(async () => (await readDiagnostics(page))?.selectedId).toBe("3001");
+  diagnostics = (await readDiagnostics(page))!;
+  expect(orbit(diagnostics, "3001").visible).toBe(true);
+  expect(orbit(diagnostics, "3001").role).toBe("selected");
+
+  await page.selectOption("#selected-select", "1000");
+  await expect.poll(async () => (await readDiagnostics(page))?.selectedId).toBe("1000");
+  diagnostics = (await readDiagnostics(page))!;
+  expect(diagnostics.orbits.some((candidate) => candidate.objectId === "3001")).toBe(false);
 });

@@ -209,6 +209,7 @@ export class SolarSystemScene {
       this.#representations.delete(objectId);
       this.#states.delete(objectId);
       this.#positions.delete(objectId);
+      this.#orbitRenderer.clearPath(objectId);
       this.#removeRuntimeSphere(objectId);
       this.#atmosphereShells.remove(objectId);
     }

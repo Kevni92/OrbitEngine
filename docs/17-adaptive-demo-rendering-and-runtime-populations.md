@@ -357,9 +357,11 @@ The UI/catalog remains capable of selecting a body that is currently hidden or v
 
 Orbit/path rendering follows the same context policy:
 
-- hidden bodies do not receive background orbit/path rendering merely because they are registered;
+- primary planet orbit guides remain eligible in the overview, including when the planet body itself is represented as a marker;
+- direct non-asteroid child paths may be sampled from the authoritative parent-relative state even when optional visualization metadata is absent, but remain hidden until the parent local system is resolved;
 - selected/focused orbit paths may override normal suppression;
-- path sampling remains bounded/lazy;
+- asteroid paths are sampled only for the selected asteroid and are otherwise omitted;
+- path sampling remains bounded, and time changes resample paths in bounded work units;
 - adding thousands of asteroids must not automatically create thousands of orbit line geometries.
 
 ## Large asteroid rendering
@@ -519,7 +521,9 @@ Implementation must test at least:
 - same seed/settings produce the same generated initial conditions;
 - runtime asteroid authoritative motion comes from OrbitEngine state queries;
 - large unresolved runtime populations use batched rendering rather than one permanent mesh/geometry/material per body;
-- hidden objects do not automatically receive orbit paths;
+- hidden objects do not automatically receive visible background orbit paths;
+- planet paths remain eligible while non-asteroid child paths follow the resolved-parent policy;
+- unselected asteroids do not receive orbit paths;
 - switching `adaptive -> physical` changes existing marker visual sizes from the adaptive marker size to projected physical diameters without changing authoritative state or requiring marker-membership rebuild;
 - switching `physical -> adaptive` restores the adaptive marker size immediately;
 - distant major planets and locally eligible moons obey the same selected radius mode;
