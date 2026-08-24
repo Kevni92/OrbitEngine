@@ -37,6 +37,11 @@ std::uint64_t provider_identity(const Provider& provider) noexcept {
     hash = mix(hash, dependency.id);
     hash = mix(hash, dependency.revision);
   }
+  for (const auto& boundary : provider.definition.hard_boundaries) {
+    hash = mix(hash, static_cast<std::uint64_t>(boundary.instant.seconds));
+    hash = mix(hash, boundary.instant.nanoseconds);
+    hash = mix(hash, boundary.identity);
+  }
   return hash;
 }
 
@@ -142,7 +147,9 @@ ProviderRuntime::ProviderRuntime(std::vector<Provider> providers) : providers_(s
   std::set<std::uint32_t> orders;
   std::uint64_t identity = 1469598103934665603ULL;
   for (const auto& provider : providers_) {
-    if (!provider.evaluate || !provider.definition.validity.valid() || !orders.insert(provider.definition.order).second) {
+    if ((!provider.evaluate && !provider.evaluate_combined)
+        || !provider.definition.validity.valid()
+        || !orders.insert(provider.definition.order).second) {
       construction_failure_ = Failure{FailureCode::invalid_configuration, "force providers require unique order, validity, and evaluator"};
       return;
     }
@@ -162,6 +169,7 @@ std::vector<numerical::HardBoundary> ProviderRuntime::hard_boundaries() const {
   for (const auto& provider : providers_) {
     result.push_back(numerical::HardBoundary{provider.definition.validity.start, provider.definition.configuration_identity});
     if (provider.definition.validity.end.has_value()) result.push_back(numerical::HardBoundary{*provider.definition.validity.end, provider.definition.configuration_identity});
+    result.insert(result.end(), provider.definition.hard_boundaries.begin(), provider.definition.hard_boundaries.end());
   }
   std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) { return time::compare(left.instant, right.instant) < 0; });
   return result;
@@ -173,22 +181,59 @@ std::vector<Dependency> ProviderRuntime::dependencies() const {
   return result;
 }
 
-bool ProviderRuntime::evaluate(const ForceEvaluationContext& context, frame::Vec3& acceleration, Failure& failure) const noexcept {
+bool ProviderRuntime::evaluate(
+  const ForceEvaluationContext& context,
+  frame::Vec3& acceleration,
+  double& mass_rate_kilograms_per_second,
+  Failure& failure
+) const noexcept {
   if (!valid_) { failure = construction_failure_; return false; }
   if (context.target_id == 0 || !finite_vec(context.target_position) || !std::isfinite(context.sample_time.offset_seconds) || context.sample_time.offset_seconds < 0.0) { failure = Failure{FailureCode::invalid_configuration, "force evaluation context is invalid"}; return false; }
   if (context.target_mass.has_value() && (!std::isfinite(*context.target_mass) || *context.target_mass < 0.0)) { failure = Failure{FailureCode::invalid_configuration, "target mass is invalid"}; return false; }
   acceleration = frame::Vec3{0.0, 0.0, 0.0};
+  mass_rate_kilograms_per_second = 0.0;
   for (const auto& provider : providers_) {
     if (!provider.definition.validity.contains(context.sample_time)) { failure = Failure{FailureCode::provider_out_of_validity, "force provider is outside its exact validity interval"}; return false; }
     if (provider.definition.requires_mass && (!context.target_mass.has_value() || *context.target_mass <= 0.0)) { failure = Failure{FailureCode::missing_dependency, "force provider requires strictly positive target mass"}; return false; }
     frame::Vec3 contribution{};
-    if (!provider.evaluate(context, contribution, failure)) { if (failure.code == FailureCode::none) failure = Failure{FailureCode::non_finite_output, "force provider evaluation failed"}; return false; }
+    double contribution_rate = 0.0;
+    if (provider.evaluate_combined) {
+      if (!provider.evaluate_combined(context, contribution, contribution_rate, failure)) {
+        if (failure.code == FailureCode::none) failure = Failure{FailureCode::non_finite_output, "force provider evaluation failed"};
+        return false;
+      }
+    } else if (!provider.evaluate(context, contribution, failure)) {
+      if (failure.code == FailureCode::none) failure = Failure{FailureCode::non_finite_output, "force provider evaluation failed"};
+      return false;
+    }
     if (!finite_vec(contribution)) { failure = Failure{FailureCode::non_finite_output, "force provider returned non-finite acceleration"}; return false; }
     acceleration.x += contribution.x; acceleration.y += contribution.y; acceleration.z += contribution.z;
     if (!finite_vec(acceleration)) { failure = Failure{FailureCode::non_finite_output, "force accumulation is non-finite"}; return false; }
+    if (provider.evaluate_combined) {
+      if (!std::isfinite(contribution_rate)) { failure = Failure{FailureCode::non_finite_output, "force provider returned non-finite mass rate"}; return false; }
+      mass_rate_kilograms_per_second += contribution_rate;
+      if (!std::isfinite(mass_rate_kilograms_per_second)) { failure = Failure{FailureCode::non_finite_output, "mass-flow accumulation is non-finite"}; return false; }
+    } else if (provider.evaluate_mass_rate) {
+      if (!provider.evaluate_mass_rate(context, contribution_rate, failure)) {
+        if (failure.code == FailureCode::none) failure = Failure{FailureCode::non_finite_output, "mass-flow provider evaluation failed"};
+        return false;
+      }
+      if (!std::isfinite(contribution_rate)) { failure = Failure{FailureCode::non_finite_output, "mass-flow provider returned non-finite rate"}; return false; }
+      mass_rate_kilograms_per_second += contribution_rate;
+      if (!std::isfinite(mass_rate_kilograms_per_second)) { failure = Failure{FailureCode::non_finite_output, "mass-flow accumulation is non-finite"}; return false; }
+    }
   }
   failure = {};
   return true;
+}
+
+bool ProviderRuntime::evaluate(
+  const ForceEvaluationContext& context,
+  frame::Vec3& acceleration,
+  Failure& failure
+) const noexcept {
+  double ignored_mass_rate = 0.0;
+  return evaluate(context, acceleration, ignored_mass_rate, failure);
 }
 
 }  // namespace orbit_engine::force

@@ -23,6 +23,9 @@ enum class FailureCode : std::uint16_t {
   invalid_gravity_strength = 5,
   singular_gravity_geometry = 6,
   non_finite_output = 7,
+  invalid_direction = 8,
+  invalid_attitude = 9,
+  minimum_mass_reached = 10,
 };
 
 struct Failure {
@@ -55,7 +58,15 @@ struct Dependency {
 enum class ProviderKind : std::uint16_t {
   custom = 1,
   newtonian_gravity = 2,
+  finite_thrust = 3,
 };
+
+using MinimumMassBoundaryFinder = std::function<bool(
+  time::SimulationInstant anchor,
+  double initial_mass_kilograms,
+  std::optional<time::SimulationInstant>& boundary,
+  Failure& failure
+)>;
 
 struct ProviderDefinition {
   ProviderKind kind = ProviderKind::custom;
@@ -64,6 +75,10 @@ struct ProviderDefinition {
   std::vector<Dependency> dependencies;
   bool requires_mass = false;
   std::uint64_t configuration_identity = 0;
+  // Additional exact discontinuities owned by a provider, such as stage
+  // boundaries inside one validity interval.
+  std::vector<numerical::HardBoundary> hard_boundaries;
+  MinimumMassBoundaryFinder minimum_mass_boundary;
 };
 
 struct ForceEvaluationContext {
@@ -71,6 +86,7 @@ struct ForceEvaluationContext {
   numerical::NumericalSampleTime sample_time{};
   frame::Vec3 target_position{};
   std::optional<double> target_mass;
+  bool left_limit = false;
 };
 
 using ProviderEvaluator = std::function<bool(
@@ -79,9 +95,24 @@ using ProviderEvaluator = std::function<bool(
   Failure& failure
 )>;
 
+using MassRateEvaluator = std::function<bool(
+  const ForceEvaluationContext& context,
+  double& mass_rate_kilograms_per_second,
+  Failure& failure
+)>;
+
+using CombinedEvaluator = std::function<bool(
+  const ForceEvaluationContext& context,
+  frame::Vec3& acceleration,
+  double& mass_rate_kilograms_per_second,
+  Failure& failure
+)>;
+
 struct Provider {
   ProviderDefinition definition;
   ProviderEvaluator evaluate;
+  MassRateEvaluator evaluate_mass_rate;
+  CombinedEvaluator evaluate_combined;
 };
 
 struct GravitySource {
@@ -116,6 +147,14 @@ public:
   [[nodiscard]] std::vector<numerical::HardBoundary> hard_boundaries() const;
   [[nodiscard]] std::vector<Dependency> dependencies() const;
 
+  [[nodiscard]] bool evaluate(
+    const ForceEvaluationContext& context,
+    frame::Vec3& acceleration,
+    double& mass_rate_kilograms_per_second,
+    Failure& failure
+  ) const noexcept;
+
+  // Compatibility overload for providers that only contribute acceleration.
   [[nodiscard]] bool evaluate(
     const ForceEvaluationContext& context,
     frame::Vec3& acceleration,

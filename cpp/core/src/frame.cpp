@@ -84,6 +84,11 @@ std::optional<Quaternion> normalize(Quaternion value) noexcept {
   return Quaternion{value.w / norm, value.x / norm, value.y / norm, value.z / norm};
 }
 
+std::optional<Vec3> rotate_vector(Quaternion rotation, Vec3 value) noexcept {
+  if (!is_valid(rotation) || !is_valid(value)) return std::nullopt;
+  return rotate(rotation, value);
+}
+
 bool is_valid(RigidStateTransform value) noexcept {
   return is_valid(value.translation)
     && is_valid(value.origin_velocity)
