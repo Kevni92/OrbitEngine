@@ -6,50 +6,40 @@ This document records the architecture decided by Architecture issue #119. It de
 
 It builds on documents 12–15, 21 and 22. A maneuver is caller-authored physical input; resulting motion remains OrbitEngine authority. Thrust composes with the same numerical force/mass system as gravity and other configured physical forces.
 
+The 2026-08-24 clarification in this document makes the maneuver-to-motion-authority integration contract normative. In particular it defines how future Fidelity requirements are published without early promotion, how successor authorities are constructed from exact handoff state, how thrust/mass-flow configuration reaches numerical and coupled authorities, which mutable structures form one atomic commit, and how failed transitions roll back.
+
 It does not define game propulsion modules, fuel inventories, cargo, crew, missions, automatic guidance/trajectory optimization, atmospheric aerodynamics, rotational dynamics, or renderer/UI controls.
 
-## Decisions at a glance
+## Normative ownership and invariants
 
-- V1 has two maneuver kinds: exact-time `ImpulseManeuver` and exact-interval `FiniteBurnManeuver`.
-- Every maneuver has stable non-reused engine-scoped `ManeuverId`, revision, object identity and lifecycle.
-- Finite burns use bounded piecewise-constant stages; arbitrary JavaScript callbacks or unbounded continuous command functions are not authoritative inputs.
-- A v1 finite-burn program has at most 64 stages. Stages are exact half-open intervals and may change force, throttle, mass-flow specification and direction only at exact stage boundaries.
-- Overlapping finite burns for one object are rejected in v1. Multiple impulses at the same exact instant are allowed and applied in ascending `ManeuverId` order.
-- Thrust accepts explicit force plus mass flow, force plus effective exhaust velocity, or force plus specific impulse. All variants normalize to SI force and mass-flow rate in the portable core.
-- Specific impulse uses standard gravity `g0 = 9.80665 m/s²` and `v_e = Isp * g0`; mass flow is `|F| / v_e` for positive thrust.
-- Throttle is a dimensionless scalar in `[0,1]` applied to both force and associated mass flow.
-- V1 thrust direction is either a unit vector in an explicit reference frame or a unit vector in the object's prescribed body frame. Velocity-relative/LVLH/target-pointing guidance is deferred to a planner/controller layer.
-- Body-frame thrust requires an exact-time attitude/orientation source compatible with the translational numerical sampler. Missing/invalid attitude is an explicit burn failure.
-- Rotational dynamics are not required in v1; attitude may be prescribed by a separate physical authority/controller.
-- The numerical state owns one physical mass history while thrusting. No separate game-fuel inventory participates in equations of motion.
-- Burn execution is truncated at the latest representable exact nanosecond at which integrated mass remains at or above configured `minimumMassKilograms`; it never clamps through an unphysical negative/too-low mass state.
-- Burn start/end/stage boundaries and impulses are exact scheduled physical work under document 22.
-- Adding/updating/cancelling maneuvers is future-only relative to committed mutable engine time and invalidates derived future propagation/predictions from the earliest affected instant.
-- A finite burn requests numerical fidelity before start, creates/continues a numerical authority through the burn, then normal Fidelity Manager demotion rules decide the post-burn ballistic authority.
-- Any thrust/impulse state change permanently diverges an object that was following a reference ephemeris.
+- `ManeuverManager` owns maneuver intent, identity, revision, schedule and lifecycle. It does not choose a propagation model and does not construct or install a successor `MotionAuthority` directly.
+- The Fidelity/model-switch layer owns selection of the cheapest configured authority that satisfies the effective physical requirements.
+- A state-changing maneuver supplies an exact canonical handoff plus physical capability/configuration requirements to that layer; it never bypasses it with a private maneuver propagator.
+- A successor authority is constructed from the exact handoff state at the transition instant. A prebuilt model anchored at another instant is not a valid substitute.
+- Numerical thrust and mass flow are typed portable force/mass configuration. No arbitrary JavaScript derivative callback is authoritative.
+- One committed instant has one coherent authority, registry record, query binding, Fidelity state, reference status and physical mass history. Mixed partially updated views are forbidden.
+- Camera, renderer, LOD, UI and game state never participate in maneuver physics or authority selection.
 
 ## Maneuver identity and lifecycle
 
-Every maneuver carries:
+V1 has two maneuver kinds:
+
+- exact-time `ImpulseManeuver`;
+- exact-interval `FiniteBurnManeuver`.
+
+Every maneuver has a stable non-reused engine-scoped `ManeuverId`, revision, object identity and lifecycle:
 
 ```text
-ManeuverId: stable engine-scoped u64
-revision: u64
-objectId: ObjectId
-kind: impulse | finiteBurn
-created/config revision
-lifecycle: scheduled | active | completed | cancelled | failed | stale
+scheduled | active | completed | cancelled | failed | stale
 ```
 
-`ManeuverId` is allocated deterministically on committed insertion and is never reused during an engine instance/simulation lineage.
+Updating a future maneuver retains its ID and increments revision. Completed/cancelled IDs are not recycled. Overlapping finite burns for one object are rejected in v1. Multiple impulses at the same exact instant are allowed and execute in ascending `ManeuverId` order.
 
-Updating a future maneuver retains its ID and increments revision. Replacing an entire program may reuse unchanged maneuver identities only when the caller explicitly identifies them; otherwise new IDs are allocated.
-
-Completed/cancelled IDs are not recycled.
+Ordinary insert/update/cancel operations are future-only relative to committed `currentTime`. Rewind/history rewrite is outside v1.
 
 ## Exact impulse maneuver
 
-An impulse is physical delta velocity at exact `SimulationInstant T`:
+An impulse is a physical delta velocity at exact `SimulationInstant T`:
 
 ```text
 ImpulseManeuver
@@ -59,27 +49,15 @@ ImpulseManeuver
   frame: FrameId
 ```
 
-The delta-v vector is transformed geometrically into the current motion handoff frame at the same exact instant before application.
+At `T`, the vector is transformed geometrically into the canonical handoff frame. Position is preserved. Same-time impulses are accumulated in ascending `ManeuverId` order in the `physicalChange` phase.
 
-At `T` the pre-impulse canonical state is evaluated, position is preserved, velocity changes by the transformed delta-v, and the successor authority starts at `T` under document 15.
+The resulting post-impulse state is not installed directly. It becomes the handoff input to the ordinary authority-transition path defined below. The selected successor may have the same model kind as the predecessor, but it must be freshly anchored/configured from the post-impulse state. A reference-ephemeris candidate is ineligible after an impulse changes state.
 
-Multiple impulses for the same object at `T` are applied in ascending `ManeuverId`; because vector addition is mathematically commutative but floating arithmetic is not perfectly associative, the explicit order is authoritative for native/WASM discrete parity.
+Impulses do not consume mass implicitly.
 
-Impulses do not consume mass implicitly. A caller that needs an impulsive approximation with mass change must express a separate exact-time physical mass update through a future explicitly designed/available physical-property transaction rather than an undocumented rocket-equation side effect.
+## Finite-burn program and stages
 
-## Finite burn model
-
-### Program and stages
-
-A finite burn is an exact non-empty interval `[start,end)` containing 1–64 ordered, contiguous or explicitly gapped piecewise-constant thrust stages. Gaps within one declared burn are represented as zero-thrust stages or, preferably, separate burns/coast intervals; overlapping stages are invalid.
-
-Each stage has exact start/end instants and normalized physical configuration. Stage boundaries are discontinuity/event boundaries for numerical integration.
-
-V1 rejects two active finite-burn intervals for the same object if their open execution intervals overlap. This avoids ambiguous multiple thrust authorities and vector-composition/order semantics. A caller that wants combined engines supplies their net physical force/mass-flow as one stage.
-
-### Normalized stage
-
-Conceptually:
+A finite burn is a non-empty exact interval `[start,end)` with 1–64 ordered piecewise-constant stages. Each stage has exact start/end instants and normalized physical configuration:
 
 ```text
 FiniteBurnStage
@@ -90,13 +68,15 @@ FiniteBurnStage
   massFlowSpecification
 ```
 
-The effective force magnitude is `forceMagnitudeNewtons * throttle`.
+Stage boundaries are hard numerical/event boundaries. Numerical integration may not step across them.
 
-All scalar values must be finite. Force is non-negative. A zero-force stage has zero thrust and, for derived mass-flow variants, zero derived propellant flow.
+Throttle scales both effective thrust and associated mass flow. Force is non-negative and all scalar inputs are finite. Zero-force/zero-flow stages are allowed and do not by themselves constitute physical divergence.
 
-## Thrust direction
+## Thrust direction and attitude
 
-### Reference-frame vector
+V1 supports two primitive direction forms.
+
+### Reference-frame direction
 
 ```text
 ReferenceFrameDirection
@@ -104,11 +84,9 @@ ReferenceFrameDirection
   unitVector
 ```
 
-The vector is normalized/validated and transformed to the numerical integration frame at each force evaluation time using the same-epoch frame transform contract from document 14.
+The vector is transformed to the active numerical integration frame at every `NumericalSampleTime` using document-14 same-epoch transforms.
 
-The frame/provider must be valid for the entire stage or the burn fails at the exact first invalid boundary/sampling point according to the numerical transaction contract.
-
-### Body-frame vector
+### Body-frame direction
 
 ```text
 BodyFrameDirection
@@ -116,204 +94,268 @@ BodyFrameDirection
   attitudeSourceId/revision
 ```
 
-The body vector is transformed through the object's prescribed attitude at each numerical evaluation time.
+The translational integrator samples the prescribed attitude at the same numerical time used for force evaluation. Missing, stale or invalid attitude is an explicit execution failure. Rotational dynamics are not implied by body-frame thrust.
 
-The attitude source provides orientation at `NumericalSampleTime` and has deterministic revision/validity identity. Its quaternion/frame convention follows document 14/15 orientation contracts. The translational integrator samples attitude at the same numerical time used for force evaluation.
+Velocity-relative, LVLH, target-pointing and guidance laws remain planner/controller responsibilities and are not hidden integrator callbacks.
 
-V1 does not solve rotational dynamics merely because body-frame thrust exists. A separate physical attitude authority/controller may prescribe orientation and angular velocity. If no valid orientation exists, the stage is invalid; the engine never substitutes renderer/camera orientation.
+## Engine performance and mass flow
 
-### Deferred guidance frames
+Public physical input supports three explicit variants, normalized to SI in the portable core:
 
-Velocity-relative prograde/retrograde, LVLH, radial/normal, target-pointing, steering laws, autopilot feedback and trajectory guidance are not primitive v1 thrust-direction kinds. Higher-level planners/controllers can resolve those concepts to explicit time-staged physical directions/attitude sources.
+1. force + direct non-negative mass-flow rate;
+2. force + positive effective exhaust velocity;
+3. force + positive specific impulse.
 
-This prevents guidance policy from becoming hidden integrator behavior.
-
-## Engine-performance and mass-flow input
-
-The public physical command supports three explicit variants that normalize in the portable core:
-
-### Direct mass flow
-
-```text
-forceMagnitudeNewtons
-massFlowKilogramsPerSecond
-```
-
-Mass flow is non-negative and denotes mass consumed per second. Effective mass derivative under throttle is:
-
-```text
-dm/dt = -massFlow * throttle
-```
-
-### Effective exhaust velocity
-
-```text
-forceMagnitudeNewtons
-exhaustVelocityMetersPerSecond > 0
-```
-
-For positive effective force:
-
-```text
-massFlow = forceMagnitude / exhaustVelocity
-```
-
-Throttle scales both force and the derived flow.
-
-### Specific impulse
-
-```text
-forceMagnitudeNewtons
-specificImpulseSeconds > 0
-```
-
-Using exact conventional standard gravity for normalization:
+Specific impulse uses:
 
 ```text
 g0 = 9.80665 m/s²
 ve = Isp * g0
-massFlow = forceMagnitude / ve
+massFlow = |F| / ve
 ```
 
-The engine accepts these as physical parameterizations only. It does not know engine modules, tank names, fuel types, tech levels or inventory units.
-
-Invalid combinations (negative flow, non-positive exhaust velocity/Isp, NaN/infinite values) are rejected before scheduling.
+The engine models physical mass only, not fuel-tank/game inventories.
 
 ## Physical mass authority
 
-### One mass history
+While finite thrust is active, numerical propagation owns one integrated physical mass history. Initial burn mass is the authoritative physical mass at the exact numerical-handoff instant.
 
-During numerical finite-thrust propagation, mass is part of the integrated state as defined by document 21. The current canonical physical mass at a given executed instant is therefore the mass state of the authoritative motion segment/configuration.
+A finite burn may declare positive `minimumMassKilograms`. The engine truncates execution at the latest exact nanosecond for which integrated mass remains at or above that minimum within the owned mass tolerance. It never clamps through an invalid mass state.
 
-There is no second independently writable 'fuel mass' inside OrbitEngine.
+At every stage boundary, burn end or minimum-mass termination, the exact carried mass is part of the canonical successor handoff. Post-burn propagation continues from that mass; no earlier registry/game value may overwrite it.
 
-Initial burn mass is the authoritative physical mass at exact burn start. If unavailable when the force model needs mass-dependent acceleration, the burn cannot start.
+## Portable numerical force configuration
 
-### Minimum mass boundary
+`NumericalMotion` and coupled numerical authorities must accept an immutable, backend-neutral typed force/mass configuration rather than requiring callers to manufacture a special maneuver-specific model outside the numerical architecture.
 
-A finite burn configuration declares a finite positive:
-
-```text
-minimumMassKilograms
-```
-
-The engine never allows the integrated physical mass to fall below it.
-
-For a constant-flow stage starting at exact `T0` with mass `m0` and consumption rate `q > 0`, the continuous depletion limit is:
+Conceptually the configuration contains:
 
 ```text
-tLimit = T0 + (m0 - minimumMass) / q
+NumericalForceConfiguration
+  ordered deterministic physical providers
+  provider/configuration revisions
+  frame/source dependencies
+  integratedMassConfiguration?
 ```
 
-The executable end is the latest exact nanosecond-grid `SimulationInstant <= tLimit` for which evaluated mass is not below the minimum within the mass tolerance. If the requested stage continues beyond that instant, execution truncates there with a deterministic `minimumMassReached` result and schedules the exact stage/burn termination transaction.
-
-No negative mass, hidden clamp, or extra fractional-nanosecond burn is permitted. The remaining difference from the exact continuous limit is bounded by at most one nanosecond of configured flow plus numerical mass tolerance and is reported diagnostically.
-
-Mass changes increment relevant physical/motion revisions at committed execution boundaries/checkpoints as defined by implementation, and downstream gravity/encounter/collision/trajectory dependencies use the authoritative revision lineage rather than a parallel gameplay mass value.
-
-## Force composition
-
-Finite thrust is a deterministic force provider in the document-21 numerical system. At every numerical sample:
+A finite-burn stage contributes one typed maneuver-thrust provider configuration containing at least:
 
 ```text
-F_total = F_gravity + F_thrust + other configured physical forces
+ManeuverThrustProviderConfiguration
+  maneuverId/revision
+  stageIndex
+  exact stage interval
+  normalized effective thrust
+  direction + frame/attitude dependencies
+  normalized mass-flow semantics
+  minimumMassKilograms?
+  provider/configuration revision
 ```
 
-or equivalent acceleration accumulation using authoritative current mass.
+The configured gravity and other physical providers are preserved and composed with thrust. Adding thrust must never replace or disable gravity implicitly.
 
-Thrust never disables configured gravitational sources. In a coupled group, member-specific thrust is an additional external force contribution for the thrusting member while mutual gravity remains coupled.
+For a coupled authority, thrust is member-specific external force configuration for the thrusting member while mutual gravity remains group-owned. The coupled successor is prepared/committed at group scope when group membership or authority requires it; no member may be partially switched out of the group.
 
-Provider evaluation order remains the deterministic order defined by document 21.
+Existing convenience fields such as a single gravity source or constant acceleration may remain compatibility inputs, but they must normalize into the same deterministic force-configuration identity used for authority construction and parity.
 
-## Exact boundary and event semantics
+## Fidelity requirement publication without early promotion
 
-The following are exact scheduled work under document 22:
+Scheduling a future finite burn publishes its Fidelity intent immediately, but publication and activation are distinct operations.
 
-- impulse instant;
-- finite-burn start;
-- every thrust-stage start/end;
-- finite-burn requested end;
-- dynamically determined minimum-mass truncation boundary;
-- cancellation/update effective boundary.
-
-Numerical integration is never allowed to step across a known thrust discontinuity without ending exactly at that boundary.
-
-At a finite-burn start, authority transition happens in the `authorityTransition` phase after any same-time physical changes/impulses that precede it under the canonical phase/order contract. Stage activation/deactivation is represented as an exact force-configuration boundary rather than a render-frame condition.
-
-At a burn end, the canonical post-burn state (including mass) remains physical truth and becomes the handoff for subsequent ballistic/numerical/analytical propagation.
-
-## Fidelity and authority transitions
-
-A scheduled finite burn publishes a `FidelityRequirement` early enough that a numerical authority satisfying thrust and mass integration is active at exact burn start.
-
-Typical transition:
+The maneuver-owned signal is keyed by maneuver identity/revision and contains, for the interval that actually requires thrust/mass integration:
 
 ```text
-reference/analytical ballistic
-  -> exact canonical promotion at/before burn start
-  -> numerical finite-thrust segment(s)
-  -> numerical ballistic handoff at burn end
-  -> optional later analytical demotion after document-22 representability/error validation
+requiresNumericalIntegration = true
+requiresContinuousThrust = true
+validFrom = exact first stage instant that can change thrust/mass state
+reason includes maneuver identity/revision
 ```
 
-The burn subsystem does not directly choose a specific propagator beyond requiring numerical integration/continuous thrust semantics. Model selection remains the Fidelity Manager's job.
+A future signal is stored and observable before `validFrom`, but it does not participate in the effective requirement and must not trigger an authority switch before `validFrom` solely because it was registered early.
 
-An impulse can be applied to any authority that supports an exact state handoff; the resulting successor must represent the new velocity. If the old authority was a reference ephemeris, the object becomes permanently diverged.
+The Fidelity Manager therefore evaluates requirements against the query/transition instant. Signals with `validFrom > now` are future requirements, not active requirements. Their earliest activation is eligible for `nextReevaluation` diagnostics/scheduling.
 
-A finite burn likewise causes permanent reference divergence from the first state-changing thrust instant. Neither post-burn demotion nor later low fidelity may restore the original reference future.
+Burn-start/stage scheduled work guarantees reevaluation at the exact activation instant. If some independent requirement has already promoted the object to numerical authority, the maneuver simply reuses that fact; the maneuver itself still may not cause an earlier switch.
 
-## Editing, cancellation and schedule validation
+At the exact burn end or minimum-mass termination, the continuous-thrust requirement is retired atomically with the thrust-removal handoff. Its removal does not authorize immediate analytical demotion; the engine first commits a numerical ballistic successor and then ordinary Fidelity dwell/hysteresis/representability rules govern any later demotion.
 
-### Future-only mutation
+A finite burn whose leading stages have zero effective thrust and zero effective mass flow does not require premature divergence merely because its lifecycle has started. Numerical/thrust authority activation begins at the first stage that can change authoritative translational or mass state.
 
-V1 maneuver insertion/update/cancellation must have its earliest effective instant strictly later than committed `currentTime`, except when the operation is itself being executed as authorized same-timestamp scheduled work inside the active document-22 transaction.
+## Dynamic authority-candidate construction
 
-Ordinary public calls cannot rewrite maneuver history at or before committed time. Rewind/branching history is a future architecture.
+Static preconstructed `PropagationModel` candidates are insufficient for a state-changing event because numerical/analytical successors must be anchored at the exact post-event state and must include the active force/mass configuration.
 
-### Update/cancel
+The Fidelity/model-switch layer therefore owns a deterministic candidate-construction boundary. An implementation may name it differently, but it must have semantics equivalent to:
 
-Updating a maneuver validates the complete replacement definition before committing. Cancellation increments maneuver/program revision and removes future scheduled work for that generation.
+```text
+AuthorityTransitionRequest
+  objectId
+  instant
+  canonicalHandoffState
+  authoritativeMass?
+  effectiveFidelityRequirement
+  currentAuthoritySnapshot
+  activePhysicalForceConfiguration
+  dependency/revision snapshot
+  reason
 
-The earliest changed instant `Tchange` invalidates affected future:
+AuthorityCandidateFactory(request)
+  -> prepared successor authority/model/configuration
+```
 
-- motion checkpoints/segments whose assumptions cross `Tchange`;
-- encounter predictions;
-- collision predictions;
+The factory is engine-internal/backend-neutral orchestration, not a per-integrator-stage user callback. For numerical candidates it builds a `NumericalMotion`/coupled successor anchored at `request.instant`, carrying the exact handoff state/mass and a deterministic force-configuration revision. For analytical candidates it builds the corresponding exact-state successor under document 15.
+
+Candidate identity must include the resulting configuration revision/digest, not only a broad candidate ID. Changing a burn stage or removing thrust therefore forces an exact reconfiguration even when the selected model kind remains `numerical`.
+
+Candidate preparation is side-effect free with respect to committed simulation state. It may allocate temporary model/configuration objects and validate them, but installation occurs only through the timestamp transaction.
+
+## Exact timestamp transaction for maneuvers
+
+All maneuver-induced state changes use the document-22 timestamp transaction and canonical phase order.
+
+### `boundary`
+
+At exact `T`:
+
+- identify the non-stale maneuver generation;
+- stage lifecycle/stage-index changes;
+- stage activation/deactivation of the maneuver Fidelity signal and typed force configuration;
+- establish hard numerical boundary semantics;
+- do not yet expose a new committed authority.
+
+### `physicalChange`
+
+- evaluate the canonical pre-event state from the committed authority;
+- apply same-time impulses in canonical order to a staged handoff;
+- apply other same-time physical changes in their documented order;
+- do not mutate the live `MotionAuthority` segment list yet.
+
+### `authorityTransition`
+
+Using the final staged handoff from `physicalChange`:
+
+1. evaluate the effective Fidelity requirement at `T`;
+2. select the satisfying authority kind/configuration through the Fidelity Manager;
+3. construct the exact successor through the candidate factory;
+4. include the active maneuver thrust/mass configuration when required;
+5. validate frame/source/attitude/mass dependencies and switch tolerances;
+6. for coupled authority, prepare the complete affected group transition;
+7. stage the new motion segment/configuration and carried physical mass;
+8. stage one-way reference divergence if this instant contains the first actual maneuver state change.
+
+Only after all required work at `T` succeeds may the transaction commit.
+
+### `predictionMaintenance` and `observation`
+
+Invalidation/rebuild work sees the newly committed revision lineage only after the authority transaction is valid. Observation callbacks/diagnostics never see a half-transitioned object.
+
+## Atomic motion commit bundle
+
+The following state is one logical commit unit for a maneuver-induced transition:
+
+- `MotionAuthority` segment/configuration history;
+- `ObjectRegistry` canonical state and `MotionMetadata`;
+- registry `referenceStatus`;
+- `ObjectStateQueries` motion-model binding and propagation-frame binding;
+- Fidelity Manager current authority/candidate/configuration revision, signal state, `since`, quiet/retry state as applicable;
+- authoritative numerical mass state/configuration;
+- coupled-group authority/membership state when applicable;
+- ManeuverManager lifecycle/runtime stage state;
+- generated motion/property/source dependency revisions and invalidation records;
+- same-time scheduled work created/replaced/cancelled by the transaction.
+
+Implementation must introduce a staged/prepare-then-commit path (or an equivalent transaction-owned draft) so methods that currently mutate immediately, such as direct `MotionAuthority.switchModel()`/`applyImpulse()` plus separate registry/query updates, are not invoked as independent commits.
+
+`ObjectRegistry`, `MotionAuthority` and `ObjectStateQueries` must agree on model kind, propagation frame, configuration revision, motion revision and exact segment start immediately after commit. State queries must never observe a new registry revision with an old model binding or the reverse.
+
+For an object that was `followingReference`, `referenceStatus` becomes `diverged` in the same commit as the first state-changing impulse or non-zero thrust/mass-flow effect. Merely scheduling a maneuver, publishing a future Fidelity signal, or preparing/promoting for a zero-effect stage does not by itself mark divergence. `diverged` remains one-way.
+
+## Impulse handoff contract
+
+At impulse instant `T`:
+
+1. evaluate committed pre-impulse state;
+2. transform/apply all same-time delta-v values in deterministic order;
+3. create one post-impulse canonical handoff;
+4. request a successor from the Fidelity/model-switch layer using that handoff;
+5. reject any successor that would resume the original reference ephemeris;
+6. stage authority, registry, query binding and reference divergence together;
+7. commit all or none.
+
+This replaces the architectural assumption that `MotionAuthority.applyImpulse()` receives an already constructed successor model from the maneuver subsystem.
+
+## Finite-burn start and stage-boundary contract
+
+At the first state-changing burn stage:
+
+1. activate the maneuver Fidelity requirement at exact `T`;
+2. derive the final same-time canonical handoff after physical-change ordering;
+3. select/build a numerical or required coupled successor at `T`;
+4. compose existing gravity/physical providers with the active maneuver-thrust provider;
+5. initialize numerical mass from the authoritative handoff mass;
+6. validate attitude/frame/source/provider dependencies;
+7. stage lifecycle, authority, registry/query binding and reference divergence;
+8. commit atomically.
+
+At each later stage boundary, the current numerical state and integrated mass at exact `T` form a new handoff. A new numerical configuration revision is constructed with the next stage's provider configuration. Dense output/checkpoints from the previous configuration may not cross the boundary.
+
+A stage change is therefore an exact numerical reconfiguration even when the broad Fidelity candidate/model kind remains unchanged.
+
+## Burn end and minimum-mass termination
+
+At requested burn end or deterministic minimum-mass termination:
+
+1. evaluate the exact final numerical state and physical mass;
+2. remove the maneuver-thrust provider from the successor force configuration;
+3. construct/validate a numerical ballistic successor anchored at that exact state/mass;
+4. stage completion/truncation lifecycle and retirement of the continuous-thrust Fidelity signal;
+5. commit the ballistic numerical authority and all synchronized registry/query/Fidelity state atomically;
+6. only after commit may ordinary Fidelity logic consider later analytical demotion.
+
+The original pre-burn reference future can never resume after divergence.
+
+## Coupled-authority handoff
+
+If the current/effective authority is coupled or `requiresMutualCoupling` is active, maneuver transitions operate on the coupled authority transaction rather than independently on one member.
+
+Member-specific thrust is injected as an external deterministic provider for that member. Exact handoff state/mass for every affected member and the group configuration must validate before commit. If the required group successor cannot be constructed within configured limits, the complete timestamp transaction fails; no member-level fallback or partial switch is allowed.
+
+## Failure and rollback semantics
+
+Candidate construction/validation is preparatory. Until the timestamp commits, temporary authorities, force configurations, mass states, model bindings and revision values are not authoritative.
+
+If any burn/impulse authority transition fails because of missing attitude, invalid mass, unavailable frame/source, unsupported coupled transition, candidate-construction failure, switch-tolerance failure, backend failure or any other timestamp error:
+
+- discard the prepared successor/draft;
+- leave the prior `MotionAuthority` and segment history unchanged;
+- leave Registry state/motion/reference status unchanged;
+- leave StateQueries bound to the prior committed model;
+- leave authoritative mass unchanged;
+- leave Fidelity installed-authority state unchanged;
+- do not commit maneuver lifecycle activation/completion from the failed instant;
+- do not commit invalidation derived from a transition that never happened;
+- restore/retain due scheduled work according to document-22 transaction rollback;
+- leave committed `currentTime` before the failed timestamp.
+
+The pre-published future maneuver/Fidelity intent remains committed because it existed before attempting `T`; on retry it is evaluated again against the same generation unless the caller edits/cancels it. The failed `advanceTo` result exposes deterministic diagnostics. A failed timestamp must not create a partial authoritative `failed` lifecycle record while simultaneously claiming that timestamp did not commit. Terminal edit/cancel/recovery is a subsequent explicit operation.
+
+Minimum-mass termination is not a rollback failure: once its exact safe boundary is determined it is ordinary scheduled boundary/authority work and commits a valid truncated burn.
+
+## Editing, cancellation and invalidation
+
+Updating/cancelling a future maneuver increments its revision/generation and retires stale scheduled work and future Fidelity intent for the replaced generation. The earliest changed instant invalidates affected future:
+
+- motion segments/checkpoints/dense output;
+- encounter/collision predictions;
 - trajectory plans/search results;
-- numerical dense-output/cache data;
-- scheduled fidelity/refinement work whose dependency digest includes the old maneuver revision.
+- numerical force/configuration caches;
+- scheduled Fidelity/refinement work whose dependency digest contains the old maneuver revision.
 
-Earlier valid historical execution remains immutable.
+Earlier committed history is immutable.
 
-### Overlap and same-time ordering
+## Public API boundary
 
-Finite-burn overlap for one object is rejected during schedule normalization.
-
-Same-time impulses use ascending `ManeuverId`. If an impulse occurs exactly at a burn/stage boundary, document-22 event phases and maneuver source ordering define one canonical sequence; the post-physical-change state is then used by the authority/force transition at that same instant.
-
-## Maneuver execution status
-
-Read-only status contains conceptually:
-
-```text
-ManeuverStatus
-  id/revision/objectId/kind
-  lifecycle
-  scheduled interval/instant
-  current stage index?
-  effective thrust vector/magnitude?
-  effective mass-flow rate?
-  authoritative current mass?
-  resulting motion/config revision?
-  last execution/truncation/failure result?
-  dependency digest
-```
-
-Diagnostics may explain invalid attitude, minimum-mass truncation, invalid configuration, stale dependency or authority-transition failure. They do not attach gameplay success, mission, fuel-item or engine-health semantics.
-
-## Public TypeScript API shape
-
-Backend-neutral operations are equivalent to:
+Backend-neutral public operations remain equivalent to:
 
 ```text
 scheduleImpulse(objectId, definition)
@@ -325,51 +367,75 @@ listManeuvers({objectId, from?, to?, lifecycle?})
 getManeuverStatus(maneuverId)
 ```
 
-Values use exact `SimulationInstant`/`Duration`, SI units, stable IDs and explicit frame identities. The API exposes no C++ force-provider pointers, integrator stages or arbitrary per-step callbacks.
+Public values expose exact time, SI physical values, stable IDs, explicit frames and physical diagnostics. They expose no C++ pointers, force-provider handles, integrator stages or arbitrary per-step callbacks.
+
+The candidate factory, transaction draft and portable provider configuration are internal engine contracts unless a future architecture explicitly promotes a subset to public configuration APIs.
+
+## Diagnostics
+
+Read-only status may expose:
+
+- active/upcoming maneuver and stage;
+- effective thrust vector/magnitude;
+- effective mass-flow rate;
+- authoritative physical mass;
+- resulting motion/configuration revision;
+- current Fidelity requirement/authority;
+- execution/truncation/transition failure diagnostics;
+- dependency digest.
+
+Diagnostics must distinguish an uncommitted failed advance attempt from a committed maneuver lifecycle transition.
 
 ## Native/WASM parity
 
-Native and WASM must match exactly for:
+Native and WASM must match exactly for discrete semantics including:
 
 - maneuver IDs/revisions/order;
 - schedule validation and overlap rejection;
-- normalized performance variant and constants;
-- exact burn/stage/impulse boundaries;
-- minimum-mass truncation instant/result category;
-- same-time impulse ordering;
-- authority transition/divergence decisions;
+- normalized engine-performance variants/constants;
+- exact stage/impulse/burn/minimum-mass boundaries;
+- future-vs-active Fidelity requirement semantics;
+- authority candidate/configuration identity;
+- reference divergence instant;
+- atomic transition success/failure result;
 - cancellation/update invalidation identities;
-- deterministic failure categories.
+- coupled transition membership/outcome.
 
-Continuous propagated state, thrust-frame transforms and integrated mass use model-owned numerical tolerances; unconditional bitwise floating parity is not required.
+Continuous propagated state, frame transforms and integrated mass use feature-owned numerical tolerances rather than unconditional bitwise floating equality.
 
 ## Validation contract
 
 Implementation must cover at least:
 
-1. exact impulse delta-v in an explicit inertial frame;
-2. two same-time impulses with deterministic order;
-3. constant finite thrust without gravity matching analytical acceleration/mass expectations;
-4. constant finite thrust under central gravity against trusted numerical reference;
-5. direct-flow, exhaust-velocity and specific-impulse normalization;
-6. throttle scaling force and flow together;
-7. body-frame thrust under known prescribed attitude;
-8. missing/invalid attitude failure without partial motion mutation;
-9. exact burn/stage start/end boundary behavior;
-10. minimum-mass truncation on the exact nanosecond grid without crossing the limit;
-11. overlapping finite burns rejected;
-12. edit/cancel invalidating future state/predictions and retaining immutable past;
-13. reference -> diverged on impulse/thrust;
-14. post-burn analytical demotion continuity after representability validation;
-15. thrust plus gravity/coupled gravity composition;
-16. native/WASM discrete parity and tolerance-defined continuous parity.
+1. exact inertial-frame impulse delta-v;
+2. deterministic same-time impulse ordering;
+3. future maneuver signal is observable before start but does not promote authority early;
+4. exact promotion/reconfiguration at first state-changing burn stage;
+5. reference -> impulse divergence in the same atomic commit;
+6. reference -> finite-burn divergence only at first actual state change;
+7. constant finite thrust without gravity;
+8. finite thrust under central gravity with gravity preserved;
+9. all three mass-flow normalization variants and throttle scaling;
+10. body-frame thrust with valid prescribed attitude;
+11. missing/stale attitude causing full timestamp rollback;
+12. exact stage-boundary numerical reconfiguration and carried mass;
+13. minimum-mass truncation on the exact ns grid;
+14. burn end producing numerical ballistic successor with final mass;
+15. later analytical demotion only through ordinary Fidelity validation;
+16. Registry/MotionAuthority/StateQueries/Fidelity/referenceStatus revisions agree immediately after commit;
+17. failed successor construction leaves all of those structures at the previous committed snapshot;
+18. coupled member thrust preserves mutual gravity and commits group transition atomically;
+19. edit/cancel invalidates future configuration and retires stale generations;
+20. native/WASM discrete parity plus tolerance-defined continuous parity.
 
 ## Follow-up implementation decomposition
 
-Implementation should be split into:
+Implementation remains split into:
 
-1. maneuver/impulse/finite-stage value types, validation and public APIs;
-2. portable-core thrust performance normalization, direction evaluation and integrated mass-flow force provider;
-3. exact event scheduling, update/cancel and revision invalidation;
-4. numerical/Fidelity/motion-authority handoff around finite burns and impulses;
-5. native/WASM parity plus representative spacecraft thrust/mass regression scenarios.
+1. maneuver/impulse/finite-stage value types, validation and public APIs (#159);
+2. portable-core thrust performance normalization, direction evaluation and integrated mass-flow force provider (#160);
+3. exact event scheduling, update/cancel and revision invalidation (#161);
+4. dynamic successor construction, numerical/coupled force configuration, Fidelity activation and atomic motion-authority handoff around impulses/burns (#162);
+5. native/WASM parity plus representative spacecraft thrust/mass regression scenarios (#163).
+
+Issue #162 explicitly owns the internal API extensions required by this clarification. It must not require the ManeuverManager or application caller to preconstruct a successor propagation model.
