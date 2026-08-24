@@ -427,6 +427,8 @@ export function propagationEvaluationContext(
 export interface PropagationModel {
   readonly declaration: PropagationModelDeclaration;
   evaluate(target: SimulationInstant, context: ReadOnlyPropagationEvaluationContext): PropagationState;
+  /** Optional authoritative physical-mass history owned by this model. */
+  readonly massAt?: (target: SimulationInstant) => Kilograms | undefined;
   /** Optional same-epoch batch hook for authorities that own one shared tape. */
   readonly evaluateBatch?: (
     objectIds: readonly ObjectId[],
@@ -858,6 +860,20 @@ export interface AuthoritySnapshot {
   readonly referenceStatus: "none" | "followingReference" | "diverged";
 }
 
+/**
+ * A prepared authority change.  Preparing evaluates and validates the
+ * successor without mutating the live authority; the caller commits the
+ * resulting snapshot only after the complete timestamp transaction has
+ * validated all of its other participants.
+ */
+export interface AuthorityTransitionDraft {
+  readonly handoff: PropagationState;
+  readonly candidate: PropagationState;
+  readonly segment: MotionSegment;
+  readonly before: AuthoritySnapshot;
+  readonly after: AuthoritySnapshot;
+}
+
 export type SwitchResult =
   | {
     readonly ok: true;
@@ -920,6 +936,99 @@ export class MotionAuthority {
     return evaluateStateAt(segment.model, target, context, outputFrame, resolver);
   }
 
+  massAt(
+    target: SimulationInstant,
+  ): Kilograms | undefined {
+    const segment = selectActiveMotionSegment(this.#segments, target);
+    return segment.model.massAt?.(simulationInstant(target.seconds, target.nanoseconds));
+  }
+
+  /** Prepare a normal model switch without mutating the authority. */
+  prepareSwitchModel(
+    candidateModel: PropagationModel,
+    target: SimulationInstant,
+    options: SwitchOptions,
+  ): AuthorityTransitionDraft {
+    const before = this.snapshot();
+    const oldSegment = selectActiveMotionSegment(before.segments, target);
+    const normalizedTarget = simulationInstant(target.seconds, target.nanoseconds);
+    const context = options.context ?? propagationEvaluationContext({
+      objectId: this.objectId,
+      currentTime: normalizedTarget,
+    });
+    const handoff = evaluatePropagationModel(oldSegment.model, normalizedTarget, context);
+    return this.prepareFromHandoff(candidateModel, normalizedTarget, handoff, options, before);
+  }
+
+  /**
+   * Prepare a successor from an already staged canonical handoff.  This is
+   * used by physical maneuver transactions after impulses or a numerical
+   * segment has produced the exact state at the boundary.
+   */
+  prepareFromHandoff(
+    candidateModel: PropagationModel,
+    target: SimulationInstant,
+    handoff: PropagationState,
+    options: SwitchOptions,
+    baseSnapshot: AuthoritySnapshot = this.snapshot(),
+  ): AuthorityTransitionDraft {
+    const normalizedTarget = simulationInstant(target.seconds, target.nanoseconds);
+    const oldSegment = selectActiveMotionSegment(baseSnapshot.segments, normalizedTarget);
+    const context = options.context ?? propagationEvaluationContext({
+      objectId: this.objectId,
+      currentTime: normalizedTarget,
+    });
+    const candidate = evaluatePropagationModel(candidateModel, normalizedTarget, context);
+    const resolver = options.frameResolver ?? identityResolver();
+    const candidateFrame = referenceFrameId(candidateModel.declaration.propagationFrame);
+    const candidateHandoff = handoff.referenceFrame === candidateFrame
+      ? handoff
+      : transformPropagationState(handoff, candidateFrame, resolver);
+    const tolerance = switchTolerance(options.tolerance);
+    if (!stateWithinSwitchTolerance(candidateHandoff, candidate, tolerance)) {
+      fail(PropagationErrorCode.switchToleranceExceeded, "Candidate model exceeds switch tolerance");
+    }
+    if (options.acceptance !== undefined && !options.acceptance({
+      handoff: candidateHandoff,
+      candidate,
+      target: normalizedTarget,
+      candidateModel,
+    })) {
+      fail(PropagationErrorCode.acceptanceRejected, "Candidate model was rejected by the acceptance policy");
+    }
+    const next = this.buildNextSnapshot(baseSnapshot, oldSegment, candidateModel, normalizedTarget);
+    const segment = selectActiveMotionSegment(next.segments, normalizedTarget);
+    return Object.freeze({
+      handoff: candidateHandoff,
+      candidate,
+      segment,
+      before: beforeSnapshot(baseSnapshot),
+      after: next,
+    });
+  }
+
+  /** Commit a previously prepared draft. */
+  commitTransition(draft: AuthorityTransitionDraft): void {
+    const current = this.snapshot();
+    const sameSegments = current.segments.length === draft.before.segments.length
+      && current.segments.every((segment, index) => {
+        const expected = draft.before.segments[index];
+        return expected !== undefined
+          && segment === expected;
+      });
+    if (!sameSegments || current.referenceStatus !== draft.before.referenceStatus) {
+      throw new PropagationError(PropagationErrorCode.invalidConfiguration, "Authority changed while a transition was prepared");
+    }
+    this.#segments = [...draft.after.segments];
+    this.#referenceStatus = draft.after.referenceStatus;
+  }
+
+  /** Restore the exact pre-transaction authority snapshot. */
+  restore(snapshot: AuthoritySnapshot): void {
+    this.#segments = [...snapshot.segments];
+    this.#referenceStatus = snapshot.referenceStatus;
+  }
+
   switchModel(
     candidateModel: PropagationModel,
     target: SimulationInstant,
@@ -927,31 +1036,10 @@ export class MotionAuthority {
   ): SwitchResult {
     const before = this.snapshot();
     try {
-      const oldSegment = selectActiveMotionSegment(this.#segments, target);
-      const normalizedTarget = simulationInstant(target.seconds, target.nanoseconds);
-      const context = options.context ?? propagationEvaluationContext({
-        objectId: this.objectId,
-        currentTime: normalizedTarget,
-      });
-      const handoff = evaluatePropagationModel(oldSegment.model, normalizedTarget, context);
-      const resolver = options.frameResolver ?? identityResolver();
-      const candidateFrame = referenceFrameId(candidateModel.declaration.propagationFrame);
-      const candidateHandoff = transformPropagationState(handoff, candidateFrame, resolver);
-      const candidate = evaluatePropagationModel(candidateModel, normalizedTarget, context);
-      const tolerance = switchTolerance(options.tolerance);
-      if (!stateWithinSwitchTolerance(candidateHandoff, candidate, tolerance)) {
-        fail(PropagationErrorCode.switchToleranceExceeded, "Candidate model exceeds switch tolerance");
-      }
-      if (options.acceptance !== undefined && !options.acceptance({
-        handoff: candidateHandoff,
-        candidate,
-        target: normalizedTarget,
-        candidateModel,
-      })) {
-        fail(PropagationErrorCode.acceptanceRejected, "Candidate model was rejected by the acceptance policy");
-      }
-      const segment = this.commitCandidate(oldSegment, candidateModel, normalizedTarget, candidateHandoff);
-      return { ok: true, handoff: candidateHandoff, candidate, segment, snapshot: this.snapshot() };
+      const draft = this.prepareSwitchModel(candidateModel, target, options);
+      this.commitTransition(draft);
+      const segment = draft.segment;
+      return { ok: true, handoff: draft.handoff, candidate: draft.candidate, segment, snapshot: this.snapshot() };
     } catch (error) {
       const propagationError = error instanceof PropagationError
         ? error
@@ -968,17 +1056,15 @@ export class MotionAuthority {
   ): SwitchResult {
     const before = this.snapshot();
     try {
-      const oldSegment = selectActiveMotionSegment(this.#segments, target);
       const normalizedTarget = simulationInstant(target.seconds, target.nanoseconds);
       const context = options.context ?? propagationEvaluationContext({ objectId: this.objectId, currentTime: normalizedTarget });
+      const oldSegment = selectActiveMotionSegment(before.segments, normalizedTarget);
       const state = evaluatePropagationModel(oldSegment.model, normalizedTarget, context);
       const resolver = options.frameResolver ?? identityResolver();
       const postEvent = createImpulseHandoff(state, impulse, resolver);
-      const result = this.commitFromHandoff(oldSegment, candidateModel, normalizedTarget, postEvent, options);
-      if (!result.ok) {
-        return { ok: false, error: result.error, snapshot: before };
-      }
-      return result;
+      const draft = this.prepareFromHandoff(candidateModel, normalizedTarget, postEvent, options, before);
+      this.commitTransition(draft);
+      return { ok: true, handoff: draft.handoff, candidate: draft.candidate, segment: draft.segment, snapshot: this.snapshot() };
     } catch (error) {
       return {
         ok: false,
@@ -989,37 +1075,16 @@ export class MotionAuthority {
     }
   }
 
-  private commitFromHandoff(
+  private buildNextSnapshot(
+    baseSnapshot: AuthoritySnapshot,
     oldSegment: MotionSegment,
     candidateModel: PropagationModel,
     target: SimulationInstant,
-    handoff: PropagationState,
-    options: SwitchOptions,
-  ): SwitchResult {
-    const candidate = evaluatePropagationModel(candidateModel, target, options.context ?? propagationEvaluationContext({
-      objectId: this.objectId,
-      currentTime: target,
-    }));
-    if (!stateWithinSwitchTolerance(handoff, candidate, switchTolerance(options.tolerance))) {
-      return { ok: false, error: new PropagationError(PropagationErrorCode.switchToleranceExceeded, "Impulse candidate exceeds switch tolerance"), snapshot: this.snapshot() };
-    }
-    if (options.acceptance !== undefined && !options.acceptance({ handoff, candidate, target, candidateModel })) {
-      return { ok: false, error: new PropagationError(PropagationErrorCode.acceptanceRejected, "Impulse candidate was rejected"), snapshot: this.snapshot() };
-    }
-    const segment = this.commitCandidate(oldSegment, candidateModel, target, handoff);
-    return { ok: true, handoff, candidate, segment, snapshot: this.snapshot() };
-  }
-
-  private commitCandidate(
-    oldSegment: MotionSegment,
-    candidateModel: PropagationModel,
-    target: SimulationInstant,
-    _handoff: PropagationState,
-  ): MotionSegment {
-    const revisions = this.#segments.map((segment) => segment.motionRevision);
+  ): AuthoritySnapshot {
+    const revisions = baseSnapshot.segments.map((segment) => segment.motionRevision);
     let next = revisions.reduce((largest, value) => value.length > largest.length || (value.length === largest.length && value > largest) ? value : largest, "0" as RevisionId);
     next = incrementRevision(next);
-    const retained = this.#segments
+    const retained = baseSnapshot.segments
       .filter((segment) => compareSimulationInstants(segment.start, target) < 0)
       .map((segment) => {
         if (segment === oldSegment) {
@@ -1033,12 +1098,19 @@ export class MotionAuthority {
       model: candidateModel,
       motionRevision: next,
     });
-    this.#segments = [...retained, newSegment].sort((left, right) => compareSimulationInstants(left.start, right.start));
-    if (this.#referenceStatus === "followingReference" && candidateModel.declaration.kind !== PropagationModelKind.referenceEphemeris) {
-      this.#referenceStatus = "diverged";
-    }
-    return newSegment;
+    const segments = [...retained, newSegment].sort((left, right) => compareSimulationInstants(left.start, right.start));
+    const referenceStatus = baseSnapshot.referenceStatus === "followingReference"
+      && candidateModel.declaration.kind !== PropagationModelKind.referenceEphemeris
+      ? "diverged" : baseSnapshot.referenceStatus;
+    return beforeSnapshot({ segments, referenceStatus });
   }
+}
+
+function beforeSnapshot(value: AuthoritySnapshot): AuthoritySnapshot {
+  return Object.freeze({
+    segments: Object.freeze([...value.segments]),
+    referenceStatus: value.referenceStatus,
+  });
 }
 
 export interface CartesianImpulse {

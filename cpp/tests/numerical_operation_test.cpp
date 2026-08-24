@@ -58,10 +58,35 @@ int rejects_backward_query() {
   return 0;
 }
 
+int composes_maneuver_thrust_and_mass_flow() {
+  auto value = fixture();
+  value.constant_acceleration_x = 2.0;
+  value.maneuver_present = true;
+  value.maneuver_id_low = 7;
+  value.maneuver_revision_low = 1;
+  value.maneuver_stage_index = 0;
+  value.maneuver_stage_start = orbit_engine::time::TimeWire{0, 0, 0};
+  value.maneuver_stage_end = orbit_engine::time::TimeWire{0, 2, 0};
+  value.maneuver_force_magnitude_newtons = 4.0;
+  value.maneuver_mass_flow_kilograms_per_second = 1.0;
+  value.maneuver_direction_kind = 1;
+  value.maneuver_direction_frame_low = 1;
+  value.maneuver_direction_frame_revision_low = 1;
+  value.maneuver_direction_x = 1.0;
+  const auto result = orbit_engine::numerical_operation::evaluate(value);
+  CHECK(result.result_code == static_cast<std::uint16_t>(orbit_engine::numerical_operation::ResultCode::success));
+  CHECK(result.result_position_x > 11.0);
+  CHECK(result.result_velocity_x > 7.0);
+  CHECK(result.result_mass_present);
+  CHECK(std::abs(result.result_mass - 2.0) < 1e-9);
+  return 0;
+}
+
 }  // namespace
 
 int main() {
   if (evaluates_through_portable_core() != 0) return 1;
   if (rejects_backward_query() != 0) return 1;
+  if (composes_maneuver_thrust_and_mass_flow() != 0) return 1;
   return 0;
 }

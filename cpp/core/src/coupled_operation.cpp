@@ -31,6 +31,14 @@ bool signed_word(double value, std::int32_t& output) noexcept {
 
 bool finite(double value) noexcept { return std::isfinite(value); }
 
+bool sample_in_interval(const force::TimeInterval& interval, const numerical::NumericalSampleTime& sample) noexcept {
+  const auto from_start = time::subtract(interval.start, sample.exact_step_start);
+  if (!from_start.has_value() || sample.offset_seconds < time::to_seconds(*from_start)) return false;
+  if (!interval.end.has_value()) return true;
+  const auto from_end = time::subtract(*interval.end, sample.exact_step_start);
+  return from_end.has_value() && sample.offset_seconds < time::to_seconds(*from_end);
+}
+
 std::uint64_t id_from_words(std::uint32_t high, std::uint32_t low) noexcept {
   return (static_cast<std::uint64_t>(high) << 32U) | low;
 }
@@ -87,10 +95,54 @@ void write_member(const MemberWire& value, std::span<double> output, std::size_t
   output[cursor++] = value.mass_revision_high; output[cursor++] = value.mass_revision_low;
 }
 
+bool read_maneuver(std::span<const double> values, std::size_t& cursor, ManeuverWire& output) noexcept {
+  if (cursor + kManeuverWords > values.size()) return false;
+  output.present = values[cursor++] != 0.0;
+  if (!word(values[cursor++], output.object_id_high) || !word(values[cursor++], output.object_id_low)
+      || !word(values[cursor++], output.maneuver_id_high) || !word(values[cursor++], output.maneuver_id_low)
+      || !word(values[cursor++], output.maneuver_revision_high) || !word(values[cursor++], output.maneuver_revision_low)
+      || !word(values[cursor++], output.configuration_revision_high) || !word(values[cursor++], output.configuration_revision_low)
+      || !word(values[cursor++], output.stage_index) || !read_time(values, cursor, output.stage_start)
+      || !read_time(values, cursor, output.stage_end)) return false;
+  if (cursor + 2 > values.size() || !finite(values[cursor])) return false;
+  output.force_magnitude_newtons = values[cursor++];
+  if (cursor + 1 > values.size() || !finite(values[cursor])) return false;
+  output.mass_flow_kilograms_per_second = values[cursor++];
+  if (cursor + 2 > values.size() || !finite(values[cursor])) return false;
+  output.minimum_mass_present = values[cursor++] != 0.0;
+  output.minimum_mass_kilograms = values[cursor++];
+  if (cursor >= values.size() || !word(values[cursor++], output.direction_kind)) return false;
+  if (!word(values[cursor++], output.direction_frame_high) || !word(values[cursor++], output.direction_frame_low)
+      || !word(values[cursor++], output.direction_frame_revision_high) || !word(values[cursor++], output.direction_frame_revision_low)) return false;
+  for (double* value : {&output.direction_x, &output.direction_y, &output.direction_z}) {
+    if (cursor >= values.size() || !finite(values[cursor])) return false;
+    *value = values[cursor++];
+  }
+  return word(values[cursor++], output.attitude_source_high) && word(values[cursor++], output.attitude_source_low)
+    && word(values[cursor++], output.attitude_revision_high) && word(values[cursor++], output.attitude_revision_low);
+}
+
+void write_maneuver(const ManeuverWire& value, std::span<double> output, std::size_t& cursor) noexcept {
+  output[cursor++] = value.present ? 1.0 : 0.0;
+  output[cursor++] = value.object_id_high; output[cursor++] = value.object_id_low;
+  output[cursor++] = value.maneuver_id_high; output[cursor++] = value.maneuver_id_low;
+  output[cursor++] = value.maneuver_revision_high; output[cursor++] = value.maneuver_revision_low;
+  output[cursor++] = value.configuration_revision_high; output[cursor++] = value.configuration_revision_low;
+  output[cursor++] = value.stage_index; write_time(value.stage_start, output, cursor); write_time(value.stage_end, output, cursor);
+  output[cursor++] = value.force_magnitude_newtons; output[cursor++] = value.mass_flow_kilograms_per_second;
+  output[cursor++] = value.minimum_mass_present ? 1.0 : 0.0; output[cursor++] = value.minimum_mass_kilograms;
+  output[cursor++] = value.direction_kind;
+  output[cursor++] = value.direction_frame_high; output[cursor++] = value.direction_frame_low;
+  output[cursor++] = value.direction_frame_revision_high; output[cursor++] = value.direction_frame_revision_low;
+  output[cursor++] = value.direction_x; output[cursor++] = value.direction_y; output[cursor++] = value.direction_z;
+  output[cursor++] = value.attitude_source_high; output[cursor++] = value.attitude_source_low;
+  output[cursor++] = value.attitude_revision_high; output[cursor++] = value.attitude_revision_low;
+}
+
 bool valid_wire(const CoupledWire& value) noexcept {
   if (value.operation_code < static_cast<std::uint16_t>(OperationCode::promote)
       || value.operation_code > static_cast<std::uint16_t>(OperationCode::remove)
-      || value.member_count > kMaxMembers || value.requested_count > kMaxMembers
+      || value.member_count > kMaxMembers || value.requested_count > kMaxMembers || value.maneuver_count > kMaxMembers
       || !time::from_wire(value.target_epoch).has_value()
       || !finite(value.relative_tolerance) || !finite(value.position_absolute_tolerance_meters)
       || !finite(value.velocity_absolute_tolerance_meters_per_second)
@@ -109,6 +161,31 @@ bool valid_wire(const CoupledWire& value) noexcept {
       || value.max_rejected_steps_per_extension == 0
       || time::compare(*time::from_wire_duration(value.min_step), time::Duration{0, 1}) < 0
       || time::compare(*time::from_wire_duration(value.max_step), *time::from_wire_duration(value.min_step)) < 0) return false;
+  std::set<object::ObjectId> member_ids;
+  for (std::size_t index = 0; index < value.member_count; ++index) {
+    member_ids.insert(object::object_id_from_wire({value.members[index].object_id_high, value.members[index].object_id_low}));
+  }
+  std::set<object::ObjectId> maneuver_targets;
+  for (std::size_t index = 0; index < value.maneuver_count; ++index) {
+    const auto& maneuver = value.maneuvers[index];
+    const auto target = object::object_id_from_wire({maneuver.object_id_high, maneuver.object_id_low});
+    if (!maneuver.present || !object::is_valid(target) || !member_ids.contains(target) || !maneuver_targets.insert(target).second
+        || maneuver.maneuver_id_high == 0 && maneuver.maneuver_id_low == 0
+        || maneuver.maneuver_revision_high == 0 && maneuver.maneuver_revision_low == 0
+        || !time::from_wire(maneuver.stage_start).has_value() || !time::from_wire(maneuver.stage_end).has_value()
+        || time::compare(*time::from_wire(maneuver.stage_start), *time::from_wire(maneuver.stage_end)) >= 0
+        || maneuver.direction_kind < 1 || maneuver.direction_kind > 2
+        || !finite(maneuver.force_magnitude_newtons) || maneuver.force_magnitude_newtons < 0.0
+        || !finite(maneuver.mass_flow_kilograms_per_second) || maneuver.mass_flow_kilograms_per_second < 0.0
+        || !finite(maneuver.minimum_mass_kilograms) || (maneuver.minimum_mass_present && maneuver.minimum_mass_kilograms <= 0.0)
+        || !finite(maneuver.direction_x) || !finite(maneuver.direction_y) || !finite(maneuver.direction_z)) return false;
+    if (maneuver.direction_kind == 1) {
+      if (!frame::is_valid(frame::reference_frame_id_from_wire({maneuver.direction_frame_high, maneuver.direction_frame_low}))
+          || maneuver.direction_frame_revision_high == 0 && maneuver.direction_frame_revision_low == 0
+          || maneuver.attitude_source_high != 0 || maneuver.attitude_source_low != 0
+          || maneuver.attitude_revision_high != 0 || maneuver.attitude_revision_low != 0) return false;
+    } else if (maneuver.attitude_source_high == 0 && maneuver.attitude_source_low == 0) return false;
+  }
   return true;
 }
 
@@ -153,6 +230,48 @@ force::Provider constant_provider(const CoupledWire& input, time::SimulationInst
   return provider;
 }
 
+force::Provider maneuver_provider(const ManeuverWire& input, time::SimulationInstant epoch, std::uint32_t order) {
+  const auto target = id_from_words(input.object_id_high, input.object_id_low);
+  const auto stage_start = *time::from_wire(input.stage_start);
+  const auto stage_end = *time::from_wire(input.stage_end);
+  const auto integration_frame = frame::kRootReferenceFrameId;
+  force::Provider provider;
+  provider.definition.kind = force::ProviderKind::finite_thrust;
+  provider.definition.order = order;
+  provider.definition.validity = force::TimeInterval{epoch, std::nullopt};
+  provider.definition.requires_mass = false;
+  provider.definition.configuration_identity = id_from_words(input.configuration_revision_high, input.configuration_revision_low);
+  provider.definition.dependencies.push_back(force::Dependency{
+    force::DependencyKind::source,
+    id_from_words(input.maneuver_id_high, input.maneuver_id_low),
+    id_from_words(input.maneuver_revision_high, input.maneuver_revision_low),
+  });
+  provider.definition.hard_boundaries.push_back(numerical::HardBoundary{stage_start, provider.definition.configuration_identity});
+  provider.definition.hard_boundaries.push_back(numerical::HardBoundary{stage_end, provider.definition.configuration_identity});
+  provider.evaluate = [input, target, stage_start, stage_end, integration_frame](
+      const force::ForceEvaluationContext& context, frame::Vec3& result, force::Failure& failure) {
+    result = frame::Vec3{0.0, 0.0, 0.0};
+    if (context.target_id != target || !sample_in_interval(force::TimeInterval{stage_start, stage_end}, context.sample_time)) return true;
+    if (!context.target_mass.has_value() || *context.target_mass <= 0.0) {
+      failure = force::Failure{force::FailureCode::missing_dependency, "coupled maneuver thrust requires a positive member mass"};
+      return false;
+    }
+    if (input.direction_kind != 1
+        || frame::reference_frame_id_from_wire({input.direction_frame_high, input.direction_frame_low}) != integration_frame) {
+      failure = force::Failure{force::FailureCode::missing_dependency, "coupled body-frame or non-root maneuver direction requires an attitude/frame sampler"};
+      return false;
+    }
+    const double acceleration = input.force_magnitude_newtons / *context.target_mass;
+    result = frame::Vec3{
+      input.direction_x * acceleration,
+      input.direction_y * acceleration,
+      input.direction_z * acceleration,
+    };
+    return frame::is_valid(result);
+  };
+  return provider;
+}
+
 coupled::Configuration configuration(const CoupledWire& input, time::SimulationInstant epoch) {
   numerical::Configuration integrator;
   integrator.relative_tolerance = input.relative_tolerance;
@@ -166,9 +285,14 @@ coupled::Configuration configuration(const CoupledWire& input, time::SimulationI
   integrator.max_dense_step_count = input.max_dense_step_count;
   integrator.max_accepted_steps_per_extension = input.max_accepted_steps_per_extension;
   integrator.max_rejected_steps_per_extension = input.max_rejected_steps_per_extension;
+  std::vector<force::Provider> providers;
+  providers.push_back(constant_provider(input, epoch));
+  for (std::size_t index = 0; index < input.maneuver_count; ++index) {
+    providers.push_back(maneuver_provider(input.maneuvers[index], epoch, static_cast<std::uint32_t>(index + 1)));
+  }
   return coupled::Configuration{
     integrator,
-    force::ProviderRuntime({constant_provider(input, epoch)}),
+    force::ProviderRuntime(std::move(providers)),
     std::nullopt,
     {},
     std::nullopt,
@@ -191,6 +315,8 @@ bool decode_packet(std::span<const double> values, CoupledWire& output) noexcept
   for (std::size_t index = 0; index < kMaxMembers; ++index) {
     if (!word(values[cursor++], output.requested_id_high[index]) || !word(values[cursor++], output.requested_id_low[index])) return false;
   }
+  if (!word(values[cursor++], output.maneuver_count)) return false;
+  for (auto& maneuver : output.maneuvers) if (!read_maneuver(values, cursor, maneuver)) return false;
   if (!word(values[cursor++], output.configuration_revision_high) || !word(values[cursor++], output.configuration_revision_low)) return false;
   double* continuous[] = {&output.relative_tolerance, &output.position_absolute_tolerance_meters, &output.velocity_absolute_tolerance_meters_per_second, &output.mass_absolute_tolerance_kilograms};
   for (auto* value : continuous) if (cursor >= values.size() || !finite(values[cursor])) return false; else *value = values[cursor++];

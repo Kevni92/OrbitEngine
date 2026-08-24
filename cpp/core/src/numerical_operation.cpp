@@ -3,6 +3,7 @@
 #include "orbit_engine/force.hpp"
 #include "orbit_engine/numerical_motion.hpp"
 #include "orbit_engine/object.hpp"
+#include "orbit_engine/thrust.hpp"
 
 #include <cmath>
 
@@ -19,6 +20,14 @@ bool valid_time(time::TimeWire value) noexcept { return time::from_wire(value).h
 
 bool valid_non_negative(double value) noexcept { return finite(value) && value >= 0.0; }
 
+bool valid_frame(std::uint32_t high, std::uint32_t low) noexcept {
+  return frame::is_valid(frame::reference_frame_id_from_wire({high, low}));
+}
+
+bool valid_non_zero_uint64(std::uint32_t high, std::uint32_t low) noexcept {
+  return high != 0 || low != 0;
+}
+
 }  // namespace
 
 bool is_valid_input(NumericalWire value) noexcept {
@@ -31,7 +40,11 @@ bool is_valid_input(NumericalWire value) noexcept {
       || !finite(value.constant_acceleration_x) || !finite(value.constant_acceleration_y) || !finite(value.constant_acceleration_z)
       || !finite(value.relative_tolerance) || !finite(value.position_absolute_tolerance_meters)
       || !finite(value.velocity_absolute_tolerance_meters_per_second)
-      || !finite(value.mass_absolute_tolerance_kilograms)) {
+      || !finite(value.mass_absolute_tolerance_kilograms)
+      || !finite(value.maneuver_force_magnitude_newtons)
+      || !finite(value.maneuver_mass_flow_kilograms_per_second)
+      || !finite(value.maneuver_minimum_mass_kilograms)
+      || !finite(value.maneuver_direction_x) || !finite(value.maneuver_direction_y) || !finite(value.maneuver_direction_z)) {
     return false;
   }
   const auto anchor = *time::from_wire(value.anchor_epoch);
@@ -52,6 +65,41 @@ bool is_valid_input(NumericalWire value) noexcept {
   }
   if (value.mass_present && !valid_non_negative(value.mass)) return false;
   if (!value.mass_present && value.mass != 0.0) return false;
+  if (!value.maneuver_present) {
+    if (value.maneuver_id_high != 0 || value.maneuver_id_low != 0
+        || value.maneuver_revision_high != 0 || value.maneuver_revision_low != 0
+        || value.maneuver_stage_index != 0
+        || value.maneuver_force_magnitude_newtons != 0.0
+        || value.maneuver_mass_flow_kilograms_per_second != 0.0
+        || value.maneuver_minimum_mass_present || value.maneuver_minimum_mass_kilograms != 0.0
+        || value.maneuver_direction_kind != 0
+        || value.maneuver_direction_frame_high != 0 || value.maneuver_direction_frame_low != 0
+        || value.maneuver_direction_frame_revision_high != 0 || value.maneuver_direction_frame_revision_low != 0
+        || value.maneuver_direction_x != 0.0 || value.maneuver_direction_y != 0.0 || value.maneuver_direction_z != 0.0
+        || value.maneuver_attitude_source_high != 0 || value.maneuver_attitude_source_low != 0
+        || value.maneuver_attitude_revision_high != 0 || value.maneuver_attitude_revision_low != 0) return false;
+  } else {
+    const auto maneuver_start = time::from_wire(value.maneuver_stage_start);
+    const auto maneuver_end = time::from_wire(value.maneuver_stage_end);
+    if (!valid_non_zero_uint64(value.maneuver_id_high, value.maneuver_id_low)
+        || !valid_non_zero_uint64(value.maneuver_revision_high, value.maneuver_revision_low)
+        || !maneuver_start.has_value() || !maneuver_end.has_value()
+        || time::compare(*maneuver_start, *maneuver_end) >= 0
+        || !valid_non_negative(value.maneuver_force_magnitude_newtons)
+        || !valid_non_negative(value.maneuver_mass_flow_kilograms_per_second)
+        || (value.maneuver_minimum_mass_present && value.maneuver_minimum_mass_kilograms <= 0.0)
+        || (!value.maneuver_minimum_mass_present && value.maneuver_minimum_mass_kilograms != 0.0)
+        || (value.maneuver_direction_kind != 1 && value.maneuver_direction_kind != 2)) return false;
+    if (value.maneuver_direction_kind == 1) {
+      if (!valid_frame(value.maneuver_direction_frame_high, value.maneuver_direction_frame_low)
+          || !valid_non_zero_uint64(value.maneuver_direction_frame_revision_high, value.maneuver_direction_frame_revision_low)
+          || value.maneuver_attitude_source_high != 0 || value.maneuver_attitude_source_low != 0
+          || value.maneuver_attitude_revision_high != 0 || value.maneuver_attitude_revision_low != 0) return false;
+    } else if (!valid_non_zero_uint64(value.maneuver_attitude_source_high, value.maneuver_attitude_source_low)
+        || !valid_non_zero_uint64(value.maneuver_attitude_revision_high, value.maneuver_attitude_revision_low)
+        || value.maneuver_direction_frame_high != 0 || value.maneuver_direction_frame_low != 0
+        || value.maneuver_direction_frame_revision_high != 0 || value.maneuver_direction_frame_revision_low != 0) return false;
+  }
   if (value.source_present) {
     if (!object::is_valid(object::object_id_from_wire({value.source_id_high, value.source_id_low}))
         || !finite(value.source_position_x) || !finite(value.source_position_y) || !finite(value.source_position_z)
@@ -115,6 +163,49 @@ NumericalWire evaluate(NumericalWire input) {
       return input;
     }
     providers.push_back(std::move(gravity));
+  }
+
+  if (input.maneuver_present) {
+    const auto stage_start = *time::from_wire(input.maneuver_stage_start);
+    const auto stage_end = *time::from_wire(input.maneuver_stage_end);
+    thrust::FiniteThrustStage stage;
+    stage.validity = force::TimeInterval{stage_start, stage_end};
+    stage.force_magnitude_newtons = input.maneuver_force_magnitude_newtons;
+    stage.throttle = 1.0;
+    stage.mass_flow = thrust::MassFlowSpecification{
+      thrust::MassFlowKind::direct,
+      input.maneuver_mass_flow_kilograms_per_second,
+    };
+    if (input.maneuver_direction_kind == 1) {
+      stage.direction = thrust::ReferenceFrameDirection{
+        frame::reference_frame_id_from_wire({input.maneuver_direction_frame_high, input.maneuver_direction_frame_low}),
+        uint64_from_wire(input.maneuver_direction_frame_revision_high, input.maneuver_direction_frame_revision_low),
+        frame::Vec3{input.maneuver_direction_x, input.maneuver_direction_y, input.maneuver_direction_z},
+        {},
+      };
+    } else {
+      stage.direction = thrust::BodyFrameDirection{
+        frame::Vec3{input.maneuver_direction_x, input.maneuver_direction_y, input.maneuver_direction_z},
+        object::object_id_from_wire({input.maneuver_attitude_source_high, input.maneuver_attitude_source_low}),
+        uint64_from_wire(input.maneuver_attitude_revision_high, input.maneuver_attitude_revision_low),
+        {},
+      };
+    }
+    thrust::FiniteThrustConfiguration thrust_configuration;
+    thrust_configuration.target_id = object_id;
+    thrust_configuration.order = input.source_present ? 2 : 1;
+    thrust_configuration.validity = force::TimeInterval{stage_start, stage_end};
+    thrust_configuration.integration_frame = frame::reference_frame_id_from_wire({input.propagation_frame_high, input.propagation_frame_low});
+    thrust_configuration.stages.push_back(std::move(stage));
+    if (input.maneuver_minimum_mass_present) thrust_configuration.minimum_mass_kilograms = input.maneuver_minimum_mass_kilograms;
+    thrust_configuration.configuration_identity = uint64_from_wire(input.configuration_revision_high, input.configuration_revision_low);
+    force::Failure thrust_failure;
+    auto thrust_provider = thrust::make_finite_thrust_provider(std::move(thrust_configuration), thrust_failure);
+    if (!thrust_provider.evaluate_combined) {
+      input.result_code = static_cast<std::uint16_t>(ResultCode::invalid_configuration);
+      return input;
+    }
+    providers.push_back(std::move(thrust_provider));
   }
 
   const auto frame_id = frame::reference_frame_id_from_wire({input.propagation_frame_high, input.propagation_frame_low});

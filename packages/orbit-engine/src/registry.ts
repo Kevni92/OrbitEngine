@@ -65,6 +65,27 @@ export interface DivergenceInput {
   readonly motion: MotionMetadata;
 }
 
+export interface MotionReplacementInput {
+  readonly state: CanonicalCartesianState;
+  readonly motion: MotionMetadata;
+  readonly referenceStatus?: ReferenceStatus;
+  readonly properties?: PhysicalProperties | PhysicalPropertiesInput;
+  readonly propertyRevision?: RevisionId;
+}
+
+function propertiesEqual(left: PhysicalProperties, right: PhysicalProperties): boolean {
+  return left.mass === right.mass
+    && left.mu === right.mu
+    && left.physicalRadius === right.physicalRadius
+    && left.collisionBoundingRadius === right.collisionBoundingRadius;
+}
+
+function nextPropertyRevision(value: RevisionId): RevisionId {
+  const next = BigInt(value) + 1n;
+  if (next > 18_446_744_073_709_551_615n) throw new RangeError("Property revision overflow");
+  return revisionId(next.toString());
+}
+
 export const RegistryErrorCode = Object.freeze({
   invalidInput: "invalidInput",
   duplicateLiveId: "duplicateLiveId",
@@ -276,6 +297,37 @@ export class ObjectRegistry {
       effectiveEpoch: normalizedEpoch,
     });
     return decodeRegistryRecord(successful(this.#backend.roundTripRegistry(wire), "divergence"));
+  }
+
+  replaceMotion(
+    id: ObjectId,
+    effectiveEpoch: SimulationInstant,
+    input: MotionReplacementInput,
+  ): ObjectRecord {
+    const normalizedEpoch = simulationInstant(effectiveEpoch.seconds, effectiveEpoch.nanoseconds);
+    const state = normalizedState(input.state);
+    const motion = normalizedMotion(input.motion);
+    if (compareSimulationInstants(state.epoch, normalizedEpoch) !== 0
+        || compareSimulationInstants(motion.segmentStart, normalizedEpoch) !== 0) {
+      throw new RangeError("Motion replacement state and segment must begin at the effective epoch");
+    }
+    const previous = this.get(id);
+    const properties = physicalProperties(input.properties ?? previous.properties);
+    const propertyRevision = input.propertyRevision
+      ?? (propertiesEqual(previous.properties, properties)
+        ? previous.propertyRevision
+        : nextPropertyRevision(previous.propertyRevision));
+    return decodeRegistryRecord(successful(this.#backend.roundTripRegistry(command({
+      operationCode: RegistryOperationCode.replaceMotion,
+      id,
+      type: "planet",
+      properties,
+      state,
+      motion,
+      referenceStatus: input.referenceStatus,
+      propertyRevision,
+      effectiveEpoch: normalizedEpoch,
+    })), "motion replacement"));
   }
 
   remove(id: ObjectId): void {

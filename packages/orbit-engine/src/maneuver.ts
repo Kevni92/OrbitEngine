@@ -360,6 +360,38 @@ export interface NormalizedFiniteBurnStage {
   readonly effectiveMassFlowKilogramsPerSecond: KilogramsPerSecond;
 }
 
+/** Immutable force configuration handed to the authority-transition layer. */
+export interface ManeuverForceConfiguration {
+  readonly kind: "ballistic" | "finiteThrust";
+  readonly maneuverId: ManeuverId;
+  readonly maneuverRevision: RevisionId;
+  readonly objectId: ObjectId;
+  readonly configurationRevision: RevisionId;
+  readonly stages: readonly NormalizedFiniteBurnStage[];
+  readonly minimumMassKilograms?: number;
+  readonly activeStageIndex?: number;
+}
+
+const UINT64_MASK = (1n << 64n) - 1n;
+
+function forceConfigurationRevision(value: {
+  readonly kind: "ballistic" | "finiteThrust";
+  readonly maneuverId: ManeuverId;
+  readonly maneuverRevision: RevisionId;
+  readonly objectId: ObjectId;
+  readonly stages: readonly NormalizedFiniteBurnStage[];
+  readonly minimumMassKilograms?: number;
+  readonly activeStageIndex?: number;
+}): RevisionId {
+  const serialized = JSON.stringify(value);
+  let hash = 14_695_981_039_346_656_037n;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= BigInt(serialized.charCodeAt(index));
+    hash = (hash * 1_099_511_628_211n) & UINT64_MASK;
+  }
+  return revisionId(hash.toString());
+}
+
 export interface FiniteBurnManeuver extends Omit<FiniteBurnManeuverInput, "stages" | "minimumMassKilograms"> {
   readonly id: ManeuverId;
   readonly revision: RevisionId;
@@ -372,6 +404,65 @@ export interface FiniteBurnManeuver extends Omit<FiniteBurnManeuverInput, "stage
 
 export type Maneuver = ImpulseManeuver | FiniteBurnManeuver;
 export type ManeuverDefinition = ImpulseManeuverInput | FiniteBurnManeuverInput;
+
+export function maneuverForceConfiguration(
+  maneuver: Maneuver,
+  activeStageIndex?: number,
+): ManeuverForceConfiguration {
+  if (maneuver.kind === "impulse") {
+    return Object.freeze({
+      kind: "ballistic",
+      maneuverId: maneuver.id,
+      maneuverRevision: maneuver.revision,
+      objectId: maneuver.objectId,
+      configurationRevision: forceConfigurationRevision({
+        kind: "ballistic",
+        maneuverId: maneuver.id,
+        maneuverRevision: maneuver.revision,
+        objectId: maneuver.objectId,
+        stages: [],
+      }),
+      stages: Object.freeze([]),
+    });
+  }
+  const configurationRevision = forceConfigurationRevision({
+    kind: "finiteThrust",
+    maneuverId: maneuver.id,
+    maneuverRevision: maneuver.revision,
+    objectId: maneuver.objectId,
+    stages: maneuver.stages,
+    ...(maneuver.minimumMassKilograms === undefined ? {} : { minimumMassKilograms: maneuver.minimumMassKilograms }),
+    ...(activeStageIndex === undefined ? {} : { activeStageIndex }),
+  });
+  return Object.freeze({
+    kind: "finiteThrust",
+    maneuverId: maneuver.id,
+    maneuverRevision: maneuver.revision,
+    objectId: maneuver.objectId,
+    configurationRevision,
+    stages: maneuver.stages,
+    ...(maneuver.minimumMassKilograms === undefined ? {} : { minimumMassKilograms: maneuver.minimumMassKilograms }),
+    ...(activeStageIndex === undefined ? {} : { activeStageIndex }),
+  });
+}
+
+export function ballisticForceConfiguration(maneuver: Maneuver): ManeuverForceConfiguration {
+  const configurationRevision = forceConfigurationRevision({
+    kind: "ballistic",
+    maneuverId: maneuver.id,
+    maneuverRevision: maneuver.revision,
+    objectId: maneuver.objectId,
+    stages: [],
+  });
+  return Object.freeze({
+    kind: "ballistic",
+    maneuverId: maneuver.id,
+    maneuverRevision: maneuver.revision,
+    objectId: maneuver.objectId,
+    configurationRevision,
+    stages: Object.freeze([]),
+  });
+}
 
 export interface ManeuverReplacement {
   readonly objectId?: ObjectId | string;

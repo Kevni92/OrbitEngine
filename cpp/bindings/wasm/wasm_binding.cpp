@@ -906,7 +906,18 @@ TWO_BODY_GETTER(orbit_engine_two_body_result_velocity_z, result_velocity_z, doub
   std::int32_t min_step_seconds_high, std::uint32_t min_step_seconds_low, std::uint32_t min_step_nanoseconds, \
   std::int32_t max_step_seconds_high, std::uint32_t max_step_seconds_low, std::uint32_t max_step_nanoseconds, \
   std::uint32_t configuration_revision_high, std::uint32_t configuration_revision_low, \
-  std::uint32_t motion_revision_high, std::uint32_t motion_revision_low
+  std::uint32_t motion_revision_high, std::uint32_t motion_revision_low, \
+  int maneuver_present, std::uint32_t maneuver_id_high, std::uint32_t maneuver_id_low, \
+  std::uint32_t maneuver_revision_high, std::uint32_t maneuver_revision_low, std::uint32_t maneuver_stage_index, \
+  std::int32_t maneuver_stage_start_seconds_high, std::uint32_t maneuver_stage_start_seconds_low, std::uint32_t maneuver_stage_start_nanoseconds, \
+  std::int32_t maneuver_stage_end_seconds_high, std::uint32_t maneuver_stage_end_seconds_low, std::uint32_t maneuver_stage_end_nanoseconds, \
+  double maneuver_force_magnitude_newtons, double maneuver_mass_flow_kilograms_per_second, \
+  int maneuver_minimum_mass_present, double maneuver_minimum_mass_kilograms, std::uint32_t maneuver_direction_kind, \
+  std::uint32_t maneuver_direction_frame_high, std::uint32_t maneuver_direction_frame_low, \
+  std::uint32_t maneuver_direction_frame_revision_high, std::uint32_t maneuver_direction_frame_revision_low, \
+  double maneuver_direction_x, double maneuver_direction_y, double maneuver_direction_z, \
+  std::uint32_t maneuver_attitude_source_high, std::uint32_t maneuver_attitude_source_low, \
+  std::uint32_t maneuver_attitude_revision_high, std::uint32_t maneuver_attitude_revision_low
 
 orbit_engine::numerical_operation::NumericalWire g_numerical_output{};
 
@@ -959,6 +970,30 @@ EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_numerical(NUMERICAL_PARAMETERS)
   input.configuration_revision_low = configuration_revision_low;
   input.motion_revision_high = motion_revision_high;
   input.motion_revision_low = motion_revision_low;
+  input.maneuver_present = maneuver_present != 0;
+  input.maneuver_id_high = maneuver_id_high;
+  input.maneuver_id_low = maneuver_id_low;
+  input.maneuver_revision_high = maneuver_revision_high;
+  input.maneuver_revision_low = maneuver_revision_low;
+  input.maneuver_stage_index = maneuver_stage_index;
+  input.maneuver_stage_start = orbit_engine::time::TimeWire{maneuver_stage_start_seconds_high, maneuver_stage_start_seconds_low, maneuver_stage_start_nanoseconds};
+  input.maneuver_stage_end = orbit_engine::time::TimeWire{maneuver_stage_end_seconds_high, maneuver_stage_end_seconds_low, maneuver_stage_end_nanoseconds};
+  input.maneuver_force_magnitude_newtons = maneuver_force_magnitude_newtons;
+  input.maneuver_mass_flow_kilograms_per_second = maneuver_mass_flow_kilograms_per_second;
+  input.maneuver_minimum_mass_present = maneuver_minimum_mass_present != 0;
+  input.maneuver_minimum_mass_kilograms = maneuver_minimum_mass_kilograms;
+  input.maneuver_direction_kind = static_cast<std::uint16_t>(maneuver_direction_kind);
+  input.maneuver_direction_frame_high = maneuver_direction_frame_high;
+  input.maneuver_direction_frame_low = maneuver_direction_frame_low;
+  input.maneuver_direction_frame_revision_high = maneuver_direction_frame_revision_high;
+  input.maneuver_direction_frame_revision_low = maneuver_direction_frame_revision_low;
+  input.maneuver_direction_x = maneuver_direction_x;
+  input.maneuver_direction_y = maneuver_direction_y;
+  input.maneuver_direction_z = maneuver_direction_z;
+  input.maneuver_attitude_source_high = maneuver_attitude_source_high;
+  input.maneuver_attitude_source_low = maneuver_attitude_source_low;
+  input.maneuver_attitude_revision_high = maneuver_attitude_revision_high;
+  input.maneuver_attitude_revision_low = maneuver_attitude_revision_low;
   g_numerical_output = orbit_engine::numerical_operation::evaluate(input);
   return 1;
 }

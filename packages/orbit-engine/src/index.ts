@@ -3,8 +3,15 @@ import { initializeBackend, type BackendPreference } from "./internal/backends/s
 import { ObjectRegistry } from "./registry.js";
 import { FrameRegistry, type FrameNode, type ObjectFrameStateSource } from "./frame-registry.js";
 import { referenceFrameId, type ReferenceFrameId } from "./frames.js";
+import { kilograms, metersPerSecondSquared } from "./units.js";
 import { objectId, type ObjectId } from "./objects.js";
-import { revisionId, type PropagationModel, type PropagationState, type RevisionId } from "./propagation.js";
+import {
+  propagationEvaluationContext,
+  revisionId,
+  type PropagationModel,
+  type PropagationState,
+  type RevisionId,
+} from "./propagation.js";
 import { ObjectStateQueries } from "./state-query.js";
 import {
   addDurationToInstant,
@@ -45,6 +52,7 @@ import {
   createNumericalMotion,
   type NumericalMotion,
   type NumericalMotionConfiguration,
+  type NumericalMotionFactoryTemplate,
 } from "./numerical.js";
 import {
   createCoupledMotion,
@@ -53,13 +61,21 @@ import {
 } from "./coupled.js";
 import {
   FidelityManager,
+  fidelityRequirement,
   type FidelityAuthorityCandidateInput,
   type FidelityAuthorityTransitionPolicy,
   type FidelityCandidateInput,
+  type FidelityAuthorityCandidateFactory,
   type FidelityRequirementInput,
   type FidelityStatus,
+  type AuthorityTransitionRequest,
+  type PreparedAuthorityTransition,
 } from "./fidelity.js";
-import type { MotionAuthority } from "./propagation.js";
+import {
+  createImpulseHandoff,
+  type AuthorityTransitionDraft,
+  type MotionAuthority,
+} from "./propagation.js";
 import {
   EncounterPolicyManager,
   type EncounterPair,
@@ -161,9 +177,11 @@ import {
   type ManeuverReplacement,
   type ManeuverStatus,
   type ManeuverId,
+  maneuverForceConfiguration,
+  ballisticForceConfiguration,
   ManeuverScheduledEventKind,
   type ManeuverScheduledEvent,
-  type ManeuverEventApplication,
+  type ManeuverForceConfiguration,
 } from "./maneuver.js";
 
 export * from "./time.js";
@@ -199,6 +217,7 @@ export {
 export type {
   NumericalGravitySource,
   NumericalMotionConfiguration,
+  NumericalMotionFactoryTemplate,
   NumericalMotionStatus,
 } from "./numerical.js";
 export {
@@ -244,6 +263,33 @@ function maneuverStart(value: Maneuver): SimulationInstant {
   return value.kind === "impulse" ? value.instant : value.start;
 }
 
+function maneuverSignalId(id: ManeuverId): string {
+  return `maneuver:${id}`;
+}
+
+function maneuverRequiresStateChange(maneuver: Maneuver, stageIndex?: number): boolean {
+  if (maneuver.kind === "impulse") return true;
+  const index = stageIndex ?? maneuver.stages.findIndex((stage) =>
+    compareSimulationInstants(stage.start, maneuver.start) <= 0
+    && compareSimulationInstants(maneuver.start, stage.end) < 0);
+  const stage = index < 0 ? undefined : maneuver.stages[index];
+  return stage !== undefined && (stage.effectiveForceMagnitudeNewtons > 0 || stage.effectiveMassFlowKilogramsPerSecond > 0);
+}
+
+function firstStateChangingStage(maneuver: FiniteBurnManeuver): SimulationInstant {
+  return maneuver.stages.find((stage) =>
+    stage.effectiveForceMagnitudeNewtons > 0 || stage.effectiveMassFlowKilogramsPerSecond > 0)?.start ?? maneuver.end;
+}
+
+function nextAuthorityRevision(snapshot: import("./propagation.js").AuthoritySnapshot): RevisionId {
+  let largest = 0n;
+  for (const segment of snapshot.segments) {
+    const value = BigInt(segment.motionRevision);
+    if (value > largest) largest = value;
+  }
+  return revisionId((largest + 1n).toString());
+}
+
 function maneuverEventPhase(kind: ManeuverScheduledEventKind): ScheduledWorkPhase {
   return kind === "impulse" ? ScheduledWorkPhase.physicalChange : ScheduledWorkPhase.boundary;
 }
@@ -284,6 +330,11 @@ function compareScheduledWork(left: ScheduledWorkRecord, right: ScheduledWorkRec
   return id === 0n ? 0 : id < 0n ? -1 : 1;
 }
 
+interface PreparedManeuverTimestamp {
+  readonly actions: readonly { readonly work: ScheduledWorkRecord; readonly event: ManeuverScheduledEvent; readonly maneuver: Maneuver }[];
+  readonly transitions: readonly { readonly objectId: ObjectId; readonly prepared: PreparedAuthorityTransition }[];
+}
+
 export class OrbitEngine {
   readonly backend: OrbitEngineBackend;
   readonly #health: BackendHealth;
@@ -303,6 +354,7 @@ export class OrbitEngine {
   readonly #collisionSuppressionManager: CollisionContactSuppressionManager;
   readonly #collisionContactLifecycleManager: CollisionContactLifecycleManager;
   readonly #maneuverManager: ManeuverManager;
+  readonly #authorityBindings = new Map<ObjectId, MotionAuthority>();
   readonly #maneuverActions = new Map<ScheduledWorkId, { readonly work: ScheduledWorkRecord; readonly event: ManeuverScheduledEvent }>();
   readonly #maneuverWorkById = new Map<ManeuverId, Set<ScheduledWorkId>>();
 
@@ -484,6 +536,22 @@ export class OrbitEngine {
       // old queue generation remains intact.
       this.#scheduleManeuverEvents(next);
     }
+    if (previous?.kind === "finiteBurn") {
+      this.#fidelityManager.retireSignal(
+        previous.objectId,
+        maneuverSignalId(previous.id),
+        this.currentTime,
+        false,
+      );
+    }
+    if (next.kind === "finiteBurn" && next.lifecycle === "scheduled") {
+      this.#fidelityManager.setSignal(next.objectId, maneuverSignalId(next.id), {
+        requiresNumericalIntegration: true,
+        requiresContinuousThrust: true,
+        validFrom: firstStateChangingStage(next),
+        reasons: [`finite-burn:${next.id}:${next.revision}`],
+      }, this.currentTime);
+    }
     this.invalidateDependency(
       { kind: "maneuver", id: next.id, revision: next.revision },
       effectiveFrom,
@@ -492,15 +560,239 @@ export class OrbitEngine {
     if (previous === undefined && next.lifecycle === "scheduled") this.#scheduleManeuverEvents(next);
   }
 
-  #applyManeuverEventsAt(instant: SimulationInstant): void {
+  #frameResolver(): { resolveTransform: (fromFrame: ReferenceFrameId, toFrame: ReferenceFrameId, epoch: SimulationInstant) => ReturnType<FrameRegistry["transform"]> } {
+    return { resolveTransform: (fromFrame, toFrame, epoch) => this.frames().transform(fromFrame, toFrame, epoch) };
+  }
+
+  #registeredMass(objectIdValue: ObjectId, instant: SimulationInstant): number | undefined {
+    const authorityMass = this.#authorityBindings.get(objectIdValue)?.massAt(instant);
+    if (authorityMass !== undefined) return authorityMass;
+    if (this.#registry === undefined) return undefined;
+    try {
+      return this.#registry.get(objectIdValue).properties.mass;
+    } catch {
+      return undefined;
+    }
+  }
+
+  #authorityContext(objectIdValue: ObjectId, instant: SimulationInstant) {
+    let physicalProperties;
+    try {
+      physicalProperties = this.registry().get(objectIdValue).properties;
+    } catch {
+      physicalProperties = undefined;
+    }
+    return propagationEvaluationContext({
+      objectId: objectIdValue,
+      currentTime: instant,
+      ...(physicalProperties === undefined ? {} : { physicalProperties }),
+      resolveDependencyState: (dependency, target) => this.stateQueries().stateAt(objectId(dependency.id), target),
+    });
+  }
+
+  #prepareManeuverEventsAt(instant: SimulationInstant): PreparedManeuverTimestamp {
     const due = [...this.#maneuverActions.values()]
       .filter((action) => compareSimulationInstants(action.work.instant, instant) === 0)
-      .sort((left, right) => compareScheduledWork(left.work, right.work));
+      .sort((left, right) => compareScheduledWork(left.work, right.work))
+      .flatMap((action) => {
+        const maneuver = this.#maneuverManager.getManeuver(action.event.maneuverId);
+        return maneuver === undefined || maneuver.revision !== action.event.revision
+          ? [] : [{ ...action, maneuver }];
+      });
+    const byObject = new Map<ObjectId, typeof due>();
     for (const action of due) {
-      this.#maneuverActions.delete(action.work.id);
-      this.#maneuverWorkById.get(action.event.maneuverId)?.delete(action.work.id);
-      const result: ManeuverEventApplication = this.#maneuverManager.applyScheduledEvent(action.event);
-      if (result === "stale") continue;
+      const values = byObject.get(action.maneuver.objectId) ?? [];
+      values.push(action);
+      byObject.set(action.maneuver.objectId, values);
+    }
+    const transitions: { objectId: ObjectId; prepared: PreparedAuthorityTransition }[] = [];
+    const resolver = this.#frameResolver();
+    for (const [objectIdValue, objectActions] of byObject) {
+      const authority = this.#authorityBindings.get(objectIdValue);
+      if (authority === undefined) continue;
+      const before = authority.snapshot();
+      let handoff = authority.evaluate(instant, this.#authorityContext(objectIdValue, instant));
+      let transitionManeuver: Maneuver | undefined;
+      let transitionKind: "ballistic" | "finiteThrust" | undefined;
+      let activeStageIndex: number | undefined;
+      let stateChange = false;
+      let forceConfigurationBoundary = false;
+      let finiteTransitionManeuver: FiniteBurnManeuver | undefined;
+      let finiteTransitionKind: "ballistic" | "finiteThrust" | undefined;
+      let finiteTransitionStageIndex: number | undefined;
+      for (const action of objectActions) {
+        const maneuver = action.maneuver;
+        if (action.event.kind === ManeuverScheduledEventKind.impulse && maneuver.kind === "impulse") {
+          handoff = createImpulseHandoff(handoff, {
+            epoch: instant,
+            referenceFrame: maneuver.frame,
+            deltaVelocity: maneuver.deltaVelocity,
+          }, resolver);
+          if (finiteTransitionManeuver === undefined) {
+            transitionManeuver = maneuver;
+            transitionKind = "ballistic";
+          }
+          stateChange = true;
+          continue;
+        }
+        if (maneuver.kind !== "finiteBurn") continue;
+        finiteTransitionManeuver = maneuver;
+        transitionManeuver = maneuver;
+        if (action.event.kind === ManeuverScheduledEventKind.burnEnd
+            || action.event.kind === ManeuverScheduledEventKind.minimumMassTermination) {
+          finiteTransitionKind = "ballistic";
+          finiteTransitionStageIndex = undefined;
+        } else {
+          finiteTransitionKind = "finiteThrust";
+          finiteTransitionStageIndex = action.event.stageIndex;
+          forceConfigurationBoundary = forceConfigurationBoundary
+            || action.event.kind === ManeuverScheduledEventKind.stageBoundary;
+          stateChange = stateChange || maneuverRequiresStateChange(maneuver, action.event.stageIndex);
+        }
+      }
+      if (finiteTransitionManeuver !== undefined) {
+        transitionManeuver = finiteTransitionManeuver;
+        transitionKind = finiteTransitionKind;
+        activeStageIndex = finiteTransitionStageIndex;
+      }
+      if (transitionManeuver === undefined || transitionKind === undefined) continue;
+      const currentSegment = before.segments.find((segment) => compareSimulationInstants(segment.start, instant) <= 0
+        && (segment.end === undefined || compareSimulationInstants(instant, segment.end) < 0));
+      const alreadyNumerical = currentSegment?.modelKind === "numerical";
+      const shouldTransition = stateChange
+        || transitionKind === "ballistic" && alreadyNumerical
+        || transitionKind === "finiteThrust" && alreadyNumerical && forceConfigurationBoundary;
+      if (!shouldTransition) continue;
+      const requirement = fidelityRequirement({
+        requiresNumericalIntegration: true,
+        requiresContinuousThrust: transitionKind === "finiteThrust",
+        validFrom: instant,
+        reasons: [`maneuver-authority:${transitionManeuver.id}:${transitionManeuver.revision}`],
+      });
+      const forceConfiguration: ManeuverForceConfiguration = transitionKind === "finiteThrust"
+        ? maneuverForceConfiguration(transitionManeuver, activeStageIndex)
+        : ballisticForceConfiguration(transitionManeuver);
+      const request: AuthorityTransitionRequest = {
+        objectId: objectIdValue,
+        instant,
+        handoff,
+        authoritativeMass: this.#registeredMass(objectIdValue, instant),
+        requirement,
+        currentAuthority: before,
+        forceConfiguration,
+        dependencies: [{ kind: "maneuver", id: transitionManeuver.id, revision: transitionManeuver.revision }],
+      };
+      const prepared = this.#fidelityManager.prepareAuthorityTransition(objectIdValue, request);
+      transitions.push({ objectId: objectIdValue, prepared });
+    }
+    return Object.freeze({ actions: Object.freeze(due), transitions: Object.freeze(transitions) });
+  }
+
+  #commitRegistryTransition(
+    objectIdValue: ObjectId,
+    instant: SimulationInstant,
+    model: PropagationModel,
+    draft: AuthorityTransitionDraft,
+  ): (() => void) {
+    if (this.#registry === undefined) return () => undefined;
+    let previous;
+    try {
+      previous = this.#registry.get(objectIdValue);
+    } catch {
+      return () => undefined;
+    }
+    const registry = this.#registry;
+    if (registry === undefined) return () => undefined;
+    const segment = draft.segment;
+    const committedMass = model.massAt?.(instant);
+    const replacementProperties = committedMass === undefined
+      ? previous.properties
+      : { ...previous.properties, mass: kilograms(committedMass) };
+    const replacement = {
+      state: draft.candidate,
+      motion: {
+        modelKind: segment.modelKind,
+        direction: segment.model.declaration.direction,
+        propagationFrame: segment.propagationFrame,
+        segmentStart: segment.start,
+        ...(segment.end === undefined ? {} : { segmentEnd: segment.end }),
+        configurationRevision: segment.modelConfigurationRevision,
+        motionRevision: segment.motionRevision,
+      },
+      referenceStatus: draft.after.referenceStatus,
+      properties: replacementProperties,
+    } as const;
+    registry.setCurrentTime(instant);
+    registry.replaceMotion(objectIdValue, instant, replacement);
+    try {
+      this.stateQueries().bindMotionModel(objectIdValue, model);
+    } catch (error) {
+      try {
+        registry.replaceMotion(objectIdValue, instant, {
+          state: previous.state,
+          motion: previous.motion,
+          referenceStatus: previous.referenceStatus,
+          properties: previous.properties,
+          propertyRevision: previous.propertyRevision,
+        });
+      } catch {
+        // The original error is more actionable; the registry remains the
+        // transaction's authoritative failure diagnostic.
+      }
+      throw error;
+    }
+    return () => {
+      try {
+        registry.replaceMotion(objectIdValue, instant, {
+          state: previous.state,
+          motion: previous.motion,
+          referenceStatus: previous.referenceStatus,
+          properties: previous.properties,
+          propertyRevision: previous.propertyRevision,
+        });
+      } catch {
+        // Best-effort rollback; the caller still restores the in-memory
+        // authority and Fidelity snapshot.
+      }
+    };
+  }
+
+  #commitManeuverEventsAt(
+    instant: SimulationInstant,
+    prepared = this.#prepareManeuverEventsAt(instant),
+  ): void {
+    const rollbackRegistry: (() => void)[] = [];
+    const committed: { readonly objectId: ObjectId; readonly prepared: PreparedAuthorityTransition }[] = [];
+    try {
+      for (const transition of prepared.transitions) {
+        rollbackRegistry.push(this.#commitRegistryTransition(
+          transition.objectId,
+          instant,
+          transition.prepared.model,
+          transition.prepared.authorityDraft,
+        ));
+        transition.prepared.commit(false);
+        committed.push(transition);
+      }
+      for (const action of prepared.actions) {
+        this.#maneuverManager.applyScheduledEvent(action.event);
+        this.#maneuverActions.delete(action.work.id);
+        this.#maneuverWorkById.get(action.event.maneuverId)?.delete(action.work.id);
+      }
+      const ended = prepared.actions
+        .filter((action) => action.event.kind === ManeuverScheduledEventKind.burnEnd
+          || action.event.kind === ManeuverScheduledEventKind.minimumMassTermination)
+        .map((action) => action.maneuver)
+        .filter((maneuver): maneuver is FiniteBurnManeuver => maneuver.kind === "finiteBurn");
+      for (const maneuver of ended) {
+        this.#fidelityManager.retireSignal(maneuver.objectId, maneuverSignalId(maneuver.id), instant, false);
+      }
+    } catch (error) {
+      for (const transition of committed) {
+        transition.prepared.rollback();
+      }
+      for (const rollback of rollbackRegistry.reverse()) rollback();
+      throw error;
     }
     for (const [id, actions] of this.#maneuverWorkById) if (actions.size === 0) this.#maneuverWorkById.delete(id);
   }
@@ -557,6 +849,24 @@ export class OrbitEngine {
         }
       }
       this.#invalidationManager.prepareAdvance(current);
+      let preparedManeuvers: PreparedManeuverTimestamp | undefined;
+      try {
+        preparedManeuvers = this.#prepareManeuverEventsAt(stepTarget);
+      } catch {
+        return {
+          status: "failed",
+          reachedTarget: false,
+          currentTime: current,
+          targetTime: normalizedTarget,
+          processedTimestampCount,
+          processedWorkCount,
+          failure: {
+            code: SchedulerErrorCode.payloadFailed,
+            phase: ScheduledWorkPhase.authorityTransition,
+            sourceKind: ScheduledWorkSourceKind.maneuver,
+          },
+        };
+      }
       const result = this.#scheduledWorkQueue.advanceTo(stepTarget);
       this.#invalidationManager.afterAdvance(result.currentTime);
       processedTimestampCount += result.processedTimestampCount;
@@ -574,7 +884,7 @@ export class OrbitEngine {
         };
       }
       if (compareSimulationInstants(current, stepTarget) === 0) {
-        this.#applyManeuverEventsAt(current);
+        this.#commitManeuverEventsAt(current, preparedManeuvers);
         this.#encounterSchedulingManager.applyDue(current);
       }
       if (compareSimulationInstants(current, normalizedTarget) === 0) {
@@ -912,7 +1222,10 @@ export class OrbitEngine {
     currentCandidateId: string,
     policy?: FidelityAuthorityTransitionPolicy,
   ): FidelityStatus {
-    return this.#fidelityManager.bindAuthority(id, authority, currentCandidateId, this.currentTime, policy);
+    const object = objectId(id);
+    const status = this.#fidelityManager.bindAuthority(object, authority, currentCandidateId, this.currentTime, policy);
+    this.#authorityBindings.set(object, authority);
+    return status;
   }
 
   transitionFidelityAuthority(id: ObjectId): FidelityStatus {
@@ -1031,6 +1344,51 @@ export class OrbitEngine {
 
   numericalMotion(configuration: NumericalMotionConfiguration): NumericalMotion {
     return createNumericalMotion(configuration, this.#backend);
+  }
+
+  /**
+   * Build a Fidelity candidate factory for exact maneuver anchors.  The
+   * factory keeps the public caller at the Fidelity boundary while deriving
+   * each numerical successor from the timestamp handoff and current mass.
+   * Direction/attitude-dependent configurations that need a richer native
+   * force provider can supply their own candidate factory.
+   */
+  numericalAuthorityCandidateFactory(
+    template: NumericalMotionFactoryTemplate,
+  ): FidelityAuthorityCandidateFactory {
+    return (request, candidate) => {
+      const force = request.forceConfiguration;
+      if (force?.kind === "finiteThrust") {
+        const stageIndex = force.activeStageIndex ?? force.stages.findIndex((stage) =>
+          compareSimulationInstants(stage.start, request.instant) <= 0
+          && compareSimulationInstants(request.instant, stage.end) < 0);
+        const stage = stageIndex < 0 ? undefined : force.stages[stageIndex];
+        if (stage !== undefined && stage.effectiveForceMagnitudeNewtons > 0) {
+          if (stage.direction.kind !== "referenceFrame" || stage.direction.frameId !== request.handoff.referenceFrame) {
+            throw new Error("Default numerical maneuver factory requires an integration-frame reference direction");
+          }
+          const mass = request.authoritativeMass;
+          if (mass === undefined || mass <= 0) throw new Error("Finite thrust requires a positive authoritative mass");
+        }
+      }
+      const baseline = template.constantAcceleration ?? { x: 0, y: 0, z: 0 };
+      const configurationRevision = force?.configurationRevision ?? candidate.configurationRevision;
+      const motion = this.numericalMotion({
+        ...template,
+        objectId: request.objectId,
+        anchor: request.handoff,
+        configurationRevision,
+        motionRevision: nextAuthorityRevision(request.currentAuthority),
+        ...(request.authoritativeMass === undefined ? {} : { mass: kilograms(request.authoritativeMass) }),
+        constantAcceleration: {
+          x: metersPerSecondSquared(baseline.x),
+          y: metersPerSecondSquared(baseline.y),
+          z: metersPerSecondSquared(baseline.z),
+        },
+        ...(force === undefined ? {} : { maneuverForceConfiguration: force }),
+      });
+      return motion.model();
+    };
   }
 
   bindNumericalMotion(configuration: NumericalMotionConfiguration): NumericalMotion {

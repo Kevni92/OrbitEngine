@@ -57,10 +57,14 @@ object::ObjectId object_id(RegistryWire value) noexcept {
   return object::object_id_from_wire({value.object_id_high, value.object_id_low});
 }
 
+std::uint64_t revision_from_wire(RegistryWire value) noexcept {
+  return (static_cast<std::uint64_t>(value.property_revision_high) << 32U) | value.property_revision_low;
+}
+
 }  // namespace
 
 bool is_valid_input(RegistryWire value) noexcept {
-  if (value.operation_code > static_cast<std::uint16_t>(Operation::advance_clock)) {
+  if (value.operation_code > static_cast<std::uint16_t>(Operation::replace_motion)) {
     return false;
   }
   if (value.operation_code == static_cast<std::uint16_t>(Operation::reset)) {
@@ -174,6 +178,49 @@ RegistryWire Registry::command(RegistryWire input) noexcept {
     record.value.properties = input.properties;
     record.property_revision += 1;
     record.value.effective_epoch = input.effective_epoch;
+    return record_result(record);
+  }
+  if (operation == Operation::replace_motion) {
+    const auto inputEpoch = time::from_wire(input.state_epoch);
+    const auto inputStart = time::from_wire(input.segment_start);
+    if (!inputEpoch.has_value() || !inputStart.has_value()
+        || time::compare(*inputEpoch, *effective) != 0
+        || time::compare(*inputStart, *effective) != 0) {
+      return result(input, ResultCode::invalid_transition);
+    }
+    if (record.value.reference_status_code == 2 && input.reference_status_code != 2) {
+      return result(input, ResultCode::invalid_transition);
+    }
+    if (input.reference_status_code == 1 && input.model_kind_code != 1) {
+      return result(input, ResultCode::invalid_transition);
+    }
+    if (record.value.reference_status_code == 1 && input.model_kind_code != 1
+        && input.reference_status_code != 2) {
+      return result(input, ResultCode::invalid_transition);
+    }
+    record.value.state_present = input.state_present;
+    record.value.state_epoch = input.state_epoch;
+    record.value.state_frame_high = input.state_frame_high;
+    record.value.state_frame_low = input.state_frame_low;
+    record.value.position_x = input.position_x;
+    record.value.position_y = input.position_y;
+    record.value.position_z = input.position_z;
+    record.value.velocity_x = input.velocity_x;
+    record.value.velocity_y = input.velocity_y;
+    record.value.velocity_z = input.velocity_z;
+    record.value.model_kind_code = input.model_kind_code;
+    record.value.direction_code = input.direction_code;
+    record.value.segment_start = input.segment_start;
+    record.value.segment_end_present = input.segment_end_present;
+    record.value.segment_end = input.segment_end;
+    record.value.configuration_revision_high = input.configuration_revision_high;
+    record.value.configuration_revision_low = input.configuration_revision_low;
+    record.value.motion_revision_high = input.motion_revision_high;
+    record.value.motion_revision_low = input.motion_revision_low;
+    record.value.reference_status_code = input.reference_status_code;
+    record.value.effective_epoch = input.effective_epoch;
+    record.value.properties = input.properties;
+    record.property_revision = revision_from_wire(input);
     return record_result(record);
   }
   if (operation == Operation::diverge) {

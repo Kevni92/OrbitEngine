@@ -650,6 +650,30 @@ bool readNumericalWire(const Napi::Value& value, orbit_engine::numerical_operati
     && readInteger("configurationRevisionLow", 0.0, 4'294'967'295.0, output.configuration_revision_low)
     && readInteger("motionRevisionHigh", 0.0, 4'294'967'295.0, output.motion_revision_high)
     && readInteger("motionRevisionLow", 0.0, 4'294'967'295.0, output.motion_revision_low)
+    && readBoolean("maneuverPresent", output.maneuver_present)
+    && readInteger("maneuverIdHigh", 0.0, 4'294'967'295.0, output.maneuver_id_high)
+    && readInteger("maneuverIdLow", 0.0, 4'294'967'295.0, output.maneuver_id_low)
+    && readInteger("maneuverRevisionHigh", 0.0, 4'294'967'295.0, output.maneuver_revision_high)
+    && readInteger("maneuverRevisionLow", 0.0, 4'294'967'295.0, output.maneuver_revision_low)
+    && readInteger("maneuverStageIndex", 0.0, 63.0, output.maneuver_stage_index)
+    && readWire(object.Get("maneuverStageStart"), output.maneuver_stage_start)
+    && readWire(object.Get("maneuverStageEnd"), output.maneuver_stage_end)
+    && readDouble("maneuverForceMagnitudeNewtons", output.maneuver_force_magnitude_newtons)
+    && readDouble("maneuverMassFlowKilogramsPerSecond", output.maneuver_mass_flow_kilograms_per_second)
+    && readBoolean("maneuverMinimumMassPresent", output.maneuver_minimum_mass_present)
+    && readDouble("maneuverMinimumMassKilograms", output.maneuver_minimum_mass_kilograms)
+    && readInteger("maneuverDirectionKind", 0.0, 2.0, output.maneuver_direction_kind)
+    && readInteger("maneuverDirectionFrameHigh", 0.0, 4'294'967'295.0, output.maneuver_direction_frame_high)
+    && readInteger("maneuverDirectionFrameLow", 0.0, 4'294'967'295.0, output.maneuver_direction_frame_low)
+    && readInteger("maneuverDirectionFrameRevisionHigh", 0.0, 4'294'967'295.0, output.maneuver_direction_frame_revision_high)
+    && readInteger("maneuverDirectionFrameRevisionLow", 0.0, 4'294'967'295.0, output.maneuver_direction_frame_revision_low)
+    && readDouble("maneuverDirectionX", output.maneuver_direction_x)
+    && readDouble("maneuverDirectionY", output.maneuver_direction_y)
+    && readDouble("maneuverDirectionZ", output.maneuver_direction_z)
+    && readInteger("maneuverAttitudeSourceHigh", 0.0, 4'294'967'295.0, output.maneuver_attitude_source_high)
+    && readInteger("maneuverAttitudeSourceLow", 0.0, 4'294'967'295.0, output.maneuver_attitude_source_low)
+    && readInteger("maneuverAttitudeRevisionHigh", 0.0, 4'294'967'295.0, output.maneuver_attitude_revision_high)
+    && readInteger("maneuverAttitudeRevisionLow", 0.0, 4'294'967'295.0, output.maneuver_attitude_revision_low)
     && readWire(object.Get("resultEpoch"), output.result_epoch)
     && readDouble("resultPositionX", output.result_position_x)
     && readDouble("resultPositionY", output.result_position_y)
@@ -710,6 +734,30 @@ Napi::Object writeNumericalWire(Napi::Env env, const orbit_engine::numerical_ope
   result.Set("configurationRevisionLow", Napi::Number::New(env, value.configuration_revision_low));
   result.Set("motionRevisionHigh", Napi::Number::New(env, value.motion_revision_high));
   result.Set("motionRevisionLow", Napi::Number::New(env, value.motion_revision_low));
+  result.Set("maneuverPresent", Napi::Boolean::New(env, value.maneuver_present));
+  result.Set("maneuverIdHigh", Napi::Number::New(env, value.maneuver_id_high));
+  result.Set("maneuverIdLow", Napi::Number::New(env, value.maneuver_id_low));
+  result.Set("maneuverRevisionHigh", Napi::Number::New(env, value.maneuver_revision_high));
+  result.Set("maneuverRevisionLow", Napi::Number::New(env, value.maneuver_revision_low));
+  result.Set("maneuverStageIndex", Napi::Number::New(env, value.maneuver_stage_index));
+  result.Set("maneuverStageStart", writeWire(env, value.maneuver_stage_start));
+  result.Set("maneuverStageEnd", writeWire(env, value.maneuver_stage_end));
+  result.Set("maneuverForceMagnitudeNewtons", Napi::Number::New(env, value.maneuver_force_magnitude_newtons));
+  result.Set("maneuverMassFlowKilogramsPerSecond", Napi::Number::New(env, value.maneuver_mass_flow_kilograms_per_second));
+  result.Set("maneuverMinimumMassPresent", Napi::Boolean::New(env, value.maneuver_minimum_mass_present));
+  result.Set("maneuverMinimumMassKilograms", Napi::Number::New(env, value.maneuver_minimum_mass_kilograms));
+  result.Set("maneuverDirectionKind", Napi::Number::New(env, value.maneuver_direction_kind));
+  result.Set("maneuverDirectionFrameHigh", Napi::Number::New(env, value.maneuver_direction_frame_high));
+  result.Set("maneuverDirectionFrameLow", Napi::Number::New(env, value.maneuver_direction_frame_low));
+  result.Set("maneuverDirectionFrameRevisionHigh", Napi::Number::New(env, value.maneuver_direction_frame_revision_high));
+  result.Set("maneuverDirectionFrameRevisionLow", Napi::Number::New(env, value.maneuver_direction_frame_revision_low));
+  result.Set("maneuverDirectionX", Napi::Number::New(env, value.maneuver_direction_x));
+  result.Set("maneuverDirectionY", Napi::Number::New(env, value.maneuver_direction_y));
+  result.Set("maneuverDirectionZ", Napi::Number::New(env, value.maneuver_direction_z));
+  result.Set("maneuverAttitudeSourceHigh", Napi::Number::New(env, value.maneuver_attitude_source_high));
+  result.Set("maneuverAttitudeSourceLow", Napi::Number::New(env, value.maneuver_attitude_source_low));
+  result.Set("maneuverAttitudeRevisionHigh", Napi::Number::New(env, value.maneuver_attitude_revision_high));
+  result.Set("maneuverAttitudeRevisionLow", Napi::Number::New(env, value.maneuver_attitude_revision_low));
   result.Set("resultEpoch", writeWire(env, value.result_epoch));
   result.Set("resultPositionX", Napi::Number::New(env, value.result_position_x));
   result.Set("resultPositionY", Napi::Number::New(env, value.result_position_y));
@@ -770,6 +818,39 @@ Napi::Object writeCoupledMember(Napi::Env env, const orbit_engine::coupled_opera
   return result;
 }
 
+bool readCoupledManeuver(const Napi::Value& value, orbit_engine::coupled_operation::ManeuverWire& output) {
+  if (!value.IsObject()) return false;
+  const auto object = value.As<Napi::Object>();
+  const auto readInteger = [&object](const char* name, double minimum, double maximum, auto& target) {
+    const auto value = object.Get(name); if (!value.IsNumber()) return false;
+    const auto number = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(number) || std::trunc(number) != number || number < minimum || number > maximum) return false;
+    target = static_cast<std::decay_t<decltype(target)>>(number); return true;
+  };
+  const auto readDouble = [&object](const char* name, double& target) {
+    const auto value = object.Get(name); if (!value.IsNumber()) return false;
+    target = value.As<Napi::Number>().DoubleValue(); return std::isfinite(target);
+  };
+  const auto readBoolean = [&object](const char* name, bool& target) {
+    const auto value = object.Get(name); if (!value.IsBoolean()) return false;
+    target = value.As<Napi::Boolean>().Value(); return true;
+  };
+  return readBoolean("present", output.present)
+    && readInteger("objectIdHigh", 0.0, 4'294'967'295.0, output.object_id_high) && readInteger("objectIdLow", 0.0, 4'294'967'295.0, output.object_id_low)
+    && readInteger("maneuverIdHigh", 0.0, 4'294'967'295.0, output.maneuver_id_high) && readInteger("maneuverIdLow", 0.0, 4'294'967'295.0, output.maneuver_id_low)
+    && readInteger("maneuverRevisionHigh", 0.0, 4'294'967'295.0, output.maneuver_revision_high) && readInteger("maneuverRevisionLow", 0.0, 4'294'967'295.0, output.maneuver_revision_low)
+    && readInteger("configurationRevisionHigh", 0.0, 4'294'967'295.0, output.configuration_revision_high) && readInteger("configurationRevisionLow", 0.0, 4'294'967'295.0, output.configuration_revision_low)
+    && readInteger("stageIndex", 0.0, 63.0, output.stage_index) && readWire(object.Get("stageStart"), output.stage_start) && readWire(object.Get("stageEnd"), output.stage_end)
+    && readDouble("forceMagnitudeNewtons", output.force_magnitude_newtons) && readDouble("massFlowKilogramsPerSecond", output.mass_flow_kilograms_per_second)
+    && readBoolean("minimumMassPresent", output.minimum_mass_present) && readDouble("minimumMassKilograms", output.minimum_mass_kilograms)
+    && readInteger("directionKind", 0.0, 2.0, output.direction_kind)
+    && readInteger("directionFrameHigh", 0.0, 4'294'967'295.0, output.direction_frame_high) && readInteger("directionFrameLow", 0.0, 4'294'967'295.0, output.direction_frame_low)
+    && readInteger("directionFrameRevisionHigh", 0.0, 4'294'967'295.0, output.direction_frame_revision_high) && readInteger("directionFrameRevisionLow", 0.0, 4'294'967'295.0, output.direction_frame_revision_low)
+    && readDouble("directionX", output.direction_x) && readDouble("directionY", output.direction_y) && readDouble("directionZ", output.direction_z)
+    && readInteger("attitudeSourceHigh", 0.0, 4'294'967'295.0, output.attitude_source_high) && readInteger("attitudeSourceLow", 0.0, 4'294'967'295.0, output.attitude_source_low)
+    && readInteger("attitudeRevisionHigh", 0.0, 4'294'967'295.0, output.attitude_revision_high) && readInteger("attitudeRevisionLow", 0.0, 4'294'967'295.0, output.attitude_revision_low);
+}
+
 bool readCoupledWire(const Napi::Value& value, orbit_engine::coupled_operation::CoupledWire& output) {
   if (!value.IsObject()) return false;
   const auto object = value.As<Napi::Object>();
@@ -784,6 +865,7 @@ bool readCoupledWire(const Napi::Value& value, orbit_engine::coupled_operation::
       || !readInteger("authorityIdHigh", 0.0, 4'294'967'295.0, output.authority_id_high) || !readInteger("authorityIdLow", 0.0, 4'294'967'295.0, output.authority_id_low)
       || !readInteger("groupRevisionHigh", 0.0, 4'294'967'295.0, output.group_revision_high) || !readInteger("groupRevisionLow", 0.0, 4'294'967'295.0, output.group_revision_low)
       || !readInteger("memberCount", 0.0, 32.0, output.member_count) || !readInteger("requestedCount", 0.0, 32.0, output.requested_count)
+      || !readInteger("maneuverCount", 0.0, 32.0, output.maneuver_count)
       || !readInteger("configurationRevisionHigh", 0.0, 4'294'967'295.0, output.configuration_revision_high) || !readInteger("configurationRevisionLow", 0.0, 4'294'967'295.0, output.configuration_revision_low)
       || !readDouble("relativeTolerance", output.relative_tolerance) || !readDouble("positionAbsoluteToleranceMeters", output.position_absolute_tolerance_meters)
       || !readDouble("velocityAbsoluteToleranceMetersPerSecond", output.velocity_absolute_tolerance_meters_per_second) || !readDouble("massAbsoluteToleranceKilograms", output.mass_absolute_tolerance_kilograms)
@@ -802,6 +884,9 @@ bool readCoupledWire(const Napi::Value& value, orbit_engine::coupled_operation::
     const auto high = item.Get("high"); const auto low = item.Get("low"); if (!high.IsNumber() || !low.IsNumber()) return false;
     output.requested_id_high[index] = static_cast<std::uint32_t>(high.As<Napi::Number>().Uint32Value()); output.requested_id_low[index] = static_cast<std::uint32_t>(low.As<Napi::Number>().Uint32Value());
   }
+  const auto maneuvers = object.Get("maneuvers");
+  if (!maneuvers.IsArray() || output.maneuver_count > orbit_engine::coupled_operation::kMaxMembers || maneuvers.As<Napi::Array>().Length() < output.maneuver_count) return false;
+  for (std::size_t index = 0; index < output.maneuver_count; ++index) if (!readCoupledManeuver(maneuvers.As<Napi::Array>().Get(index), output.maneuvers[index])) return false;
   return true;
 }
 
