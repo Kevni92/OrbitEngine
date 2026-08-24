@@ -5,6 +5,7 @@ import { objectId, simulationInstant } from "orbit-engine";
 import {
   CelestialSystemView,
   createCelestialRenderSnapshot,
+  createOrbitPathSnapshot,
   createRenderSpaceConfig,
   transformSnapshotPositionToSceneUnits,
 } from "../dist/index.js";
@@ -47,11 +48,12 @@ const earthAppearance = createCelestialAppearance({
   provenance,
 });
 
-function snapshot(bodies) {
+function snapshot(bodies, orbitPaths) {
   return createCelestialRenderSnapshot({
     instant: simulationInstant(100, 5),
     origin: { kind: "frame", frameId: "test:ssb-origin" },
     bodies,
+    ...(orbitPaths === undefined ? {} : { orbitPaths }),
     revision: "test-revision",
   });
 }
@@ -198,4 +200,49 @@ test("camera-aware policy batches marker bodies, keeps hierarchy generic, and pi
   assert.deepEqual(view.pick(0.346, 0, camera, 800, 800)?.objectId, markerId);
   view.dispose();
   assert.equal(view.root.getObjectByName("orbit-engine-three batched markers"), undefined);
+});
+
+test("view renders supplied orbit paths, updates selection indication, and preserves path identity", () => {
+  const parentId = objectId("30");
+  const childId = objectId("31");
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1_000);
+  camera.position.set(0, 0, 10);
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
+  const path = createOrbitPathSnapshot({
+    objectId: childId,
+    parentId,
+    origin: { kind: "object", objectId: parentId, frameId: "test:ssb-origin" },
+    interval: { start: simulationInstant(0), end: simulationInstant(10) },
+    samples: [0, 2, 5, 7].map((seconds) => ({
+      instant: simulationInstant(seconds),
+      positionRelativeToOriginMeters: { x: seconds, y: 0, z: 0 },
+    })),
+  });
+  const view = new CelestialSystemView();
+  const renderSnapshot = snapshot([
+    body(parentId, { x: 0, y: 0, z: 0 }, { radius: 1 }),
+    body(childId, { x: 5, y: 0, z: 0 }, { radius: 0.2, parentId }),
+  ], [path]);
+  const result = view.update(renderSnapshot, {
+    camera,
+    viewportWidthCssPixels: 800,
+    viewportHeightCssPixels: 800,
+    selectedObjectId: childId,
+  });
+  assert.equal(result.committed, true);
+  const orbitLayer = view.root.getObjectByName("orbit-engine-three orbit layer");
+  assert.ok(orbitLayer);
+  assert.equal(orbitLayer.userData.orbitCount, 1);
+  assert.equal(orbitLayer.getObjectByName(`Orbit ${childId}`).userData.objectId, childId);
+  assert.equal(view.root.getObjectByName("orbit-engine-three selection indicator").userData.objectId, childId);
+  const second = view.update(renderSnapshot, {
+    camera,
+    viewportWidthCssPixels: 800,
+    viewportHeightCssPixels: 800,
+    selectedObjectId: childId,
+  });
+  assert.equal(second.committed, true);
+  assert.strictEqual(view.root.getObjectByName(`Orbit ${childId}`), orbitLayer.getObjectByName(`Orbit ${childId}`));
+  view.dispose();
 });

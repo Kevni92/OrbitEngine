@@ -1,6 +1,7 @@
 import type { ObjectId, ObjectType, SimulationInstant } from "orbit-engine";
 import type { CelestialAppearance } from "./presentation/appearance.js";
 import type { RenderVector3 } from "./render-space.js";
+import { createOrbitPathSnapshot, type OrbitPathSnapshot, type OrbitPathSnapshotInput } from "./orbit.js";
 
 export type BodyRepresentation = "hidden" | "marker" | "sphere";
 
@@ -29,12 +30,14 @@ export interface CelestialRenderSnapshotInput {
   readonly instant: SimulationInstant;
   readonly origin: RenderSnapshotOrigin;
   readonly bodies: readonly CelestialBodyRenderState[];
+  readonly orbitPaths?: readonly OrbitPathSnapshotInput[];
   readonly revision?: string;
 }
 
 export interface CelestialRenderSnapshot extends CelestialRenderSnapshotInput {
   readonly fingerprint: string;
   readonly bodies: readonly CelestialBodyRenderState[];
+  readonly orbitPaths?: readonly OrbitPathSnapshot[];
 }
 
 function fail(message: string): never {
@@ -119,7 +122,24 @@ export function createCelestialRenderSnapshot(input: CelestialRenderSnapshotInpu
   })));
   const origin = Object.freeze({ ...input.origin });
   const instant = Object.freeze({ seconds: input.instant.seconds, nanoseconds: input.instant.nanoseconds }) as SimulationInstant;
+  const orbitPaths = input.orbitPaths === undefined
+    ? undefined
+    : Object.freeze(input.orbitPaths.map((path) => createOrbitPathSnapshot(path)));
+  if (orbitPaths !== undefined) {
+    const pathIds = new Set<ObjectId>();
+    orbitPaths.forEach((path) => {
+      if (pathIds.has(path.objectId)) fail(`duplicate orbit path objectId ${path.objectId}`);
+      pathIds.add(path.objectId);
+    });
+  }
   const revision = input.revision;
-  const fingerprint = stableFingerprint({ instant, origin, bodies, revision });
-  return Object.freeze({ instant, origin, bodies, ...(revision === undefined ? {} : { revision }), fingerprint });
+  const fingerprint = stableFingerprint({ instant, origin, bodies, orbitPaths, revision });
+  return Object.freeze({
+    instant,
+    origin,
+    bodies,
+    ...(orbitPaths === undefined ? {} : { orbitPaths }),
+    ...(revision === undefined ? {} : { revision }),
+    fingerprint,
+  });
 }

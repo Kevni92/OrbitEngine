@@ -519,6 +519,18 @@ The renderer itself does not run Kepler, Lambert, ephemeris or numerical propaga
 
 The optional OrbitEngine snapshot adapter may provide bounded orbit sampling through public state APIs. Sample count/time range are explicit. Orbit cache identity includes object motion/source revision, parent/frame/origin, sample interval and sampling configuration.
 
+The package exposes `OrbitPathSnapshot`, `OrbitPathCache`, `sampleOrbitPath`,
+`OrbitPathRenderer`, `SelectionIndicator`, and
+`createOrbitEngineSnapshotSource`. The adapter uses only public
+`statesAt`, `stateAt`, `relativeStateAt`, and registry metadata reads. It
+returns immutable same-epoch snapshots, uses parent-relative queries when the
+path origin is an object, and propagates query failures instead of
+extrapolating locally. The renderer combines parent-relative samples with the
+current presentation positions before Float32 upload, so distant paths do not
+reintroduce large opposing coordinates in GPU geometry. Selection halos and
+orbit picking carry stable ObjectIds and never alter body radius or simulation
+state.
+
 No orbit is resampled every frame unless its declared cache dependency/input actually changes. Large populations do not receive orbits automatically.
 
 ## Selection, focus, and picking
