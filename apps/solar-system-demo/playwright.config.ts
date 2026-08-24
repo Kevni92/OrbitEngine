@@ -4,10 +4,10 @@ export default defineConfig({
   testDir: "./tests",
   testMatch: /\.smoke\.spec\.ts$/,
   timeout: 180_000,
-  // The production OEP pack is intentionally large. Serialise CI browser
-  // workers so each test does not load the complete static dataset in
-  // parallel and exhaust the hosted runner's memory.
-  workers: process.env.CI ? 2 : undefined,
+  // The production OEP pack is intentionally large. Serialise browser
+  // workers so tests do not load the complete static dataset in parallel
+  // and exhaust local or hosted-runner memory.
+  workers: 1,
   expect: {
     timeout: 90_000,
   },

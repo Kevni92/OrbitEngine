@@ -104,6 +104,7 @@ test("local moon focus preserves global Solar-System renderer context and major 
   await page.goto("/");
   await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
   await expect(page.locator("#rendering-status")).toHaveAttribute("data-state", "ready");
+  await expect(page.locator("#orbit-status")).toContainText("reference orbits ready");
 
   await expect.poll(async () => (await readDiagnostics(page))?.focusId).toBe("1000");
   await expect.poll(async () => {

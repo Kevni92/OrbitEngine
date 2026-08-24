@@ -255,6 +255,19 @@
         <button class="mobile-surface-button" id="mobile-controls-toggle" type="button" aria-controls="demo-panel" aria-expanded="true">Controls</button>
         <button class="mobile-surface-button" id="mobile-browser-toggle" type="button" aria-controls="celestial-browser" aria-expanded="false">Browse bodies</button>
       </nav>
+      <section class="startup-loader" id="startup-loader" data-state="loading" role="status" aria-live="polite" aria-label="Preparing the Solar System">
+        <div class="startup-loader-card">
+          <div class="startup-loader-heading">
+            <p class="section-kicker">Getting ready</p>
+            <strong id="startup-loader-phase">Setting things up</strong>
+            <strong id="startup-loader-percent">Working…</strong>
+          </div>
+          <div class="startup-loader-progress" id="startup-loader-progress" data-mode="indeterminate" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+            <span aria-hidden="true"></span>
+          </div>
+          <p class="startup-loader-detail" id="startup-loader-detail">Getting the view ready for you…</p>
+        </div>
+      </section>
       <canvas id="scene" aria-label="Interactive OrbitEngine Solar System scene"></canvas>
     </main>
     <script type="module" src="/src/main.ts"></script>

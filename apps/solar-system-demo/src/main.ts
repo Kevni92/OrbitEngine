@@ -19,9 +19,11 @@ import { PathCache } from "./simulation/path-sampling.js";
 import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visualization.js";
 import { SimulationClock } from "./simulation/simulation-clock.js";
 import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
+import { StartupInstrumentation, type StartupDiagnostics } from "./simulation/startup-instrumentation.js";
 import { CelestialBrowser } from "./ui/celestial-browser.js";
 import { DemoPanel } from "./ui/demo-panel.js";
 import { ResponsiveSurfaceManager } from "./ui/responsive-surfaces.js";
+import { StartupLoader } from "./ui/startup-loader.js";
 import { simulationInstantFromLocalDateTimeInput } from "./ui/civil-time.js";
 import {
   compareSimulationInstants,
@@ -110,6 +112,7 @@ declare global {
       readonly validityEndSeconds?: number;
       readonly eclipse: EclipseRegressionDiagnostics;
     };
+    __orbitDemoStartupDiagnostics?: () => StartupDiagnostics;
   }
 }
 
@@ -182,6 +185,8 @@ const clock = new SimulationClock();
 const surfaceManager = new ResponsiveSurfaceManager();
 
 async function bootstrap(): Promise<void> {
+  const startup = new StartupInstrumentation();
+  startup.mark("bootstrap-start");
   let panel!: DemoPanel;
 
   let scenario: SolarSystemScenario | undefined;
@@ -301,8 +306,13 @@ async function bootstrap(): Promise<void> {
 
   function orbitEntries(): readonly SolarSystemScenario["bodies"][number][] {
     const entries = stateSource?.currentBodies() ?? scenario?.bodies ?? [];
-    return entries.filter((entry) => entry.definition.centralBody !== undefined
+    const candidates = entries.filter((entry) => entry.definition.centralBody !== undefined
       && (entry.definition.type !== ObjectType.asteroid || entry.definition.id === selectedId));
+    return [...candidates].sort((left, right) => {
+      const priority = (entry: SolarSystemScenario["bodies"][number]): number =>
+        entry.definition.id === selectedId ? 0 : entry.definition.id === focusId ? 1 : 2;
+      return priority(left) - priority(right);
+    });
   }
 
   function sampleReferenceOrbit(entry: SolarSystemScenario["bodies"][number]): boolean {
@@ -324,20 +334,6 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  function sampleReferenceOrbits(): void {
-    if (scenario === undefined || stateSource === undefined || scene === undefined) return;
-    let ready = 0;
-    let failures = 0;
-    for (const entry of orbitEntries()) {
-      if (sampleReferenceOrbit(entry)) ready += 1;
-      else failures += 1;
-    }
-    panel.setOrbitStatus(
-      failures === 0 ? "ready" : "warning",
-      failures === 0 ? `${ready} reference orbits ready` : `${ready} reference orbits ready · ${failures} unavailable`,
-    );
-  }
-
   function scheduleReferenceOrbitResample(): void {
     if (orbitResampleTimer !== undefined) window.clearTimeout(orbitResampleTimer);
     const entries = orbitEntries();
@@ -350,6 +346,7 @@ async function bootstrap(): Promise<void> {
       const entry = entries[index];
       index += 1;
       if (entry === undefined) {
+        startup.mark("deferred-orbit-population-complete");
         panel.setOrbitStatus(
           failures === 0 ? "ready" : "warning",
           failures === 0 ? `${ready} reference orbits ready` : `${ready} reference orbits ready · ${failures} unavailable`,
@@ -478,6 +475,12 @@ async function bootstrap(): Promise<void> {
       }
     },
   });
+  const startupLoader = new StartupLoader();
+  startupLoader.setLoading({
+    phase: "bootstrap",
+    label: "Setting things up",
+    detail: "Getting the view ready for you…",
+  });
   panel.setSimulationTime(clock.currentInstant(), clock.isPlaying());
   panel.setLightingMode(lightingMode);
   panel.setGuideSettings(DEFAULT_SCENE_GUIDE_SETTINGS);
@@ -489,17 +492,164 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
+  window.__orbitDemoStartupDiagnostics = () => startup.diagnostics();
+
+  try {
+    renderShell = createRenderShell(canvas);
+    guides = new SceneGuides(renderShell.scene);
+    guides.updateForCamera(renderShell.camera);
+    startup.mark("webgl-ready");
+    startupLoader.setLoading({
+      phase: "engine",
+      label: "Starting the simulation",
+      detail: "Getting the Solar System ready…",
+    });
+    panel.setRenderingStatus("pending", "WebGL shell ready", "Preparing the first view");
+  } catch (error) {
+    if (error instanceof WebGL2UnavailableError) {
+      panel.setRenderingStatus("unsupported", "WebGL 2 unavailable", error.message);
+    } else {
+      panel.setRenderingStatus("error", "Rendering initialization failed", error instanceof Error ? error.message : String(error));
+    }
+    startupLoader.setError(error instanceof Error ? error.message : String(error));
+    return;
+  }
+
+  const resize = (): void => {
+    renderShell!.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+    scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
+    if (scene !== undefined) panel.setLightingDiagnostics(scene.lightingDiagnostics());
+  };
+  window.addEventListener("resize", resize);
+  resize();
+
+  window.__orbitDemoSetCameraFixture = (fixture) => {
+    const { camera, controls } = renderShell!;
+    const values = [...fixture.position, ...fixture.target, ...(fixture.up ?? [0, 0, 1])];
+    if (!values.every((value) => Number.isFinite(value))) {
+      throw new RangeError("Camera fixture coordinates must be finite");
+    }
+    camera.position.set(fixture.position[0], fixture.position[1], fixture.position[2]);
+    camera.up.set(
+      fixture.up?.[0] ?? 0,
+      fixture.up?.[1] ?? 0,
+      fixture.up?.[2] ?? 1,
+    );
+    controls.target.set(fixture.target[0], fixture.target[1], fixture.target[2]);
+    controls.update();
+    // OrbitControls caches its previous quaternion. Re-apply the requested
+    // up vector after the control update so directional fixtures can use a
+    // deterministic roll as well as a deterministic orbit position.
+    camera.lookAt(controls.target);
+    updateCameraClipPlanes(camera, controls.target);
+    guides?.updateForCamera(camera);
+    scene?.updatePresentation(camera, canvas.clientHeight || window.innerHeight);
+    renderShell!.renderer.render(renderShell!.scene, camera);
+  };
+
+  canvas.addEventListener("click", (event) => {
+    if (scene === undefined || renderShell === undefined) return;
+    const bounds = canvas.getBoundingClientRect();
+    const x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+    const y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+    scene.selectFromPointer(x, y, renderShell.camera);
+  });
+
+  const animationLoop = createAnimationLoop(() => {
+    const frameStartedAt = performance.now();
+    clock.advanceTo(performance.now());
+    updateClockUi();
+    if (coordinator !== undefined) requestCurrentState();
+    guides?.updateForCamera(renderShell!.camera);
+    updateCameraClipPlanes(renderShell!.camera, renderShell!.controls.target);
+    scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
+    if (scene !== undefined) panel.setLightingDiagnostics(scene.lightingDiagnostics());
+    panel.setHierarchyDiagnostics(scene?.representationFor(EUROPA_ID));
+    const latest = coordinator?.latestSnapshot();
+    if (latest !== undefined && scene !== undefined) {
+      panel.setPopulationDiagnostics(runtimeOverlay?.count ?? 0, scene.lodDiagnostics());
+      updateSelectedPanel(latest.value);
+    }
+    renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
+    if (renderedFrameCount === 0) startup.mark("first-rendered-frame");
+    lastFrameDurationMs = Math.max(0, performance.now() - frameStartedAt);
+    totalFrameDurationMs += lastFrameDurationMs;
+    renderedFrameCount += 1;
+  });
+  animationLoop.start();
+  window.addEventListener("beforeunload", () => {
+    animationLoop.stop();
+    surfaceManager.dispose();
+    window.removeEventListener("resize", resize);
+    delete window.__orbitDemoRenderDiagnostics;
+    delete window.__orbitDemoReferenceDiagnostics;
+    delete window.__orbitDemoSetCameraFixture;
+    delete window.__orbitDemoStartupDiagnostics;
+    guides?.dispose();
+    scene?.dispose();
+    renderShell?.dispose();
+    browser?.dispose();
+  }, { once: true });
+
   try {
     engine = await createDemoEngine();
     engineHealth = engine.health();
+    startup.mark("wasm-engine-ready");
+    startupLoader.setLoading({
+      phase: "manifest",
+      label: "Checking the Solar System data",
+      detail: "Making sure everything is ready…",
+    });
     panel.setEngineStatus("ready", "Engine ready", `WASM · protocol ${engineHealth.protocolVersion} · core ${engineHealth.coreVersion}`);
   } catch (error) {
     panel.setEngineStatus("error", "Engine initialization failed", error instanceof Error ? error.message : String(error));
+    startupLoader.setError(error instanceof Error ? error.message : String(error));
     return;
   }
 
   try {
-    const referenceDataset = await loadSolarSystemReferenceDataset(engine);
+    panel.setScenarioNote("pending", "Loading production Solar-System OEP…");
+    const referenceDataset = await loadSolarSystemReferenceDataset(engine, {
+      onProgress: (progress) => {
+        if (progress.phase === "manifest-ready") {
+          startup.mark("manifest-ready");
+          startupLoader.setLoading({
+            phase: "shards",
+            label: "Loading Solar System data",
+            detail: `Found ${progress.totalShards} data packages.`,
+            fraction: 0,
+          });
+          panel.setScenarioNote("pending", `Loading ${progress.totalShards} Solar System data packages…`);
+        } else if (progress.phase === "shard-validated") {
+          startupLoader.setLoading({
+            phase: "shards",
+            label: "Loading Solar System data",
+            detail: `Loaded ${progress.loadedShards} of ${progress.totalShards} data packages${progress.shardId === undefined ? "" : ` · ${progress.shardId}`}.`,
+            fraction: progress.loadedShards / progress.totalShards,
+          });
+          panel.setScenarioNote(
+            "pending",
+            `Loaded Solar System data package ${progress.loadedShards}/${progress.totalShards}${progress.shardId === undefined ? "" : ` · ${progress.shardId}`}…`,
+          );
+        } else if (progress.phase === "required-oep-data-ready") {
+          startup.mark("required-oep-data-ready");
+          startupLoader.setLoading({
+            phase: "dataset",
+            label: "Preparing the simulation",
+            detail: "The data is loaded. Now we’re getting it ready to run…",
+          });
+          panel.setScenarioNote("pending", "Solar System data loaded · preparing the simulation…");
+        } else if (progress.phase === "dataset-ready") {
+          startup.mark("dataset-ready");
+          startupLoader.setLoading({
+            phase: "scene",
+            label: "Almost ready",
+            detail: "Putting the finishing touches on your view…",
+          });
+          panel.setScenarioNote("pending", "Production OEP dataset ready · registering Solar-System bodies…");
+        }
+      },
+    });
     scenario = loadSolarSystemScenario(engine, referenceDataset.dataset, referenceDataset.eclipseOracle);
     if (scenario.rootFrame !== SCENARIO_ROOT_FRAME) throw new Error("Scenario root frame is not the engine root frame");
     if (scenario.catalog.roots.length !== 1) throw new Error("Scenario catalog must have exactly one root");
@@ -538,6 +688,7 @@ async function bootstrap(): Promise<void> {
     });
   } catch (error) {
     panel.setScenarioNote("error", error instanceof Error ? error.message : String(error));
+    startupLoader.setError(error instanceof Error ? error.message : String(error));
     return;
   }
 
@@ -551,6 +702,7 @@ async function bootstrap(): Promise<void> {
       },
     },
     onSnapshot: (snapshot) => {
+      startup.mark("first-state-frame-ready");
       scene?.update(snapshot.value.states, snapshot.value.objectIds);
       if (scene !== undefined) panel.setPopulationDiagnostics(runtimeOverlay?.count ?? 0, scene.lodDiagnostics());
       panel.setHierarchyDiagnostics(scene?.representationFor(EUROPA_ID));
@@ -580,10 +732,9 @@ async function bootstrap(): Promise<void> {
   });
 
   try {
-    renderShell = createRenderShell(canvas);
-    guides = new SceneGuides(renderShell.scene);
-    guides.updateForCamera(renderShell.camera);
-    panel.setRenderingStatus("ready", "WebGL ready", "WebGL 2 · identity axes · +Z up");
+    if (renderShell === undefined || guides === undefined || stateSource === undefined || scenario === undefined) {
+      throw new Error("Rendering prerequisites are unavailable after dataset initialization");
+    }
     scene = new SolarSystemScene(renderShell.scene, scenario, {
       onSelect: setSelectedBody,
     });
@@ -644,93 +795,24 @@ async function bootstrap(): Promise<void> {
         };
       }),
     });
-    sampleReferenceOrbits();
+    startup.mark("scene-ready");
+    startupLoader.setReady();
+    panel.setRenderingStatus("ready", "WebGL ready", "WebGL 2 · identity axes · +Z up");
   } catch (error) {
     if (error instanceof WebGL2UnavailableError) {
       panel.setRenderingStatus("unsupported", "WebGL 2 unavailable", error.message);
     } else {
       panel.setRenderingStatus("error", "Rendering initialization failed", error instanceof Error ? error.message : String(error));
     }
+    startupLoader.setError(error instanceof Error ? error.message : String(error));
+    return;
   }
 
   panel.setControlsReady(true);
   panel.setGuideSettings(guides?.settings() ?? DEFAULT_SCENE_GUIDE_SETTINGS);
   panel.setOrbitsVisible(scene?.orbitsVisible() ?? true);
   requestCurrentState();
-
-  if (renderShell === undefined) return;
-  const resize = (): void => {
-    renderShell!.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
-    scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
-    if (scene !== undefined) panel.setLightingDiagnostics(scene.lightingDiagnostics());
-  };
-  window.addEventListener("resize", resize);
-  resize();
-
-  window.__orbitDemoSetCameraFixture = (fixture) => {
-    const { camera, controls } = renderShell!;
-    const values = [...fixture.position, ...fixture.target, ...(fixture.up ?? [0, 0, 1])];
-    if (!values.every((value) => Number.isFinite(value))) {
-      throw new RangeError("Camera fixture coordinates must be finite");
-    }
-    camera.position.set(fixture.position[0], fixture.position[1], fixture.position[2]);
-    camera.up.set(
-      fixture.up?.[0] ?? 0,
-      fixture.up?.[1] ?? 0,
-      fixture.up?.[2] ?? 1,
-    );
-    controls.target.set(fixture.target[0], fixture.target[1], fixture.target[2]);
-    controls.update();
-    // OrbitControls caches its previous quaternion. Re-apply the requested
-    // up vector after the control update so directional fixtures can use a
-    // deterministic roll as well as a deterministic orbit position.
-    camera.lookAt(controls.target);
-    updateCameraClipPlanes(camera, controls.target);
-    guides?.updateForCamera(camera);
-    scene?.updatePresentation(camera, canvas.clientHeight || window.innerHeight);
-    renderShell!.renderer.render(renderShell!.scene, camera);
-  };
-
-  canvas.addEventListener("click", (event) => {
-    if (scene === undefined || renderShell === undefined) return;
-    const bounds = canvas.getBoundingClientRect();
-    const x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
-    const y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
-    scene.selectFromPointer(x, y, renderShell.camera);
-  });
-
-  const loop = createAnimationLoop(() => {
-    const frameStartedAt = performance.now();
-    clock.advanceTo(performance.now());
-    updateClockUi();
-    requestCurrentState();
-    guides?.updateForCamera(renderShell!.camera);
-    updateCameraClipPlanes(renderShell!.camera, renderShell!.controls.target);
-    scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
-    if (scene !== undefined) panel.setLightingDiagnostics(scene.lightingDiagnostics());
-    panel.setHierarchyDiagnostics(scene?.representationFor(EUROPA_ID));
-    const latest = coordinator?.latestSnapshot();
-    if (latest !== undefined && scene !== undefined) {
-      panel.setPopulationDiagnostics(runtimeOverlay?.count ?? 0, scene.lodDiagnostics());
-      updateSelectedPanel(latest.value);
-    }
-    renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
-    lastFrameDurationMs = Math.max(0, performance.now() - frameStartedAt);
-    totalFrameDurationMs += lastFrameDurationMs;
-    renderedFrameCount += 1;
-  });
-  loop.start();
-  window.addEventListener("beforeunload", () => {
-    loop.stop();
-    surfaceManager.dispose();
-    window.removeEventListener("resize", resize);
-    delete window.__orbitDemoRenderDiagnostics;
-    delete window.__orbitDemoSetCameraFixture;
-    guides?.dispose();
-    scene?.dispose();
-    renderShell?.dispose();
-    browser?.dispose();
-  }, { once: true });
+  scheduleReferenceOrbitResample();
 }
 
 void bootstrap();
