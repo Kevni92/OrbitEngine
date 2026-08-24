@@ -8,6 +8,7 @@ import {
   MIN_ADAPTIVE_RADIUS_SCENE_UNITS,
   SCENE_UP_VECTOR,
   focusRelativePosition,
+  icrsDirectionToRenderSpace,
   icrsToJ2000Ecliptic,
   j2000EclipticToIcrs,
   metersToSceneUnits,
@@ -43,6 +44,23 @@ test("render space preserves focus-relative SI conversion before presentation ro
   assert.deepEqual(focusRelativePosition(vec3(11, 22, 33), vec3(1, 2, 3)), { x: 10, y: 20, z: 30 });
   assert.deepEqual(positionToSceneUnits(vec3(ASTRONOMICAL_UNIT_METERS, 0, 0)), { x: 100, y: 0, z: 0 });
   assert.equal(metersToSceneUnits(ASTRONOMICAL_UNIT_METERS), 100);
+});
+
+test("render-space stellar directions use one rotation without translation or scale", () => {
+  const stateDirection = { x: 0, y: 1, z: 0 };
+  const renderDirection = icrsDirectionToRenderSpace(stateDirection);
+  const expected = icrsToJ2000Ecliptic(stateDirection);
+  const expectedLength = Math.hypot(expected.x, expected.y, expected.z);
+  assert.ok(Math.abs(renderDirection.x - expected.x / expectedLength) < 1e-12);
+  assert.ok(Math.abs(renderDirection.y - expected.y / expectedLength) < 1e-12);
+  assert.ok(Math.abs(renderDirection.z - expected.z / expectedLength) < 1e-12);
+  assert.ok(Math.abs(Math.hypot(renderDirection.x, renderDirection.y, renderDirection.z) - 1) < 1e-12);
+  assert.throws(() => icrsDirectionToRenderSpace({ x: 0, y: 0, z: 0 }), /non-zero/);
+
+  const translated = icrsDirectionToRenderSpace({ x: 0, y: 10, z: 0 });
+  assert.ok(Math.abs(translated.x - renderDirection.x) < 1e-12);
+  assert.ok(Math.abs(translated.y - renderDirection.y) < 1e-12);
+  assert.ok(Math.abs(translated.z - renderDirection.z) < 1e-12);
 });
 
 test("radius policy keeps physical and adaptive presentation values separate", () => {

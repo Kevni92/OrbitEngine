@@ -16,6 +16,7 @@ import {
   type StellarEmitter,
   type StellarIlluminationSet,
 } from "./celestial-appearance-rendering.js";
+import type { CartesianPosition } from "./celestial-appearance-rendering.js";
 import type { RegisteredScenarioBody, SolarSystemScenario } from "../scenario/load-solar-system.js";
 import type { RuntimeAsteroidBody } from "../scenario/runtime-asteroid-overlay.js";
 import type { OrbitPath } from "../simulation/path-sampling.js";
@@ -78,6 +79,7 @@ export interface BodyRenderDiagnostics {
   readonly ndcX: number;
   readonly ndcY: number;
   readonly ndcZ: number;
+  readonly renderWorldPosition: CartesianPosition;
   readonly markerSizePixels?: number;
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
@@ -88,6 +90,19 @@ export interface BodyRenderDiagnostics {
   readonly inspectionFillApplied: boolean;
   readonly inspectionFillContribution: number;
   readonly rendererInspectionFillIntensity: number;
+  readonly stellarDirections: readonly StellarDirectionDiagnostics[];
+}
+
+export interface StellarDirectionDiagnostics {
+  readonly emitterId: ObjectId;
+  /** Body-to-emitter direction from the authoritative state positions. */
+  readonly physicalDirectionToEmitter: CartesianPosition;
+  /** Same direction after the single ICRS -> render-world rotation. */
+  readonly renderDirectionToEmitter: CartesianPosition;
+  /** Alias for the vector passed to the atmosphere shader's world-space uniform. */
+  readonly shaderDirectionToEmitter: CartesianPosition;
+  /** Normalized direction from the body center to the projected emitter in NDC. */
+  readonly projectedDirection?: Readonly<{ x: number; y: number }>;
 }
 
 function isGlobalContextEntry(entry: RegisteredScenarioBody): boolean {
@@ -454,6 +469,7 @@ export class SolarSystemScene {
       ndcX: ndc.x,
       ndcY: ndc.y,
       ndcZ: ndc.z,
+      renderWorldPosition: Object.freeze({ x: position.x, y: position.y, z: position.z }),
       markerSizePixels,
       positionErrorSceneUnits: renderPosition?.distanceTo(position),
       surfaceReflectanceSource: (() => {
@@ -469,7 +485,37 @@ export class SolarSystemScene {
       inspectionFillApplied: this.#inspectionFillTargets.has(objectId),
       inspectionFillContribution: fillContribution,
       rendererInspectionFillIntensity: mapSceneDiffuseContributionToLambertLightIntensity(fillContribution),
+      stellarDirections: this.#stellarDirectionDiagnostics(objectId, camera),
     });
+  }
+
+  #stellarDirectionDiagnostics(objectId: ObjectId, camera: THREE.Camera): readonly StellarDirectionDiagnostics[] {
+    const illumination = this.#illuminationByBody.get(objectId);
+    const bodyPosition = this.#positions.get(objectId);
+    if (illumination === undefined || bodyPosition === undefined) return Object.freeze([]);
+    const bodyNdc = bodyPosition.clone().project(camera);
+    return Object.freeze(illumination.contributions.map((contribution) => {
+      const emitterPosition = this.#positions.get(contribution.emitterId);
+      let projectedDirection: Readonly<{ x: number; y: number }> | undefined;
+      if (emitterPosition !== undefined) {
+        const emitterNdc = emitterPosition.clone().project(camera);
+        const x = emitterNdc.x - bodyNdc.x;
+        const y = emitterNdc.y - bodyNdc.y;
+        const length = Math.hypot(x, y);
+        if (Number.isFinite(length) && length > Number.EPSILON) {
+          projectedDirection = Object.freeze({ x: x / length, y: y / length });
+        } else {
+          projectedDirection = Object.freeze({ x: 0, y: 0 });
+        }
+      }
+      return Object.freeze({
+        emitterId: contribution.emitterId,
+        physicalDirectionToEmitter: Object.freeze({ ...contribution.directionToEmitter }),
+        renderDirectionToEmitter: Object.freeze({ ...contribution.renderDirectionToEmitter }),
+        shaderDirectionToEmitter: Object.freeze({ ...contribution.renderDirectionToEmitter }),
+        ...(projectedDirection === undefined ? {} : { projectedDirection }),
+      });
+    }));
   }
 
   setPath(path: OrbitPath): void {

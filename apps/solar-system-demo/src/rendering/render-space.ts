@@ -23,6 +23,28 @@ export interface RenderVector {
   readonly z: number;
 }
 
+/**
+ * Converts a direction from the authoritative ICRS-aligned axes to the
+ * Three.js render-world axes. Directions receive the presentation rotation
+ * only; focus rebasing and metre-to-scene scaling must not enter them.
+ */
+export function icrsDirectionToRenderSpace(direction: Vec3<number>): RenderVector {
+  const rotated = icrsToJ2000Ecliptic({
+    x: finite(direction.x, "direction.x"),
+    y: finite(direction.y, "direction.y"),
+    z: finite(direction.z, "direction.z"),
+  });
+  const length = Math.hypot(rotated.x, rotated.y, rotated.z);
+  if (!Number.isFinite(length) || length <= Number.EPSILON) {
+    throw new RangeError("direction must be finite and non-zero");
+  }
+  return Object.freeze({
+    x: rotated.x / length,
+    y: rotated.y / length,
+    z: rotated.z / length,
+  });
+}
+
 export interface RadiusPolicy {
   readonly mode: RadiusMode;
   readonly physicalRadiusMeters: Meters;

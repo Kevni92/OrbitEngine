@@ -143,6 +143,39 @@ test("resolved surfaces use lit materials while stellar illumination survives st
   visual.dispose();
 });
 
+test("direction diagnostics keep physical/render/shader spaces aligned across presentation sizing", () => {
+  const root = new THREE.Scene();
+  const visual = new SolarSystemScene(root, scenario());
+  const earth = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
+  const earthPosition = positionToSceneUnits(earth.anchor.position);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.0001, 10_000);
+  camera.position.set(earthPosition.x, earthPosition.y - 1.5, earthPosition.z + 0.9);
+  camera.lookAt(earthPosition.x, earthPosition.y, earthPosition.z);
+  visual.update(SCENARIO_BODIES.map((body) => body.anchor));
+  visual.setSelected(EARTH_ID);
+  visual.setFocusId(EARTH_ID);
+
+  visual.setRadiusMode("adaptive");
+  visual.updatePresentation(camera, 900);
+  const adaptive = visual.renderDiagnosticsFor(EARTH_ID, camera)!;
+  const adaptiveSun = adaptive.stellarDirections.find((direction) => direction.emitterId === SUN_ID)!;
+  assert.deepEqual(adaptiveSun.shaderDirectionToEmitter, adaptiveSun.renderDirectionToEmitter);
+  assert.ok(Math.abs(Math.hypot(
+    adaptiveSun.shaderDirectionToEmitter.x,
+    adaptiveSun.shaderDirectionToEmitter.y,
+    adaptiveSun.shaderDirectionToEmitter.z,
+  ) - 1) < 1e-12);
+
+  visual.setRadiusMode("physical");
+  visual.updatePresentation(camera, 900);
+  const physical = visual.renderDiagnosticsFor(EARTH_ID, camera)!;
+  const physicalSun = physical.stellarDirections.find((direction) => direction.emitterId === SUN_ID)!;
+  assert.deepEqual(physicalSun.physicalDirectionToEmitter, adaptiveSun.physicalDirectionToEmitter);
+  assert.deepEqual(physicalSun.renderDirectionToEmitter, adaptiveSun.renderDirectionToEmitter);
+  assert.deepEqual(physicalSun.shaderDirectionToEmitter, adaptiveSun.shaderDirectionToEmitter);
+  visual.dispose();
+});
+
 test("Enhanced adds bounded selected-body fill without changing physical irradiance", () => {
   const root = new THREE.Scene();
   const visual = new SolarSystemScene(root, scenario());

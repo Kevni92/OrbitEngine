@@ -43,6 +43,21 @@ export interface AtmosphereDiagnostics {
   readonly viewSampleCount: number;
   readonly physicalExtentScaleHeights: number;
   readonly opticalSource?: ResolvedAtmosphereOptics["source"];
+  readonly shaderLightDirections?: readonly AtmosphereShaderLightDirectionDiagnostics[];
+}
+
+export interface AtmosphereShaderLightDirectionDiagnostics {
+  readonly emitterId: ObjectId;
+  readonly physicalDirectionToEmitter: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+  };
+  readonly shaderDirectionToEmitter: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+  };
 }
 
 interface AtmosphereShellRecord {
@@ -53,6 +68,7 @@ interface AtmosphereShellRecord {
   presentationThicknessSceneUnits: number;
   projectedDiameterPixels: number;
   opticalSource: ResolvedAtmosphereOptics["source"];
+  shaderLightDirections: readonly AtmosphereShaderLightDirectionDiagnostics[];
 }
 
 const ZERO_RGB: LinearRgb = Object.freeze({ r: 0, g: 0, b: 0 });
@@ -322,9 +338,9 @@ function lightUniformValues(illumination: StellarIlluminationSet | undefined): {
 } {
   const contributions = illumination?.contributions ?? [];
   const directions = contributions.map((contribution) => new THREE.Vector3(
-    contribution.directionToEmitter.x,
-    contribution.directionToEmitter.y,
-    contribution.directionToEmitter.z,
+    contribution.renderDirectionToEmitter.x,
+    contribution.renderDirectionToEmitter.y,
+    contribution.renderDirectionToEmitter.z,
   ).normalize());
   const chromaticities = contributions.map((contribution) => new THREE.Vector3(
     contribution.linearChromaticity.r,
@@ -337,6 +353,16 @@ function lightUniformValues(illumination: StellarIlluminationSet | undefined): {
   if (chromaticities.length === 0) chromaticities.push(new THREE.Vector3(1, 1, 1));
   if (irradiances.length === 0) irradiances.push(0);
   return { directions, chromaticities, irradiances, lightCount };
+}
+
+function shaderLightDirectionDiagnostics(
+  illumination: StellarIlluminationSet | undefined,
+): readonly AtmosphereShaderLightDirectionDiagnostics[] {
+  return Object.freeze((illumination?.contributions ?? []).map((contribution) => Object.freeze({
+    emitterId: contribution.emitterId,
+    physicalDirectionToEmitter: Object.freeze({ ...contribution.directionToEmitter }),
+    shaderDirectionToEmitter: Object.freeze({ ...contribution.renderDirectionToEmitter }),
+  })));
 }
 
 function atmosphereMaterial(
@@ -500,6 +526,7 @@ export class AtmosphereShellManager {
           presentationThicknessSceneUnits: presentationThickness,
           projectedDiameterPixels: projectedDiameter,
           opticalSource: optics.source,
+          shaderLightDirections: shaderLightDirectionDiagnostics(illumination),
         };
         this.#shells.set(bodyId, shell);
       } else {
@@ -514,6 +541,7 @@ export class AtmosphereShellManager {
         shell.presentationThicknessSceneUnits = presentationThickness;
         shell.projectedDiameterPixels = projectedDiameter;
         shell.opticalSource = optics.source;
+        shell.shaderLightDirections = shaderLightDirectionDiagnostics(illumination);
       }
       shell.mesh.position.copy(position);
       shell.mesh.scale.setScalar(atmosphereRadius);
@@ -535,6 +563,7 @@ export class AtmosphereShellManager {
       ...(shell === undefined ? {} : {
         presentationThicknessSceneUnits: shell.presentationThicknessSceneUnits,
         opticalSource: shell.opticalSource,
+        shaderLightDirections: shell.shaderLightDirections,
       }),
       viewSampleCount: ATMOSPHERE_VIEW_SAMPLES,
       physicalExtentScaleHeights: ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS,

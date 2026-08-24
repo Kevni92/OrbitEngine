@@ -4,6 +4,7 @@ import {
   type LinearRgb,
 } from "../scenario/celestial-appearance.js";
 import type { ObjectId } from "orbit-engine";
+import { icrsDirectionToRenderSpace } from "./render-space.js";
 
 export const LINEAR_SRGB_LUMINANCE = Object.freeze({ r: 0.2126, g: 0.7152, b: 0.0722 });
 export const FALLBACK_VISUAL_ALBEDO = 0.32;
@@ -40,7 +41,10 @@ export interface StellarEmitter {
 
 export interface StellarIlluminationContribution {
   readonly emitterId: ObjectId;
+  /** Normalized body-to-emitter direction in authoritative state axes. */
   readonly directionToEmitter: CartesianPosition;
+  /** Normalized body-to-emitter direction in Three.js render-world/shader axes. */
+  readonly renderDirectionToEmitter: CartesianPosition;
   readonly distanceMeters: number;
   readonly irradianceWattsPerSquareMeter: number;
   readonly linearChromaticity: LinearRgb;
@@ -216,9 +220,11 @@ export function resolveStellarIllumination(
     }
     const irradiance = emitter.luminosityWatts / (4 * Math.PI * distance ** 2);
     const chromaticity = blackbodyTemperatureToLinearRgb(emitter.effectiveTemperatureKelvin);
+    const directionToEmitter = unitDirection(bodyPosition, emitter.position, distance);
     return Object.freeze({
       emitterId: emitter.objectId,
-      directionToEmitter: unitDirection(bodyPosition, emitter.position, distance),
+      directionToEmitter,
+      renderDirectionToEmitter: icrsDirectionToRenderSpace(directionToEmitter),
       distanceMeters: distance,
       irradianceWattsPerSquareMeter: irradiance,
       linearChromaticity: chromaticity,
@@ -247,9 +253,9 @@ export function lambertDiffuseContribution(
   if (!Number.isFinite(normalLength) || normalLength <= 0) throw new RangeError("surface normal must be finite and non-zero");
   const normalizedNormal = { x: normal.x / normalLength, y: normal.y / normalLength, z: normal.z / normalLength };
   return Object.freeze(illumination.contributions.reduce((sum, contribution) => {
-    const cosine = Math.max(0, normalizedNormal.x * contribution.directionToEmitter.x
-      + normalizedNormal.y * contribution.directionToEmitter.y
-      + normalizedNormal.z * contribution.directionToEmitter.z);
+    const cosine = Math.max(0, normalizedNormal.x * contribution.renderDirectionToEmitter.x
+      + normalizedNormal.y * contribution.renderDirectionToEmitter.y
+      + normalizedNormal.z * contribution.renderDirectionToEmitter.z);
     return {
       r: sum.r + reflectance.r * cosine * contribution.exposureMappedIrradiance * contribution.linearChromaticity.r,
       g: sum.g + reflectance.g * cosine * contribution.exposureMappedIrradiance * contribution.linearChromaticity.g,
