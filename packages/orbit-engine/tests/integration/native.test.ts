@@ -30,6 +30,7 @@ import { assertCollisionLifecycle } from "../shared/collision-lifecycle.js";
 import { assertCollisionStress } from "../shared/collision-stress.js";
 import { assertManeuverLifecycle } from "../shared/maneuver.js";
 import { assertManeuverAuthorityHandoff } from "../shared/maneuver-authority.js";
+import { assertManeuverRegressionMatrix } from "../shared/maneuver-regressions.js";
 
 test("real native backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "native" });
@@ -71,4 +72,5 @@ test("real native backend initializes and reports the shared core health", async
   await assertCollisionStress(await OrbitEngine.create({ backend: "native" }));
   await assertManeuverLifecycle(await OrbitEngine.create({ backend: "native" }));
   await assertManeuverAuthorityHandoff(await OrbitEngine.create({ backend: "native" }));
+  await assertManeuverRegressionMatrix("native");
 });

@@ -3,10 +3,11 @@ import { initializeBackend, type BackendPreference } from "./internal/backends/s
 import { ObjectRegistry } from "./registry.js";
 import { FrameRegistry, type FrameNode, type ObjectFrameStateSource } from "./frame-registry.js";
 import { referenceFrameId, type ReferenceFrameId } from "./frames.js";
-import { kilograms, metersPerSecondSquared } from "./units.js";
+import { kilograms, kilogramsPerSecond, metersPerSecondSquared, newtons } from "./units.js";
 import { objectId, type ObjectId } from "./objects.js";
 import {
   propagationEvaluationContext,
+  PropagationModelKind,
   revisionId,
   type PropagationModel,
   type PropagationState,
@@ -18,6 +19,8 @@ import {
   compareDurations,
   compareSimulationInstants,
   duration,
+  durationToSeconds,
+  subtractSimulationInstants,
   simulationInstant,
   type Duration,
   type SimulationInstant,
@@ -176,6 +179,7 @@ import {
   type ManeuverQuery,
   type ManeuverReplacement,
   type ManeuverStatus,
+  type ManeuverExecutionDiagnostics,
   type ManeuverId,
   maneuverForceConfiguration,
   ballisticForceConfiguration,
@@ -302,6 +306,87 @@ function maneuverPayloadKind(kind: ManeuverScheduledEventKind): number {
     case "burnEnd": return ScheduledWorkPayloadKind.maneuverBurnEnd;
     case "minimumMassTermination": return ScheduledWorkPayloadKind.maneuverMinimumMassTermination;
   }
+}
+
+function maneuverExecutionDiagnostics(
+  maneuver: Maneuver,
+  event: ManeuverScheduledEvent,
+  instant: SimulationInstant,
+  physicalMass: number | undefined,
+  configurationRevision: RevisionId | undefined,
+  resultingMotionRevision: RevisionId | undefined,
+): ManeuverExecutionDiagnostics {
+  const mass = physicalMass === undefined ? {} : { physicalMassKilograms: kilograms(physicalMass) };
+  const configuration = configurationRevision === undefined ? {} : { configurationRevision };
+  if (maneuver.kind === "impulse") {
+    return Object.freeze({ epoch: instant, ...mass, ...configuration, ...(resultingMotionRevision === undefined ? {} : { resultingMotionRevision }) });
+  }
+  const isTermination = event.kind === ManeuverScheduledEventKind.burnEnd
+    || event.kind === ManeuverScheduledEventKind.minimumMassTermination;
+  const stageIndex = isTermination
+    ? undefined
+    : event.stageIndex ?? maneuver.stages.findIndex((stage) =>
+      compareSimulationInstants(stage.start, instant) <= 0
+      && compareSimulationInstants(instant, stage.end) < 0);
+  const stage = stageIndex === undefined || stageIndex < 0 ? undefined : maneuver.stages[stageIndex];
+  if (stage === undefined) {
+    return Object.freeze({
+      epoch: instant,
+      effectiveThrustVectorNewtons: Object.freeze({ x: newtons(0), y: newtons(0), z: newtons(0) }),
+      effectiveThrustMagnitudeNewtons: newtons(0),
+      massFlowRateKilogramsPerSecond: kilogramsPerSecond(0),
+      ...mass,
+      ...configuration,
+      ...(resultingMotionRevision === undefined ? {} : { resultingMotionRevision }),
+    });
+  }
+  const direction = stage.direction.kind === "referenceFrame"
+    ? stage.direction.unitVector
+    : stage.direction.unitVectorBody;
+  return Object.freeze({
+    epoch: instant,
+    effectiveThrustVectorNewtons: Object.freeze({
+      x: newtons(direction.x * stage.effectiveForceMagnitudeNewtons),
+      y: newtons(direction.y * stage.effectiveForceMagnitudeNewtons),
+      z: newtons(direction.z * stage.effectiveForceMagnitudeNewtons),
+    }),
+    effectiveThrustFrame: stage.direction.kind === "referenceFrame" ? stage.direction.frameId : "body",
+    effectiveThrustMagnitudeNewtons: newtons(stage.effectiveForceMagnitudeNewtons),
+    massFlowRateKilogramsPerSecond: kilogramsPerSecond(stage.effectiveMassFlowKilogramsPerSecond),
+    ...mass,
+    ...configuration,
+    ...(resultingMotionRevision === undefined ? {} : { resultingMotionRevision }),
+  });
+}
+
+function minimumMassTerminationInstant(
+  maneuver: FiniteBurnManeuver,
+  anchor: SimulationInstant,
+  initialMass: number,
+): SimulationInstant | undefined {
+  const minimumMass = maneuver.minimumMassKilograms;
+  if (minimumMass === undefined || !Number.isFinite(initialMass) || initialMass < minimumMass) return undefined;
+  let mass = initialMass;
+  for (const stage of maneuver.stages) {
+    if (compareSimulationInstants(stage.end, anchor) <= 0) continue;
+    const stageStart = compareSimulationInstants(stage.start, anchor) > 0 ? stage.start : anchor;
+    const availableSeconds = durationToSeconds(subtractSimulationInstants(stage.end, stageStart));
+    const flow = stage.effectiveMassFlowKilogramsPerSecond;
+    if (!Number.isFinite(availableSeconds) || availableSeconds < 0 || !Number.isFinite(flow) || flow < 0) return undefined;
+    if (flow === 0) continue;
+    const secondsToMinimum = (mass - minimumMass) / flow;
+    if (!Number.isFinite(secondsToMinimum) || secondsToMinimum < 0) return undefined;
+    if (secondsToMinimum <= availableSeconds) {
+      const nanoseconds = Math.max(0, Math.floor(secondsToMinimum * 1_000_000_000));
+      return addDurationToInstant(
+        stageStart,
+        duration(Math.floor(nanoseconds / 1_000_000_000), nanoseconds % 1_000_000_000),
+      );
+    }
+    mass -= flow * availableSeconds;
+    if (!Number.isFinite(mass)) return undefined;
+  }
+  return undefined;
 }
 
 function compareScheduledWork(left: ScheduledWorkRecord, right: ScheduledWorkRecord): number {
@@ -521,6 +606,31 @@ export class OrbitEngine {
       }
     }
     if (ids.size === 0) this.#maneuverWorkById.delete(maneuverId);
+  }
+
+  #scheduleMinimumMassTermination(
+    maneuver: FiniteBurnManeuver,
+    instant: SimulationInstant,
+    initialMass: number | undefined,
+  ): void {
+    if (initialMass === undefined || maneuver.minimumMassKilograms === undefined) return;
+    if ([...this.#maneuverActions.values()].some((action) =>
+      action.event.maneuverId === maneuver.id
+      && action.event.revision === maneuver.revision
+      && action.event.kind === ManeuverScheduledEventKind.minimumMassTermination)) return;
+    const termination = minimumMassTerminationInstant(maneuver, instant, initialMass);
+    if (termination === undefined || compareSimulationInstants(termination, instant) <= 0) return;
+    const work = this.scheduleWork(this.#eventInput(maneuver, ManeuverScheduledEventKind.minimumMassTermination, termination));
+    const event: ManeuverScheduledEvent = Object.freeze({
+      maneuverId: maneuver.id,
+      revision: maneuver.revision,
+      kind: ManeuverScheduledEventKind.minimumMassTermination,
+    });
+    const action = Object.freeze({ work, event });
+    this.#maneuverActions.set(work.id, action);
+    const ids = this.#maneuverWorkById.get(maneuver.id) ?? new Set<ScheduledWorkId>();
+    ids.add(work.id);
+    this.#maneuverWorkById.set(maneuver.id, ids);
   }
 
   #onManeuverMutation(previous: Maneuver | undefined, next: Maneuver): void {
@@ -775,9 +885,27 @@ export class OrbitEngine {
         committed.push(transition);
       }
       for (const action of prepared.actions) {
-        this.#maneuverManager.applyScheduledEvent(action.event);
+        const transition = prepared.transitions.find((value) => value.objectId === action.maneuver.objectId);
+        const transitionModel = transition?.prepared.model;
+        const physicalMass = transitionModel?.massAt?.(instant)
+          ?? this.#registeredMass(action.maneuver.objectId, instant);
+        const application = this.#maneuverManager.applyScheduledEvent(action.event, maneuverExecutionDiagnostics(
+          action.maneuver,
+          action.event,
+          instant,
+          physicalMass,
+          transitionModel?.declaration.configurationRevision,
+          transition?.prepared.authorityDraft.segment.motionRevision,
+        ));
         this.#maneuverActions.delete(action.work.id);
         this.#maneuverWorkById.get(action.event.maneuverId)?.delete(action.work.id);
+        if (application === "applied"
+            && action.maneuver.kind === "finiteBurn"
+            && action.event.kind !== ManeuverScheduledEventKind.burnEnd
+            && action.event.kind !== ManeuverScheduledEventKind.minimumMassTermination
+            && transitionModel?.declaration.kind === PropagationModelKind.numerical) {
+          this.#scheduleMinimumMassTermination(action.maneuver, instant, physicalMass);
+        }
       }
       const ended = prepared.actions
         .filter((action) => action.event.kind === ManeuverScheduledEventKind.burnEnd
@@ -786,6 +914,11 @@ export class OrbitEngine {
         .filter((maneuver): maneuver is FiniteBurnManeuver => maneuver.kind === "finiteBurn");
       for (const maneuver of ended) {
         this.#fidelityManager.retireSignal(maneuver.objectId, maneuverSignalId(maneuver.id), instant, false);
+        if (prepared.actions.some((action) =>
+          action.maneuver.id === maneuver.id
+          && action.event.kind === ManeuverScheduledEventKind.minimumMassTermination)) {
+          this.#removeManeuverEvents(maneuver.id, maneuver.revision);
+        }
       }
     } catch (error) {
       for (const transition of committed) {

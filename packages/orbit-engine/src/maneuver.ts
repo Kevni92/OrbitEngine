@@ -15,6 +15,7 @@ import {
   metersPerSecond,
   newtons,
   type KilogramsPerSecond,
+  type Kilograms,
   type MetersPerSecond,
   type Newtons,
 } from "./units.js";
@@ -493,6 +494,25 @@ export interface ManeuverStatus {
   readonly dependencyRevisionDigest: RevisionId;
   readonly resultingMotionRevision?: RevisionId;
   readonly lastResult?: string;
+  /** Read-only physical diagnostics from the last committed execution boundary. */
+  readonly diagnosticsEpoch?: SimulationInstant;
+  readonly effectiveThrustVectorNewtons?: Vec3<Newtons>;
+  readonly effectiveThrustFrame?: ReferenceFrameId | "body";
+  readonly effectiveThrustMagnitudeNewtons?: Newtons;
+  readonly massFlowRateKilogramsPerSecond?: KilogramsPerSecond;
+  readonly physicalMassKilograms?: Kilograms;
+  readonly configurationRevision?: RevisionId;
+}
+
+export interface ManeuverExecutionDiagnostics {
+  readonly epoch: SimulationInstant;
+  readonly effectiveThrustVectorNewtons?: Vec3<Newtons>;
+  readonly effectiveThrustFrame?: ReferenceFrameId | "body";
+  readonly effectiveThrustMagnitudeNewtons?: Newtons;
+  readonly massFlowRateKilogramsPerSecond?: KilogramsPerSecond;
+  readonly physicalMassKilograms?: Kilograms;
+  readonly configurationRevision?: RevisionId;
+  readonly resultingMotionRevision?: RevisionId;
 }
 
 export const ManeuverScheduledEventKind = Object.freeze({
@@ -880,7 +900,11 @@ export class ManeuverManager {
   readonly #currentTime: () => SimulationInstant;
   readonly #onMutation?: (previous: Maneuver | undefined, next: Maneuver) => void;
   readonly #records = new Map<ManeuverId, Maneuver>();
-  readonly #runtime = new Map<ManeuverId, { readonly currentStageIndex?: number; readonly lastResult?: string }>();
+  readonly #runtime = new Map<ManeuverId, {
+    readonly currentStageIndex?: number;
+    readonly lastResult?: string;
+    readonly diagnostics?: ManeuverExecutionDiagnostics;
+  }>();
   #nextId: ManeuverId = maneuverId("1");
 
   constructor(options: ManeuverManagerOptions = {}) {
@@ -1033,38 +1057,45 @@ export class ManeuverManager {
     return next;
   }
 
-  applyScheduledEvent(event: ManeuverScheduledEvent): ManeuverEventApplication {
+  applyScheduledEvent(
+    event: ManeuverScheduledEvent,
+    diagnostics?: ManeuverExecutionDiagnostics,
+  ): ManeuverEventApplication {
     const current = this.#records.get(event.maneuverId);
     if (current === undefined || current.revision !== event.revision) return "stale";
     if (current.lifecycle === "cancelled" || current.lifecycle === "failed" || current.lifecycle === "stale") return "ignored";
 
     let next: Maneuver;
-    let runtime: { readonly currentStageIndex?: number; readonly lastResult?: string } = {};
+    let runtime: {
+      readonly currentStageIndex?: number;
+      readonly lastResult?: string;
+      readonly diagnostics?: ManeuverExecutionDiagnostics;
+    } = {};
     switch (event.kind) {
       case "impulse":
         if (current.kind !== "impulse" || current.lifecycle !== "scheduled") return "ignored";
         next = freezeManeuver({ ...current, lifecycle: "completed" });
-        runtime = { lastResult: "impulseApplied" };
+        runtime = { lastResult: "impulseApplied", ...(diagnostics === undefined ? {} : { diagnostics }) };
         break;
       case "burnStart":
         if (current.kind !== "finiteBurn" || current.lifecycle !== "scheduled") return "ignored";
         next = freezeManeuver({ ...current, lifecycle: "active" });
-        runtime = { currentStageIndex: event.stageIndex, lastResult: "burnStarted" };
+        runtime = { currentStageIndex: event.stageIndex, lastResult: "burnStarted", ...(diagnostics === undefined ? {} : { diagnostics }) };
         break;
       case "stageBoundary":
         if (current.kind !== "finiteBurn" || (current.lifecycle !== "scheduled" && current.lifecycle !== "active")) return "ignored";
         next = freezeManeuver({ ...current, lifecycle: "active" });
-        runtime = { currentStageIndex: event.stageIndex, lastResult: "stageBoundary" };
+        runtime = { currentStageIndex: event.stageIndex, lastResult: "stageBoundary", ...(diagnostics === undefined ? {} : { diagnostics }) };
         break;
       case "burnEnd":
         if (current.kind !== "finiteBurn" || (current.lifecycle !== "scheduled" && current.lifecycle !== "active")) return "ignored";
         next = freezeManeuver({ ...current, lifecycle: "completed" });
-        runtime = { lastResult: "burnCompleted" };
+        runtime = { lastResult: "burnCompleted", ...(diagnostics === undefined ? {} : { diagnostics }) };
         break;
       case "minimumMassTermination":
         if (current.kind !== "finiteBurn" || (current.lifecycle !== "scheduled" && current.lifecycle !== "active")) return "ignored";
         next = freezeManeuver({ ...current, lifecycle: "completed" });
-        runtime = { lastResult: "minimumMassReached" };
+        runtime = { lastResult: "minimumMassReached", ...(diagnostics === undefined ? {} : { diagnostics }) };
         break;
       default:
         return "ignored";
@@ -1102,6 +1133,8 @@ export class ManeuverManager {
   getManeuverStatus(idValue: ManeuverId | string): ManeuverStatus | undefined {
     const record = this.getManeuver(idValue);
     if (record === undefined) return undefined;
+    const runtime = this.#runtime.get(record.id);
+    const diagnostics = runtime?.diagnostics;
     return Object.freeze({
       id: record.id,
       revision: record.revision,
@@ -1109,7 +1142,32 @@ export class ManeuverManager {
       kind: record.kind,
       lifecycle: record.lifecycle,
       dependencyRevisionDigest: revisionId("0"),
-      ...this.#runtime.get(record.id),
+      ...(runtime?.currentStageIndex === undefined ? {} : { currentStageIndex: runtime.currentStageIndex }),
+      ...(runtime?.lastResult === undefined ? {} : { lastResult: runtime.lastResult }),
+      ...(diagnostics === undefined ? {} : {
+        diagnosticsEpoch: diagnostics.epoch,
+        ...(diagnostics.effectiveThrustVectorNewtons === undefined ? {} : {
+          effectiveThrustVectorNewtons: diagnostics.effectiveThrustVectorNewtons,
+        }),
+        ...(diagnostics.effectiveThrustFrame === undefined ? {} : {
+          effectiveThrustFrame: diagnostics.effectiveThrustFrame,
+        }),
+        ...(diagnostics.effectiveThrustMagnitudeNewtons === undefined ? {} : {
+          effectiveThrustMagnitudeNewtons: diagnostics.effectiveThrustMagnitudeNewtons,
+        }),
+        ...(diagnostics.massFlowRateKilogramsPerSecond === undefined ? {} : {
+          massFlowRateKilogramsPerSecond: diagnostics.massFlowRateKilogramsPerSecond,
+        }),
+        ...(diagnostics.physicalMassKilograms === undefined ? {} : {
+          physicalMassKilograms: diagnostics.physicalMassKilograms,
+        }),
+        ...(diagnostics.configurationRevision === undefined ? {} : {
+          configurationRevision: diagnostics.configurationRevision,
+        }),
+        ...(diagnostics.resultingMotionRevision === undefined ? {} : {
+          resultingMotionRevision: diagnostics.resultingMotionRevision,
+        }),
+      }),
     });
   }
 
