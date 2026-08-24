@@ -51,6 +51,7 @@ export interface RawBackendBinding {
   roundTripNumerical(value: unknown): unknown;
   roundTripCoupled(value: unknown): unknown;
   roundTripScheduler(value: unknown): unknown;
+  readonly roundTripPlanner?: (value: unknown) => unknown;
 }
 
 export interface RawInitializationResult {

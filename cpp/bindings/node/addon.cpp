@@ -3,6 +3,7 @@
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/frame_registry.hpp"
 #include "orbit_engine/numerical_operation.hpp"
+#include "orbit_engine/lambert.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
 #include "orbit_engine/registry.hpp"
@@ -12,6 +13,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <span>
 #include <type_traits>
 #include <napi.h>
 
@@ -1181,6 +1183,27 @@ Napi::Value RoundTripScheduler(const Napi::CallbackInfo& info) {
   return writeSchedulerWire(env, g_scheduler.command(input));
 }
 
+Napi::Value RoundTripPlanner(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1 || !info[0].IsTypedArray() || info[0].As<Napi::TypedArray>().TypedArrayType() != napi_float64_array) {
+    Napi::TypeError::New(env, "roundTripPlanner expects one Float64Array packet").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  const auto input = info[0].As<Napi::Float64Array>();
+  orbit_engine::lambert::GeometryWire wire;
+  if (!orbit_engine::lambert::decode_packet(std::span<const double>(input.Data(), input.ElementLength()), wire)) {
+    Napi::TypeError::New(env, "roundTripPlanner received an invalid packet").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  const auto result = orbit_engine::lambert::evaluate(wire);
+  auto output = Napi::Float64Array::New(env, orbit_engine::lambert::kOutputWords);
+  if (!orbit_engine::lambert::encode_packet(result, std::span<double>(output.Data(), output.ElementLength()))) {
+    Napi::RangeError::New(env, "roundTripPlanner could not encode its result").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  return output;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("protocolVersion", Napi::Number::New(env, orbit_engine::kBindingProtocolVersion));
   exports.Set("initialize", Napi::Function::New(env, Initialize));
@@ -1195,6 +1218,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("roundTripNumerical", Napi::Function::New(env, RoundTripNumerical));
   exports.Set("roundTripCoupled", Napi::Function::New(env, RoundTripCoupled));
   exports.Set("roundTripScheduler", Napi::Function::New(env, RoundTripScheduler));
+  exports.Set("roundTripPlanner", Napi::Function::New(env, RoundTripPlanner));
   return exports;
 }
 

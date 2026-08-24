@@ -30,7 +30,7 @@ import { assertCollisionStress } from "../shared/collision-stress.js";
 import { assertManeuverLifecycle } from "../shared/maneuver.js";
 import { assertManeuverAuthorityHandoff } from "../shared/maneuver-authority.js";
 import { assertManeuverRegressionMatrix, maneuverParitySnapshot } from "../shared/maneuver-regressions.js";
-import { assertPlannerCodec } from "../shared/planner.js";
+import { assertLambertSolver, assertPlannerCodec, lambertParitySnapshot } from "../shared/planner.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -50,6 +50,9 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`planner geometry codec parity has exact semantics on ${name}`, async () => {
     assertPlannerCodec(await load());
+  });
+  test(`Lambert solver semantics have parity on ${name}`, async () => {
+    assertLambertSolver(await OrbitEngine.create({ backend: name }));
   });
   test(`reference frame wire parity has exact semantics on ${name}`, async () => {
     assertFrameRoundTrip(await load());
@@ -144,5 +147,40 @@ test("native and WASM maneuver fixtures agree on discrete outcomes and numerical
     [native.state.mass, wasm.state.mass],
   ] as const) {
     assert.ok(Math.abs((left ?? 0) - (right ?? 0)) <= 1e-8);
+  }
+});
+
+test("native and WASM Lambert fixtures agree on branch and solver outputs", async () => {
+  type Vector = Readonly<{ x: number; y: number; z: number }>;
+  type Case = Readonly<{
+    status: string;
+    iterations: number;
+    residual: number;
+    departureVelocity: Vector;
+    arrivalVelocity: Vector;
+    periapsisRadiusMeters?: number;
+    semiMajorAxisMeters?: number;
+    eccentricity?: number;
+  }>;
+  type Snapshot = Readonly<{ circular: Case; hyperbolic: Case }>;
+  const native = await lambertParitySnapshot(await OrbitEngine.create({ backend: "native" })) as Snapshot;
+  const wasm = await lambertParitySnapshot(await OrbitEngine.create({ backend: "wasm" })) as Snapshot;
+  const assertClose = (left: number | undefined, right: number | undefined, tolerance: number, name: string): void => {
+    assert.equal(typeof left, typeof right, `${name} presence differs`);
+    if (left !== undefined && right !== undefined) assert.ok(Math.abs(left - right) <= tolerance, `${name} differs: ${left} vs ${right}`);
+  };
+  for (const name of ["circular", "hyperbolic"] as const) {
+    const left = native[name];
+    const right = wasm[name];
+    assert.equal(left.status, right.status);
+    assert.equal(left.iterations, right.iterations);
+    assertClose(left.residual, right.residual, 1e-12, `${name}.residual`);
+    for (const component of ["x", "y", "z"] as const) {
+      assertClose(left.departureVelocity[component], right.departureVelocity[component], 1e-8, `${name}.departureVelocity.${component}`);
+      assertClose(left.arrivalVelocity[component], right.arrivalVelocity[component], 1e-8, `${name}.arrivalVelocity.${component}`);
+    }
+    assertClose(left.periapsisRadiusMeters, right.periapsisRadiusMeters, 1e-6, `${name}.periapsisRadiusMeters`);
+    assertClose(left.semiMajorAxisMeters, right.semiMajorAxisMeters, 1e-6, `${name}.semiMajorAxisMeters`);
+    assertClose(left.eccentricity, right.eccentricity, 1e-12, `${name}.eccentricity`);
   }
 });

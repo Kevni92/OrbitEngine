@@ -6,6 +6,7 @@ const UINT64_MAX = 18_446_744_073_709_551_615n;
 /** Versioned, backend-neutral numeric packet for the pure geometry boundary. */
 export const PLANNER_GEOMETRY_WIRE_VERSION = 1;
 export const PLANNER_GEOMETRY_PACKET_WORDS = 26;
+export const PLANNER_GEOMETRY_RESULT_WORDS = 13;
 
 function finite(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -40,13 +41,22 @@ function validateWords(value: unknown, name: string): readonly number[] {
   return result;
 }
 
+function validateResultWords(value: unknown, name: string): readonly number[] {
+  if (value === undefined) return Object.freeze([]);
+  if (!Array.isArray(value) && !(value instanceof Float64Array)) throw new TypeError(`${name}.resultWords must be an array`);
+  const result = [...value].map((word, index) => finite(word, `${name}.resultWords[${index}]`));
+  if (result.length !== PLANNER_GEOMETRY_RESULT_WORDS) throw new RangeError(`${name}.resultWords must contain ${PLANNER_GEOMETRY_RESULT_WORDS} values`);
+  return result;
+}
+
 /** Validates a packet returned by a native or WASM adapter. */
 export function validatePlannerGeometryWire(value: unknown): PlannerGeometryWire {
   if (typeof value !== "object" || value === null) throw new TypeError("planner geometry wire must be an object");
   const candidate = value as Record<string, unknown>;
   const version = uint32(candidate.version, "planner geometry wire version");
   if (version !== PLANNER_GEOMETRY_WIRE_VERSION) throw new RangeError(`Unsupported planner geometry wire version: ${version}`);
-  return Object.freeze({ version, words: Object.freeze(validateWords(candidate.words, "planner geometry wire")) });
+  const resultWords = validateResultWords(candidate.resultWords, "planner geometry wire");
+  return Object.freeze({ version, words: Object.freeze(validateWords(candidate.words, "planner geometry wire")), ...(resultWords.length === 0 ? {} : { resultWords: Object.freeze(resultWords) }) });
 }
 
 /** Encodes only normalized values so both adapters see the same canonical packet. */
@@ -88,4 +98,9 @@ export function roundTripPlannerGeometryWire(
     return finite(result, `planner geometry result word ${index}`);
   });
   return validatePlannerGeometryWire({ version: input.version, words });
+}
+
+export function withPlannerGeometryResult(value: PlannerGeometryWire, resultWords: readonly number[]): PlannerGeometryWire {
+  const input = validatePlannerGeometryWire(value);
+  return validatePlannerGeometryWire({ ...input, resultWords });
 }

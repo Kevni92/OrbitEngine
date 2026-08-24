@@ -14,6 +14,7 @@ import { encodeLambertGeometryWire } from "./internal/planner-wire.js";
 export interface PlannerGeometryWire {
   readonly version: number;
   readonly words: readonly number[];
+  readonly resultWords?: readonly number[];
 }
 
 export const TrajectoryPurpose = Object.freeze({
@@ -143,6 +144,32 @@ export interface NormalizedLambertGeometryRequest extends Omit<LambertGeometryRe
   readonly provenancePresent: boolean;
   readonly provenanceDigest?: RevisionId;
 }
+
+export const LambertGeometryResultStatus = Object.freeze({
+  success: "success",
+  invalidInput: "invalidInput",
+  invalidMu: "invalidMu",
+  unsupportedRevolutionCount: "unsupportedRevolutionCount",
+  invalidBranch: "invalidBranch",
+  degenerateGeometry: "degenerateGeometry",
+  nonConvergent: "nonConvergent",
+  numericalFailure: "numericalFailure",
+} as const);
+export type LambertGeometryResultStatus = (typeof LambertGeometryResultStatus)[keyof typeof LambertGeometryResultStatus];
+
+export interface LambertGeometrySolution {
+  readonly transferDepartureVelocity: PlannerVector;
+  readonly transferArrivalVelocity: PlannerVector;
+  readonly residual: number;
+  readonly iterations: number;
+  readonly periapsisRadiusMeters?: number;
+  readonly semiMajorAxisMeters?: number;
+  readonly eccentricity?: number;
+}
+
+export type LambertGeometryResult =
+  | { readonly status: "success"; readonly request: NormalizedLambertGeometryRequest; readonly solution: LambertGeometrySolution }
+  | { readonly status: Exclude<LambertGeometryResultStatus, "success">; readonly request: NormalizedLambertGeometryRequest; readonly iterations: number; readonly residual: number };
 
 export interface TrajectorySearchBudget {
   readonly maxLambertSolves?: number;
@@ -367,7 +394,7 @@ function branch(value: unknown, name = "branch"): LambertBranch {
   const candidate = value as Record<string, unknown>;
   if (candidate.motionSense !== "prograde" && candidate.motionSense !== "retrograde") throw new RangeError(`${name}.motionSense is invalid`);
   if (candidate.path !== "shortWay" && candidate.path !== "longWay") throw new RangeError(`${name}.path is invalid`);
-  const revolutions = integer(candidate.revolutions, `${name}.revolutions`, 0, 0);
+  const revolutions = integer(candidate.revolutions, `${name}.revolutions`, 0, 65_535);
   return Object.freeze({ motionSense: candidate.motionSense, path: candidate.path, revolutions, referenceNormal: unitVector(candidate.referenceNormal, `${name}.referenceNormal`) });
 }
 
@@ -442,6 +469,23 @@ export function normalizeLambertGeometryRequest(value: LambertGeometryRequest): 
     provenancePresent: normalizedProvenance !== undefined,
     ...(normalizedProvenance === undefined ? {} : { provenanceDigest: normalizedProvenance }),
   });
+}
+
+function decodeLambertGeometryResult(request: NormalizedLambertGeometryRequest, value: PlannerGeometryWire): LambertGeometryResult {
+  const result = value.resultWords;
+  if (result === undefined || result.length === 0) throw new RangeError("planner backend did not return a Lambert result packet");
+  const code = result[0] ?? -1;
+  const statusByCode: readonly LambertGeometryResultStatus[] = ["success", "invalidInput", "invalidMu", "unsupportedRevolutionCount", "invalidBranch", "degenerateGeometry", "nonConvergent", "numericalFailure"];
+  const status = Number.isInteger(code) && code >= 0 && code < statusByCode.length ? statusByCode[code]! : "numericalFailure";
+  const iterations = integer(result[1], "Lambert result iterations", 0, 4096);
+  const residual = nonNegative(result[2], "Lambert result residual");
+  if (status !== "success") return Object.freeze({ status, request, iterations, residual });
+  const departureVelocity = vector({ x: result[3], y: result[4], z: result[5] }, "Lambert result departure velocity");
+  const arrivalVelocity = vector({ x: result[6], y: result[7], z: result[8] }, "Lambert result arrival velocity");
+  const periapsis = result[9] !== 0 ? positive(result[10], "Lambert result periapsis radius") : undefined;
+  const semiMajorAxis = result[11] === 0 ? undefined : finite(result[11], "Lambert result semi-major axis");
+  const eccentricity = result[12] === 0 ? undefined : nonNegative(result[12], "Lambert result eccentricity");
+  return Object.freeze({ status: "success", request, solution: Object.freeze({ transferDepartureVelocity: departureVelocity, transferArrivalVelocity: arrivalVelocity, residual, iterations, ...(periapsis === undefined ? {} : { periapsisRadiusMeters: periapsis }), ...(semiMajorAxis === undefined ? {} : { semiMajorAxisMeters: semiMajorAxis }), ...(eccentricity === undefined ? {} : { eccentricity }) }) });
 }
 
 export function normalizeTrajectoryTransferRequest(value: TrajectoryTransferRequest): NormalizedTrajectoryTransferRequest {
@@ -606,11 +650,12 @@ export class TrajectoryPlanner {
     Object.freeze(this);
   }
 
-  solveLambertGeometry(input: LambertGeometryRequest): PlannerUnsupportedResult<NormalizedLambertGeometryRequest> {
+  solveLambertGeometry(input: LambertGeometryRequest): LambertGeometryResult | PlannerUnsupportedResult<NormalizedLambertGeometryRequest> {
     const request = normalizeLambertGeometryRequest(input);
     const wire = encodeLambertGeometryWire(request);
-    this.#backend.roundTripPlanner(wire);
-    return Object.freeze({ status: "unsupported", reason: "lambertSolverNotImplemented", request });
+    const crossed = this.#backend.roundTripPlanner(wire);
+    if (crossed.resultWords === undefined) return Object.freeze({ status: "unsupported", reason: "lambertSolverNotImplemented", request });
+    return decodeLambertGeometryResult(request, crossed);
   }
 
   planTransfer(input: TrajectoryTransferRequest): PlannerUnsupportedResult<NormalizedTrajectoryTransferRequest> {

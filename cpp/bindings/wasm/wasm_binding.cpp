@@ -2,6 +2,7 @@
 #include "orbit_engine/coupled_operation.hpp"
 #include "orbit_engine/frame.hpp"
 #include "orbit_engine/frame_registry.hpp"
+#include "orbit_engine/lambert.hpp"
 #include "orbit_engine/numerical_operation.hpp"
 #include "orbit_engine/object.hpp"
 #include "orbit_engine/propagation.hpp"
@@ -1046,6 +1047,20 @@ EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_scheduler(
   if (!orbit_engine::scheduler::encode_packet(wire, std::span<double>(output, output_length))) return 0;
   return 1;
   if (!orbit_engine::scheduler::encode_packet(wire, std::span<double>(output, output_length))) return 0;
+  return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_planner(
+  const double* input,
+  std::uint32_t input_length,
+  double* output,
+  std::uint32_t output_length
+) {
+  if (input == nullptr || output == nullptr) return 0;
+  orbit_engine::lambert::GeometryWire wire;
+  if (!orbit_engine::lambert::decode_packet(std::span<const double>(input, input_length), wire)) return 0;
+  wire = orbit_engine::lambert::evaluate(wire);
+  if (!orbit_engine::lambert::encode_packet(wire, std::span<double>(output, output_length))) return 0;
   return 1;
 }
 
