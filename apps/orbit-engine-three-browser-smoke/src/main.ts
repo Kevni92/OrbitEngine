@@ -1,8 +1,10 @@
 import { CelestialSystemView, ORBIT_ENGINE_THREE_PACKAGE_NAME, createCelestialRenderSnapshot } from "orbit-engine-three";
 import { createCelestialAppearance, presentationPackageInfo } from "orbit-engine-three/presentation";
-import { objectId, simulationInstant } from "orbit-engine";
+import type { ObjectId, SimulationInstant } from "orbit-engine";
 
 const status = document.querySelector<HTMLParagraphElement>("#status");
+const objectId = (value: string): ObjectId => value as ObjectId;
+const simulationInstant = (seconds: number, nanoseconds = 0): SimulationInstant => Object.freeze({ seconds, nanoseconds }) as unknown as SimulationInstant;
 
 try {
   const sunId = objectId("1");
