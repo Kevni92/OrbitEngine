@@ -4,5 +4,6 @@ test("imports both public companion entry points in a browser consumer", async (
   await page.goto("/");
   const status = page.locator("#status");
   await expect(status).toHaveAttribute("data-orbit-engine-three-smoke", "ready");
-  await expect(status).toHaveText(/^ready:orbit-engine-three:orbit-engine-three\/presentation:three:3\.7416573867739413$/);
+  await expect(status).toHaveAttribute("data-render-resources", "ready");
+  await expect(status).toHaveText(/^ready:orbit-engine-three:orbit-engine-three\/presentation:resources:2:1$/);
 });

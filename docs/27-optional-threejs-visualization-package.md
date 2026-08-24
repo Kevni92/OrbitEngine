@@ -307,6 +307,16 @@ CelestialSystemView
 
 The consumer inserts `root` into its own scene.
 
+The first resource-coordinator implementation exposes this contract from the
+package root as `CelestialSystemView`, `CelestialRenderSnapshot`,
+`createCelestialRenderSnapshot`, and render-space conversion helpers. The view
+stages body anchors, sphere materials, stellar-emission state, and atmosphere
+shells from one immutable snapshot. A failed staged allocation returns
+structured diagnostics and leaves the previous committed resource membership
+intact. Package-created geometry/material/shell resources are disposed by the
+view; surface textures carry explicit caller/package ownership and caller-owned
+textures remain untouched.
+
 `CelestialSystemView` owns resources it creates beneath that root and removes/disposes them deterministically. It does not call `renderer.render`, own `requestAnimationFrame`, or take over the consumer scene.
 
 ## Update transaction and failure containment
