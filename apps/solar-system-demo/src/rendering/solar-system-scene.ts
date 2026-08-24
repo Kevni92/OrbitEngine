@@ -194,13 +194,7 @@ export class SolarSystemScene {
       throw new RangeError(`Unknown scenario body: ${objectId}`);
     }
     this.#focusId = objectId;
-    const focus = objectId === undefined ? undefined : this.#currentEntries.get(objectId);
-    const localSystemRootId = focus?.definition.type === ObjectType.moon
-      ? focus.definition.centralBody
-      : focus?.definition.type === ObjectType.planet
-        ? focus.definition.id
-        : undefined;
-    this.#orbitRenderer.setLocalSystemRoot(localSystemRootId);
+    this.#updateLocalSystemRoot();
   }
 
   /** Updates the combined committed-plus-runtime membership without changing engine state. */
@@ -241,6 +235,7 @@ export class SolarSystemScene {
     }
     this.#selected = objectId;
     this.#orbitRenderer.setSelected(objectId);
+    this.#updateLocalSystemRoot();
     this.#updateSelectionHalo(undefined);
   }
 
@@ -523,7 +518,9 @@ export class SolarSystemScene {
     const entry = this.#currentEntries.get(path.objectId);
     if (body === undefined && entry === undefined) throw new RangeError(`Unknown scenario body: ${path.objectId}`);
     const color = this.#currentEntries.get(path.objectId)?.definition.display.accentColor ?? 0x9aa7b5;
-    this.#orbitRenderer.setPath(path, color);
+    const parent = this.#currentEntries.get(path.focusId);
+    const kind = parent?.definition.type === ObjectType.star ? "primary" : "child";
+    this.#orbitRenderer.setPath(path, color, kind);
   }
 
   clearPath(objectId: ObjectId): void {
@@ -907,6 +904,25 @@ export class SolarSystemScene {
       parent = this.#currentEntries.get(parent)?.definition.centralBody;
     }
     return depth;
+  }
+
+  #updateLocalSystemRoot(): void {
+    const focusRoot = this.#localSystemRootFor(this.#focusId);
+    const selectedRoot = this.#localSystemRootFor(this.#selected);
+    this.#orbitRenderer.setLocalSystemRoots([focusRoot, selectedRoot].filter((id): id is ObjectId => id !== undefined));
+  }
+
+  #localSystemRootFor(objectId: ObjectId | undefined): ObjectId | undefined {
+    if (objectId === undefined) return undefined;
+    const entry = this.#currentEntries.get(objectId);
+    if (entry === undefined || entry.definition.type === ObjectType.star) return undefined;
+    const hasDirectChildren = [...this.#currentEntries.values()]
+      .some((candidate) => candidate.definition.centralBody === objectId);
+    if (hasDirectChildren) return objectId;
+    const parentId = entry.definition.centralBody;
+    if (parentId === undefined) return undefined;
+    const parent = this.#currentEntries.get(parentId);
+    return parent?.definition.type === ObjectType.star ? undefined : parentId;
   }
 
   #ancestorIds(seeds: ReadonlySet<ObjectId>): Set<ObjectId> {

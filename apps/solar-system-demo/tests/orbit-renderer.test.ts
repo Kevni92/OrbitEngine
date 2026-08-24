@@ -69,6 +69,7 @@ test("orbit guide roles emphasize the active hierarchy without rebuilding geomet
   const sunId = objectId("1000");
   const jupiterId = objectId("1006");
   const europaId = objectId("1202");
+  const ganymedeId = objectId("1203");
   const earthId = objectId("1003");
   const frame = referenceFrameId("1");
   const basePath: OrbitPath = {
@@ -90,7 +91,8 @@ test("orbit guide roles emphasize the active hierarchy without rebuilding geomet
     })),
   };
   renderer.setPath(basePath, 0x4f83cc);
-  renderer.setPath({ ...basePath, objectId: europaId, focusId: jupiterId }, 0x4f83cc);
+  renderer.setPath({ ...basePath, objectId: europaId, focusId: jupiterId }, 0x4f83cc, "child");
+  renderer.setPath({ ...basePath, objectId: ganymedeId, focusId: jupiterId }, 0x4f83cc, "child");
   renderer.setLocalSystemRoot(jupiterId);
 
   assert.equal(renderer.guideRoleFor(earthId), "background");
@@ -100,11 +102,21 @@ test("orbit guide roles emphasize the active hierarchy without rebuilding geomet
   const background = renderer.guideDiagnostics().find((orbit) => orbit.objectId === earthId)!;
   const local = renderer.guideDiagnostics().find((orbit) => orbit.objectId === europaId)!;
   assert.ok(background.opacity < local.opacity);
+  assert.equal(local.opacity, 0.3);
+  assert.equal(local.kind, "child");
 
   renderer.setSelected(europaId);
   const selected = renderer.guideDiagnostics().find((orbit) => orbit.objectId === europaId)!;
   assert.equal(selected.role, "selected");
-  assert.ok(local.opacity < selected.opacity);
+  assert.equal(selected.opacity, 1);
+  assert.equal(renderer.guideDiagnostics().find((orbit) => orbit.objectId === ganymedeId)?.opacity, 0.3);
+  renderer.setSelected(ganymedeId);
+  assert.equal(renderer.guideDiagnostics().find((orbit) => orbit.objectId === europaId)?.opacity, 0.3);
+  assert.equal(renderer.guideDiagnostics().find((orbit) => orbit.objectId === ganymedeId)?.opacity, 1);
+  renderer.setSelected(undefined);
+  assert.ok(renderer.guideDiagnostics()
+    .filter((orbit) => orbit.kind === "child")
+    .every((orbit) => orbit.opacity === 0.3));
   assert.equal((renderer.group.getObjectByName(`Orbit ${earthId}`)!.children[0] as THREE.LineLoop).geometry, earthGeometry);
   assert.equal((renderer.group.getObjectByName(`Orbit ${europaId}`)!.children[0] as THREE.LineLoop).geometry, europaGeometry);
 
@@ -112,6 +124,6 @@ test("orbit guide roles emphasize the active hierarchy without rebuilding geomet
   assert.equal(renderer.group.visible, false);
   assert.ok(renderer.guideDiagnostics().every((orbit) => orbit.visible));
   renderer.setVisible(true);
-  assert.equal(renderer.guideRoleFor(europaId), "selected");
+  assert.equal(renderer.guideRoleFor(europaId), "local-system");
   renderer.dispose();
 });
