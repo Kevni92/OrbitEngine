@@ -187,7 +187,7 @@ import {
   type ManeuverScheduledEvent,
   type ManeuverForceConfiguration,
 } from "./maneuver.js";
-import { TrajectoryPlanner } from "./planner.js";
+import { TrajectoryPlanner, type TrajectoryPlannerContext } from "./planner.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -449,7 +449,14 @@ export class OrbitEngine {
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
     this.#backend = backend;
-    this.#planner = new TrajectoryPlanner(backend);
+    const plannerContext: TrajectoryPlannerContext = {
+      objectAt: (id) => this.registry().get(id),
+      stateAt: (id, target, outputFrame) => this.stateAt(id, target, outputFrame),
+      frameAt: (id) => this.frames().get(id),
+      rootFrameId: () => this.frames().root(),
+      maneuversForObject: (id) => this.#maneuverManager.listManeuvers({ objectId: id }),
+    };
+    this.#planner = new TrajectoryPlanner(backend, plannerContext);
     this.#health = health;
     this.#scheduledWorkQueue = new ScheduledWorkQueue(backend, scheduler);
     this.#fidelityManager = new FidelityManager();

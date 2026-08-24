@@ -440,11 +440,13 @@ Exact naming may follow package conventions, but the semantic split between pure
 
 The public API exposes no C++ solver pointer, integrator tape, backend-specific callback or mutable cache node.
 
-### Implemented TypeScript boundary (#164, #165)
+### Implemented TypeScript boundary (#164, #165, #166)
 
 The planner exposes a backend-neutral value surface through the public TypeScript package. It normalizes explicit transfer and pure-geometry requests, branch selection, solver tolerances, physical constraints, bounded search budgets, ranking metrics, planner dependency identities, immutable leg-oriented plans and deterministic content/dependency digests. `OrbitEngine.planner` is read-only: pure geometry Lambert solving returns an immutable result, while engine-bound planning/search/validation/application operations remain explicit follow-up capabilities and do not mutate engine state.
 
 Pure geometry requests cross a versioned numeric planner codec. Native and WASM adapters use the same normalized packet contract and route the calculation to the portable C++ zero-revolution Lambert solver. The solver reports explicit success, unsupported-revolution, invalid-branch, degenerate-geometry, non-convergence and numerical-failure outcomes, including endpoint velocities, residual, iteration count and conic diagnostics where available. Returned packets are validated at the TypeScript boundary; no backend-specific planner representation is exposed.
+
+Engine-bound transfer planning is now implemented as a read-only facade over the authoritative registry, frame registry, state-query path and maneuver subsystem. It queries source/target/central-body states at their exact endpoint instants, transforms them into an explicitly inertial planning frame, resolves `mu` from the central body's physical-property contract, and computes central-relative Lambert geometry. Intercept and flyby plans report arrival relative velocity without an arrival burn; rendezvous plans add the exact velocity-matching impulse and include it in total impulsive cost. Plans capture motion, source, ephemeris, property, frame/provider, maneuver and solver dependency revisions. Missing state, invalid frame, missing gravitational parameter, solver failure and central-clearance/delta-v rejection are returned as structured results. Planning does not change the engine clock, registry state, motion authority or scheduled work.
 
 ## Portable-core ownership and backend crossing
 
