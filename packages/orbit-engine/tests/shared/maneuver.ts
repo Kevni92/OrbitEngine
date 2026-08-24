@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 
-import type { OrbitEngine } from "../../src/index.js";
+import {
+  OrbitEngine,
+  ScheduledWorkPayloadKind,
+  ScheduledWorkPhase,
+  ScheduledWorkSourceKind,
+  type OrbitEngine as OrbitEngineType,
+} from "../../src/index.js";
 import {
   ManeuverError,
   STANDARD_GRAVITY_METERS_PER_SECOND_SQUARED,
@@ -36,7 +42,7 @@ function directStage(start: number, end: number, force = 100) {
   };
 }
 
-export async function assertManeuverLifecycle(engine: OrbitEngine): Promise<void> {
+export async function assertManeuverLifecycle(engine: OrbitEngineType): Promise<void> {
   const first = engine.scheduleImpulse(object, {
     instant: simulationInstant(5, 1),
     deltaVelocity: { x: 3, y: 0, z: 0 },
@@ -76,6 +82,19 @@ export async function assertManeuverLifecycle(engine: OrbitEngine): Promise<void
   assert.equal(finite.stages[1]?.direction.kind, "bodyFrame");
   assert.equal(finite.stages[1]?.massFlowSpecification.massFlowKilogramsPerSecond, 2);
   assert.equal(finite.minimumMassKilograms, 2);
+
+  assert.deepEqual(
+    engine.listScheduledWorkDiagnostics()
+      .filter((work) => work.sourceKind === ScheduledWorkSourceKind.maneuver)
+      .map((work) => [work.instant.seconds, work.payload.kind]),
+    [
+      [5, ScheduledWorkPayloadKind.maneuverImpulse],
+      [5, ScheduledWorkPayloadKind.maneuverImpulse],
+      [10, ScheduledWorkPayloadKind.maneuverBurnStart],
+      [20, ScheduledWorkPayloadKind.maneuverStageBoundary],
+      [30, ScheduledWorkPayloadKind.maneuverBurnEnd],
+    ],
+  );
 
   const specificImpulse = engine.scheduleFiniteBurn(objectId("4"), {
     start: simulationInstant(40),
@@ -147,6 +166,21 @@ export async function assertManeuverLifecycle(engine: OrbitEngine): Promise<void
   assert.equal(updated.id, first.id);
   assert.equal(updated.revision, "2");
   assert.equal(updated.deltaVelocity.z, 5);
+  assert.deepEqual(
+    engine.listScheduledWorkDiagnostics()
+      .filter((work) => work.sourceKind === ScheduledWorkSourceKind.maneuver)
+      .map((work) => [work.instant.seconds, work.payload.kind]),
+    [
+      [5, ScheduledWorkPayloadKind.maneuverImpulse],
+      [6, ScheduledWorkPayloadKind.maneuverImpulse],
+      [10, ScheduledWorkPayloadKind.maneuverBurnStart],
+      [20, ScheduledWorkPayloadKind.maneuverStageBoundary],
+      [30, ScheduledWorkPayloadKind.maneuverBurnEnd],
+      [40, ScheduledWorkPayloadKind.maneuverBurnStart],
+      [41, ScheduledWorkPayloadKind.maneuverBurnEnd],
+      [100, ScheduledWorkPayloadKind.maneuverImpulse],
+    ],
+  );
 
   const cancelled = engine.cancelManeuver(second.id);
   assert.equal(cancelled.lifecycle, "cancelled");
@@ -155,6 +189,7 @@ export async function assertManeuverLifecycle(engine: OrbitEngine): Promise<void
   assert.equal(engine.listManeuvers({ lifecycle: "cancelled" }).length, 1);
 
   assert.equal(engine.advanceTo(simulationInstant(7)).status, "reachedTarget");
+  assert.equal(engine.getManeuverStatus(updated.id)?.lifecycle, "completed");
   assert.throws(
     () => engine.updateManeuver(updated.id, {
       instant: simulationInstant(7),
@@ -163,6 +198,42 @@ export async function assertManeuverLifecycle(engine: OrbitEngine): Promise<void
     }),
     (error: unknown) => error instanceof ManeuverError && error.code === "notFuture",
   );
+
+  const eventEngine = await OrbitEngine.create({ backend: engine.backend });
+  const eventManeuver = eventEngine.scheduleFiniteBurn(objectId("8"), {
+    start: simulationInstant(2),
+    end: simulationInstant(6),
+    stages: [
+      { ...directStage(2, 4), start: simulationInstant(2), end: simulationInstant(4) },
+      { ...directStage(4, 6), start: simulationInstant(4), end: simulationInstant(6) },
+    ],
+  });
+  assert.equal(eventEngine.advanceTo(simulationInstant(2)).status, "reachedTarget");
+  assert.equal(eventEngine.getManeuverStatus(eventManeuver.id)?.lifecycle, "active");
+  assert.equal(eventEngine.getManeuverStatus(eventManeuver.id)?.currentStageIndex, 0);
+  assert.equal(eventEngine.advanceTo(simulationInstant(4)).status, "reachedTarget");
+  assert.equal(eventEngine.getManeuverStatus(eventManeuver.id)?.currentStageIndex, 1);
+  assert.equal(eventEngine.advanceTo(simulationInstant(6)).status, "reachedTarget");
+  assert.equal(eventEngine.getManeuverStatus(eventManeuver.id)?.lifecycle, "completed");
+
+  const rollbackEngine = await OrbitEngine.create({ backend: engine.backend });
+  const rollbackManeuver = rollbackEngine.scheduleImpulse(objectId("9"), {
+    instant: simulationInstant(2),
+    deltaVelocity: { x: 1, y: 0, z: 0 },
+    frame: "1",
+  });
+  rollbackEngine.scheduleWork({
+    instant: simulationInstant(2),
+    phase: ScheduledWorkPhase.physicalChange,
+    sourceKind: ScheduledWorkSourceKind.test,
+    sourceId: objectId("99"),
+    payload: { kind: ScheduledWorkPayloadKind.fail },
+  });
+  const rollback = rollbackEngine.advanceTo(simulationInstant(2));
+  assert.equal(rollback.status, "failed");
+  assert.equal(rollback.failure?.code, "payloadFailed");
+  assert.equal(rollbackEngine.getManeuverStatus(rollbackManeuver.id)?.lifecycle, "scheduled");
+  assert.equal(rollbackEngine.listScheduledWorkDiagnostics().filter((work) => work.sourceKind === ScheduledWorkSourceKind.maneuver).length, 1);
 }
 
 export function assertManeuverValueTypeParity(left: ImpulseManeuver | FiniteBurnManeuver, right: ImpulseManeuver | FiniteBurnManeuver): void {

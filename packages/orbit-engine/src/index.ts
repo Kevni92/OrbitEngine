@@ -4,7 +4,7 @@ import { ObjectRegistry } from "./registry.js";
 import { FrameRegistry, type FrameNode, type ObjectFrameStateSource } from "./frame-registry.js";
 import { referenceFrameId, type ReferenceFrameId } from "./frames.js";
 import { objectId, type ObjectId } from "./objects.js";
-import { type PropagationModel, type PropagationState, type RevisionId } from "./propagation.js";
+import { revisionId, type PropagationModel, type PropagationState, type RevisionId } from "./propagation.js";
 import { ObjectStateQueries } from "./state-query.js";
 import {
   addDurationToInstant,
@@ -17,6 +17,11 @@ import {
 } from "./time.js";
 import {
   ScheduledWorkQueue,
+  ScheduledWorkPayloadKind,
+  ScheduledWorkPhase,
+  ScheduledWorkSourceKind,
+  SchedulerError,
+  SchedulerErrorCode,
   type ScheduledWorkInput,
   type ScheduledWorkRecord,
   type ScheduledWorkId,
@@ -156,6 +161,9 @@ import {
   type ManeuverReplacement,
   type ManeuverStatus,
   type ManeuverId,
+  ManeuverScheduledEventKind,
+  type ManeuverScheduledEvent,
+  type ManeuverEventApplication,
 } from "./maneuver.js";
 
 export * from "./time.js";
@@ -232,6 +240,50 @@ function validateOptions(options: OrbitEngineCreateOptions): OrbitEngineBackendP
   return backend;
 }
 
+function maneuverStart(value: Maneuver): SimulationInstant {
+  return value.kind === "impulse" ? value.instant : value.start;
+}
+
+function maneuverEventPhase(kind: ManeuverScheduledEventKind): ScheduledWorkPhase {
+  return kind === "impulse" ? ScheduledWorkPhase.physicalChange : ScheduledWorkPhase.boundary;
+}
+
+function maneuverPayloadKind(kind: ManeuverScheduledEventKind): number {
+  switch (kind) {
+    case "impulse": return ScheduledWorkPayloadKind.maneuverImpulse;
+    case "burnStart": return ScheduledWorkPayloadKind.maneuverBurnStart;
+    case "stageBoundary": return ScheduledWorkPayloadKind.maneuverStageBoundary;
+    case "burnEnd": return ScheduledWorkPayloadKind.maneuverBurnEnd;
+    case "minimumMassTermination": return ScheduledWorkPayloadKind.maneuverMinimumMassTermination;
+  }
+}
+
+function compareScheduledWork(left: ScheduledWorkRecord, right: ScheduledWorkRecord): number {
+  const instant = compareSimulationInstants(left.instant, right.instant);
+  if (instant !== 0) return instant;
+  const phase = [
+    ScheduledWorkPhase.boundary,
+    ScheduledWorkPhase.physicalChange,
+    ScheduledWorkPhase.authorityTransition,
+    ScheduledWorkPhase.predictionMaintenance,
+    ScheduledWorkPhase.observation,
+  ].indexOf(left.phase) - [
+    ScheduledWorkPhase.boundary,
+    ScheduledWorkPhase.physicalChange,
+    ScheduledWorkPhase.authorityTransition,
+    ScheduledWorkPhase.predictionMaintenance,
+    ScheduledWorkPhase.observation,
+  ].indexOf(right.phase);
+  if (phase !== 0) return phase;
+  if (left.sourceKind !== right.sourceKind) return left.sourceKind < right.sourceKind ? -1 : 1;
+  const source = BigInt(left.sourceId) - BigInt(right.sourceId);
+  if (source !== 0n) return source < 0n ? -1 : 1;
+  const ordinal = BigInt(left.sourceOrdinal) - BigInt(right.sourceOrdinal);
+  if (ordinal !== 0n) return ordinal < 0n ? -1 : 1;
+  const id = BigInt(left.id) - BigInt(right.id);
+  return id === 0n ? 0 : id < 0n ? -1 : 1;
+}
+
 export class OrbitEngine {
   readonly backend: OrbitEngineBackend;
   readonly #health: BackendHealth;
@@ -251,6 +303,8 @@ export class OrbitEngine {
   readonly #collisionSuppressionManager: CollisionContactSuppressionManager;
   readonly #collisionContactLifecycleManager: CollisionContactLifecycleManager;
   readonly #maneuverManager: ManeuverManager;
+  readonly #maneuverActions = new Map<ScheduledWorkId, { readonly work: ScheduledWorkRecord; readonly event: ManeuverScheduledEvent }>();
+  readonly #maneuverWorkById = new Map<ManeuverId, Set<ScheduledWorkId>>();
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -265,6 +319,7 @@ export class OrbitEngine {
     });
     this.#maneuverManager = new ManeuverManager({
       currentTime: () => this.currentTime,
+      onMutation: (previous, next) => this.#onManeuverMutation(previous, next),
     });
     this.#encounterPolicyManager = new EncounterPolicyManager(undefined, (_previous, next) => {
       const dependency = { kind: "interactionPolicy" as const, id: "encounter-policy", revision: next.revision };
@@ -310,6 +365,152 @@ export class OrbitEngine {
     return this.#scheduledWorkQueue.status();
   }
 
+  #eventInput(
+    maneuver: Maneuver,
+    kind: ManeuverScheduledEventKind,
+    instant: SimulationInstant,
+    stageIndex?: number,
+  ): ScheduledWorkInput {
+    const event: ManeuverScheduledEvent = Object.freeze({
+      maneuverId: maneuver.id,
+      revision: maneuver.revision,
+      kind,
+      ...(stageIndex === undefined ? {} : { stageIndex }),
+    });
+    return {
+      instant,
+      phase: maneuverEventPhase(kind),
+      sourceKind: ScheduledWorkSourceKind.maneuver,
+      sourceId: maneuver.objectId,
+      sourceOrdinal: revisionId(maneuver.id),
+      dependencies: [{ kind: "maneuver", id: maneuver.id, revision: maneuver.revision }],
+      payload: {
+        kind: maneuverPayloadKind(kind),
+        objectId: maneuver.objectId,
+        value: stageIndex ?? 0,
+      },
+    };
+  }
+
+  #eventDefinitions(maneuver: Maneuver): readonly { readonly kind: ManeuverScheduledEventKind; readonly instant: SimulationInstant; readonly stageIndex?: number }[] {
+    if (maneuver.kind === "impulse") {
+      return [{ kind: ManeuverScheduledEventKind.impulse, instant: maneuver.instant }];
+    }
+    const definitions: { kind: ManeuverScheduledEventKind; instant: SimulationInstant; stageIndex?: number }[] = [];
+    const activeAtStart = maneuver.stages.findIndex((stage) =>
+      compareSimulationInstants(stage.start, maneuver.start) <= 0
+      && compareSimulationInstants(maneuver.start, stage.end) < 0);
+    definitions.push({
+      kind: ManeuverScheduledEventKind.burnStart,
+      instant: maneuver.start,
+      ...(activeAtStart < 0 ? {} : { stageIndex: activeAtStart }),
+    });
+    for (let index = 1; index < maneuver.stages.length; index += 1) {
+      const previous = maneuver.stages[index - 1]!;
+      const stage = maneuver.stages[index]!;
+      if (compareSimulationInstants(previous.end, stage.start) < 0) {
+        definitions.push({ kind: ManeuverScheduledEventKind.stageBoundary, instant: previous.end });
+      }
+      definitions.push({ kind: ManeuverScheduledEventKind.stageBoundary, instant: stage.start, stageIndex: index });
+    }
+    definitions.push({ kind: ManeuverScheduledEventKind.burnEnd, instant: maneuver.end });
+    return definitions;
+  }
+
+  #scheduleManeuverEvents(maneuver: Maneuver): void {
+    const created: { readonly work: ScheduledWorkRecord; readonly event: ManeuverScheduledEvent }[] = [];
+    try {
+      for (const definition of this.#eventDefinitions(maneuver)) {
+        const input = this.#eventInput(maneuver, definition.kind, definition.instant, definition.stageIndex);
+        const work = this.scheduleWork(input);
+        const event = Object.freeze({
+          maneuverId: maneuver.id,
+          revision: maneuver.revision,
+          kind: definition.kind,
+          ...(definition.stageIndex === undefined ? {} : { stageIndex: definition.stageIndex }),
+        });
+        const action = Object.freeze({ work, event });
+        this.#maneuverActions.set(work.id, action);
+        created.push(action);
+      }
+      const ids = this.#maneuverWorkById.get(maneuver.id) ?? new Set<ScheduledWorkId>();
+      for (const action of created) ids.add(action.work.id);
+      this.#maneuverWorkById.set(maneuver.id, ids);
+    } catch (error) {
+      for (const action of created) {
+        this.#maneuverActions.delete(action.work.id);
+        try {
+          this.cancelScheduledWork(action.work.id, action.work.generation);
+        } catch (cleanupError) {
+          if (!(cleanupError instanceof SchedulerError)
+            || (cleanupError.code !== SchedulerErrorCode.notFound && cleanupError.code !== SchedulerErrorCode.staleGeneration)) {
+            // Preserve the original scheduling failure; the queue is still
+            // authoritative for any cleanup that succeeded.
+          }
+        }
+      }
+      throw error;
+    }
+  }
+
+  #removeManeuverEvents(maneuverId: ManeuverId, revision?: RevisionId): void {
+    const ids = this.#maneuverWorkById.get(maneuverId);
+    if (ids === undefined) return;
+    for (const id of [...ids]) {
+      const action = this.#maneuverActions.get(id);
+      if (action === undefined || (revision !== undefined && action.event.revision !== revision)) continue;
+      this.#maneuverActions.delete(id);
+      ids.delete(id);
+      try {
+        this.cancelScheduledWork(action.work.id, action.work.generation);
+      } catch (error) {
+        if (!(error instanceof SchedulerError)
+          || (error.code !== SchedulerErrorCode.notFound && error.code !== SchedulerErrorCode.staleGeneration)) throw error;
+      }
+    }
+    if (ids.size === 0) this.#maneuverWorkById.delete(maneuverId);
+  }
+
+  #onManeuverMutation(previous: Maneuver | undefined, next: Maneuver): void {
+    const effectiveFrom = previous === undefined
+      ? maneuverStart(next)
+      : compareSimulationInstants(maneuverStart(previous), maneuverStart(next)) <= 0
+        ? maneuverStart(previous)
+        : maneuverStart(next);
+
+    if (previous !== undefined && next.lifecycle === "scheduled") {
+      // Schedule the replacement before retiring the old generation. If the
+      // replacement cannot be represented, the manager rolls back while the
+      // old queue generation remains intact.
+      this.#scheduleManeuverEvents(next);
+    }
+    this.invalidateDependency(
+      { kind: "maneuver", id: next.id, revision: next.revision },
+      effectiveFrom,
+    );
+    if (previous !== undefined) this.#removeManeuverEvents(previous.id, previous.revision);
+    if (previous === undefined && next.lifecycle === "scheduled") this.#scheduleManeuverEvents(next);
+  }
+
+  #applyManeuverEventsAt(instant: SimulationInstant): void {
+    const due = [...this.#maneuverActions.values()]
+      .filter((action) => compareSimulationInstants(action.work.instant, instant) === 0)
+      .sort((left, right) => compareScheduledWork(left.work, right.work));
+    for (const action of due) {
+      this.#maneuverActions.delete(action.work.id);
+      this.#maneuverWorkById.get(action.event.maneuverId)?.delete(action.work.id);
+      const result: ManeuverEventApplication = this.#maneuverManager.applyScheduledEvent(action.event);
+      if (result === "stale") continue;
+    }
+    for (const [id, actions] of this.#maneuverWorkById) if (actions.size === 0) this.#maneuverWorkById.delete(id);
+  }
+
+  #nextScheduledWorkInstant(current: SimulationInstant): SimulationInstant | undefined {
+    const first = this.#scheduledWorkQueue.list(1)[0];
+    if (first === undefined || compareSimulationInstants(first.instant, current) <= 0) return undefined;
+    return first.instant;
+  }
+
   scheduleWork(input: ScheduledWorkInput, options?: { readonly allowCurrentTime?: boolean }): ScheduledWorkRecord {
     const record = this.#scheduledWorkQueue.schedule(input, options);
     this.#invalidationManager.track(record, input);
@@ -339,6 +540,7 @@ export class OrbitEngine {
     let processedWorkCount = 0;
     for (;;) {
       const nextEncounterInstant = this.#encounterSchedulingManager.nextScheduledInstant();
+      const nextWorkInstant = this.#nextScheduledWorkInstant(current);
       if (compareSimulationInstants(current, normalizedTarget) < 0
         && nextEncounterInstant !== undefined
         && compareSimulationInstants(nextEncounterInstant, current) <= 0) {
@@ -346,11 +548,14 @@ export class OrbitEngine {
         current = this.currentTime;
         continue;
       }
-      const stepTarget = nextEncounterInstant !== undefined
-        && compareSimulationInstants(nextEncounterInstant, current) > 0
-        && compareSimulationInstants(nextEncounterInstant, normalizedTarget) < 0
-        ? nextEncounterInstant
-        : normalizedTarget;
+      let stepTarget = normalizedTarget;
+      for (const candidate of [nextEncounterInstant, nextWorkInstant]) {
+        if (candidate !== undefined
+          && compareSimulationInstants(candidate, current) > 0
+          && compareSimulationInstants(candidate, stepTarget) < 0) {
+          stepTarget = candidate;
+        }
+      }
       this.#invalidationManager.prepareAdvance(current);
       const result = this.#scheduledWorkQueue.advanceTo(stepTarget);
       this.#invalidationManager.afterAdvance(result.currentTime);
@@ -369,6 +574,7 @@ export class OrbitEngine {
         };
       }
       if (compareSimulationInstants(current, stepTarget) === 0) {
+        this.#applyManeuverEventsAt(current);
         this.#encounterSchedulingManager.applyDue(current);
       }
       if (compareSimulationInstants(current, normalizedTarget) === 0) {

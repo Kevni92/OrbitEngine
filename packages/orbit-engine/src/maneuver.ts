@@ -404,6 +404,25 @@ export interface ManeuverStatus {
   readonly lastResult?: string;
 }
 
+export const ManeuverScheduledEventKind = Object.freeze({
+  impulse: "impulse",
+  burnStart: "burnStart",
+  stageBoundary: "stageBoundary",
+  burnEnd: "burnEnd",
+  minimumMassTermination: "minimumMassTermination",
+} as const);
+export type ManeuverScheduledEventKind =
+  (typeof ManeuverScheduledEventKind)[keyof typeof ManeuverScheduledEventKind];
+
+export interface ManeuverScheduledEvent {
+  readonly maneuverId: ManeuverId;
+  readonly revision: RevisionId;
+  readonly kind: ManeuverScheduledEventKind;
+  readonly stageIndex?: number;
+}
+
+export type ManeuverEventApplication = "applied" | "stale" | "ignored";
+
 type NormalizedImpulseDefinition = Pick<ImpulseManeuver, "instant" | "deltaVelocity" | "frame">;
 type NormalizedFiniteBurnDefinition = Pick<FiniteBurnManeuver, "start" | "end" | "stages" | "minimumMassKilograms">;
 
@@ -743,6 +762,11 @@ export function roundTripManeuver(value: Maneuver): Maneuver {
 
 export interface ManeuverManagerOptions {
   readonly currentTime?: () => SimulationInstant;
+  /**
+   * Called while a maneuver mutation is being committed. The manager rolls
+   * its own record back when the host rejects the associated scheduled work.
+   */
+  readonly onMutation?: (previous: Maneuver | undefined, next: Maneuver) => void;
 }
 
 function normalizeCurrentTime(value: SimulationInstant): SimulationInstant {
@@ -763,11 +787,14 @@ function assertReplacementObject(record: Maneuver, replacement: ManeuverReplacem
 
 export class ManeuverManager {
   readonly #currentTime: () => SimulationInstant;
+  readonly #onMutation?: (previous: Maneuver | undefined, next: Maneuver) => void;
   readonly #records = new Map<ManeuverId, Maneuver>();
+  readonly #runtime = new Map<ManeuverId, { readonly currentStageIndex?: number; readonly lastResult?: string }>();
   #nextId: ManeuverId = maneuverId("1");
 
   constructor(options: ManeuverManagerOptions = {}) {
     this.#currentTime = options.currentTime ?? (() => simulationInstant(0));
+    this.#onMutation = options.onMutation;
   }
 
   #allocateId(): ManeuverId {
@@ -809,6 +836,14 @@ export class ManeuverManager {
       sameTimeOrder: id,
     }) as ImpulseManeuver;
     this.#records.set(id, record);
+    this.#runtime.delete(id);
+    try {
+      this.#onMutation?.(undefined, record);
+    } catch (error) {
+      this.#records.delete(id);
+      this.#nextId = id;
+      throw error;
+    }
     return record;
   }
 
@@ -828,6 +863,14 @@ export class ManeuverManager {
     this.#validateOverlap(record);
     this.#nextId = maneuverId(nextUint64(id, ManeuverErrorCode.idExhausted, "Maneuver ID"));
     this.#records.set(id, record);
+    this.#runtime.delete(id);
+    try {
+      this.#onMutation?.(undefined, record);
+    } catch (error) {
+      this.#records.delete(id);
+      this.#nextId = id;
+      throw error;
+    }
     return record;
   }
 
@@ -835,7 +878,6 @@ export class ManeuverManager {
     const id = maneuverId(idValue);
     const current = this.#records.get(id);
     if (current === undefined) fail(ManeuverErrorCode.notFound, `Maneuver ${id} was not found`);
-    if (current.lifecycle !== "scheduled") fail(ManeuverErrorCode.invalidLifecycle, "Only scheduled maneuvers can be updated");
     assertReplacementObject(current, replacement);
     const kind = definitionKind(replacement);
     if (kind !== current.kind) fail(ManeuverErrorCode.invalidInput, "Maneuver updates cannot change maneuver kind");
@@ -844,6 +886,7 @@ export class ManeuverManager {
       ? (normalized as NormalizedImpulseDefinition).instant
       : (normalized as NormalizedFiniteBurnDefinition).start;
     this.#validateFuture(effective);
+    if (current.lifecycle !== "scheduled") fail(ManeuverErrorCode.invalidLifecycle, "Only scheduled maneuvers can be updated");
     const next = kind === "impulse"
       ? freezeManeuver({
         ...(normalized as NormalizedImpulseDefinition),
@@ -864,7 +907,17 @@ export class ManeuverManager {
         lifecycle: "scheduled",
       });
     this.#validateOverlap(next);
+    const previousRuntime = this.#runtime.get(id);
     this.#records.set(id, next);
+    this.#runtime.delete(id);
+    try {
+      this.#onMutation?.(current, next);
+    } catch (error) {
+      this.#records.set(id, current);
+      if (previousRuntime === undefined) this.#runtime.delete(id);
+      else this.#runtime.set(id, previousRuntime);
+      throw error;
+    }
     return next;
   }
 
@@ -875,8 +928,59 @@ export class ManeuverManager {
     if (current.lifecycle !== "scheduled") fail(ManeuverErrorCode.invalidLifecycle, "Only scheduled maneuvers can be cancelled");
     this.#validateFuture(maneuverStart(current));
     const next = freezeManeuver({ ...current, revision: nextRevision(current.revision), lifecycle: "cancelled" }) as Maneuver;
+    const previousRuntime = this.#runtime.get(id);
     this.#records.set(id, next);
+    this.#runtime.delete(id);
+    try {
+      this.#onMutation?.(current, next);
+    } catch (error) {
+      this.#records.set(id, current);
+      if (previousRuntime === undefined) this.#runtime.delete(id);
+      else this.#runtime.set(id, previousRuntime);
+      throw error;
+    }
     return next;
+  }
+
+  applyScheduledEvent(event: ManeuverScheduledEvent): ManeuverEventApplication {
+    const current = this.#records.get(event.maneuverId);
+    if (current === undefined || current.revision !== event.revision) return "stale";
+    if (current.lifecycle === "cancelled" || current.lifecycle === "failed" || current.lifecycle === "stale") return "ignored";
+
+    let next: Maneuver;
+    let runtime: { readonly currentStageIndex?: number; readonly lastResult?: string } = {};
+    switch (event.kind) {
+      case "impulse":
+        if (current.kind !== "impulse" || current.lifecycle !== "scheduled") return "ignored";
+        next = freezeManeuver({ ...current, lifecycle: "completed" });
+        runtime = { lastResult: "impulseApplied" };
+        break;
+      case "burnStart":
+        if (current.kind !== "finiteBurn" || current.lifecycle !== "scheduled") return "ignored";
+        next = freezeManeuver({ ...current, lifecycle: "active" });
+        runtime = { currentStageIndex: event.stageIndex, lastResult: "burnStarted" };
+        break;
+      case "stageBoundary":
+        if (current.kind !== "finiteBurn" || (current.lifecycle !== "scheduled" && current.lifecycle !== "active")) return "ignored";
+        next = freezeManeuver({ ...current, lifecycle: "active" });
+        runtime = { currentStageIndex: event.stageIndex, lastResult: "stageBoundary" };
+        break;
+      case "burnEnd":
+        if (current.kind !== "finiteBurn" || (current.lifecycle !== "scheduled" && current.lifecycle !== "active")) return "ignored";
+        next = freezeManeuver({ ...current, lifecycle: "completed" });
+        runtime = { lastResult: "burnCompleted" };
+        break;
+      case "minimumMassTermination":
+        if (current.kind !== "finiteBurn" || (current.lifecycle !== "scheduled" && current.lifecycle !== "active")) return "ignored";
+        next = freezeManeuver({ ...current, lifecycle: "completed" });
+        runtime = { lastResult: "minimumMassReached" };
+        break;
+      default:
+        return "ignored";
+    }
+    this.#records.set(event.maneuverId, next);
+    this.#runtime.set(event.maneuverId, runtime);
+    return "applied";
   }
 
   getManeuver(idValue: ManeuverId | string): Maneuver | undefined {
@@ -914,6 +1018,7 @@ export class ManeuverManager {
       kind: record.kind,
       lifecycle: record.lifecycle,
       dependencyRevisionDigest: revisionId("0"),
+      ...this.#runtime.get(record.id),
     });
   }
 
@@ -923,6 +1028,7 @@ export class ManeuverManager {
 
   clear(): void {
     this.#records.clear();
+    this.#runtime.clear();
   }
 }
 
