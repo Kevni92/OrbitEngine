@@ -326,10 +326,17 @@ Backend-neutral TypeScript capabilities are equivalent to:
 ```text
 setCollisionPolicy(...)
 setCollisionProfile(...)
+registerCollisionContact({ record, dependencyRevisions? })
 getCollisionContact(contactId)
 listCollisionContacts({objectId?, from?, to?})
 getCollisionDiagnostics(contactId)
+groupCollisionContactsByInstant(records)
+resolveSimultaneousCollisionContacts(contacts)
+executeSimultaneousCollisionContacts(contacts)
+invalidateCollisionDependency(dependency, effectiveFrom)
 ```
+
+Contacts are canonicalized by exact contact instant and `(objectA, objectB, contactId)`. A same-time transaction may contain any number of detect-only contacts and disjoint impulse pairs. If an impulse object occurs in more than one contact, execution returns `rolledBack` with `unsupportedSimultaneousImpulseContact`; no sequential pair order is selected. The registered contact lifecycle retains stale history, rejects stale generations at execution, and leaves object removal to the explicit object-lifecycle operation after its dependency check.
 
 The continuous-detection primitive also exposes the encounter-fed operations needed by
 the v1 detector without exposing index internals:

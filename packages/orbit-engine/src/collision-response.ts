@@ -19,6 +19,7 @@ export const CollisionResponseErrorCode = Object.freeze({
   invalidProfile: "invalidProfile",
   invalidReferenceStatus: "invalidReferenceStatus",
   successorValidationFailed: "successorValidationFailed",
+  unsupportedSimultaneousImpulseContact: "unsupportedSimultaneousImpulseContact",
 } as const);
 
 export type CollisionResponseErrorCode = (typeof CollisionResponseErrorCode)[keyof typeof CollisionResponseErrorCode];
