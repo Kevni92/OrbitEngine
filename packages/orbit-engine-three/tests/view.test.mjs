@@ -95,6 +95,8 @@ test("view creates composed star, planet, moon, and bounded atmosphere resources
     disposed: false,
     bodyCount: 3,
     sphereCount: 3,
+    markerCount: 0,
+    hiddenCount: 0,
     atmosphereCount: 1,
     packageOwnedResourceCount: 13,
     committedSnapshotFingerprint: renderSnapshot.fingerprint,
@@ -156,4 +158,44 @@ test("updates never render or own a loop and disposed views reject later snapsho
   assert.equal(result.diagnostics.lastFailure.code, "disposed");
   assert.equal("render" in view, false);
   assert.equal("requestAnimationFrame" in view, false);
+});
+
+test("camera-aware policy batches marker bodies, keeps hierarchy generic, and picks stable ids", () => {
+  const rootId = objectId("10");
+  const markerId = objectId("20");
+  const view = new CelestialSystemView({
+    configuration: { radiusMode: "physical", renderSpace: { metersPerSceneUnit: 1 } },
+  });
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1_000);
+  camera.position.set(0, 0, 10);
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
+  const renderSnapshot = snapshot([
+    body(rootId, { x: 0, y: 0, z: 0 }, { radius: 1 }),
+    body(markerId, { x: 20, y: 0, z: -90 }, { radius: 0.1, parentId: rootId }),
+  ]);
+  const result = view.update(renderSnapshot, {
+    camera,
+    viewportWidthCssPixels: 800,
+    viewportHeightCssPixels: 800,
+    contextPriorityObjectIds: new Set([markerId]),
+  });
+  assert.equal(result.committed, true);
+  assert.deepEqual(view.diagnostics(), {
+    disposed: false,
+    bodyCount: 2,
+    sphereCount: 1,
+    markerCount: 1,
+    hiddenCount: 0,
+    atmosphereCount: 0,
+    packageOwnedResourceCount: 7,
+    committedSnapshotFingerprint: result.snapshotFingerprint,
+  });
+  const markerLayer = view.root.getObjectByName("orbit-engine-three batched markers");
+  assert.ok(markerLayer instanceof THREE.Points);
+  assert.equal(view.bodyAnchor(markerId)?.children.length, 0);
+  assert.ok(markerLayer.geometry.getAttribute("markerSize").getX(0) < 2, "physical marker size must remain projected physical size");
+  assert.deepEqual(view.pick(0.346, 0, camera, 800, 800)?.objectId, markerId);
+  view.dispose();
+  assert.equal(view.root.getObjectByName("orbit-engine-three batched markers"), undefined);
 });

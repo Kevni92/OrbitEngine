@@ -35,6 +35,15 @@ releases package-created geometry/material/atmosphere resources while texture
 ownership is explicit through the optional surface-texture provider: caller
 owned textures are never disposed.
 
+The root also provides generic physical/adaptive CSS-pixel sizing,
+hierarchy-aware `hidden`/`marker`/`sphere` policy with hysteresis, and a typed
+batched marker layer. Consumers supply camera/viewport context, selected or
+focused ObjectIds, and optional context-priority IDs; no Solar-System names or
+IDs are embedded in the package. Physical-mode marker sizes remain the true
+projected physical diameter, while adaptive markers use the configured
+viewport-stable size. `CelestialSystemView.pick()` maps sphere and batched
+marker hits back to stable ObjectIds.
+
 The reusable package does not contain Solar-System scenario data. A consumer
 supplies its own `CelestialAppearance` records and adapts axis transforms at
 the renderer boundary. Stellar illumination keeps all physical contributors

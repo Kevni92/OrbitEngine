@@ -443,6 +443,16 @@ The companion package extracts the generic mechanisms from documents 17/18:
 - selection/focus/context overrides;
 - resource promotion/demotion.
 
+The package root now exposes the reusable sizing/LOD/picking pieces through
+`resolveBodySizing`, `createRepresentationPolicy`,
+`resolveRepresentationDecisions`, `BatchedMarkerLayer`, and the camera-aware
+`CelestialSystemView` update context. The policy is driven only by immutable
+body state, parent ObjectIds, CSS-pixel projection metrics, and caller-supplied
+selection/focus/context-priority sets. It contains no Solar-System identity
+rules. Marker membership is sorted deterministically and rendered through one
+bounded `THREE.Points` resource; the view maps marker and sphere hits back to
+stable ObjectIds without changing engine state.
+
 ### Default policy versus application policy
 
 The package ships a documented generic default strategy equivalent to current demo behavior but without Solar-System-specific identities.
