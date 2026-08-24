@@ -440,6 +440,12 @@ Exact naming may follow package conventions, but the semantic split between pure
 
 The public API exposes no C++ solver pointer, integrator tape, backend-specific callback or mutable cache node.
 
+### Implemented TypeScript boundary (#164)
+
+The first implementation slice exposes the backend-neutral value surface through the public TypeScript package. It normalizes explicit transfer and pure-geometry requests, zero-revolution branch selection, solver tolerances, physical constraints, bounded search budgets, ranking metrics, planner dependency identities, immutable leg-oriented plans and deterministic content/dependency digests. `OrbitEngine.planner` is read-only and exposes the stable operation shape; until the follow-up Lambert/core issues land, solver, search, validation and application operations return the explicit `lambertSolverNotImplemented` result rather than mutating engine state.
+
+Pure geometry requests cross a versioned numeric planner codec. Native and WASM adapters use the same normalized packet contract and validate every returned word. This establishes the parity boundary for the later shared-core solver without introducing a backend-specific planner representation.
+
 ## Portable-core ownership and backend crossing
 
 The following belong in portable C++:

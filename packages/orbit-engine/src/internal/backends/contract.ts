@@ -8,6 +8,7 @@ import type { TwoBodyWire } from "../two-body-wire.js";
 import type { NumericalWire } from "../numerical-wire.js";
 import type { CoupledWire } from "../coupled-wire.js";
 import type { SchedulerWire } from "../scheduler-wire.js";
+import type { PlannerGeometryWire } from "../../planner.js";
 
 export const BINDING_PROTOCOL_VERSION = 10;
 
@@ -33,6 +34,7 @@ export interface Backend {
   roundTripNumerical(value: NumericalWire): NumericalWire;
   roundTripCoupled(value: CoupledWire): CoupledWire;
   roundTripScheduler(value: SchedulerWire): SchedulerWire;
+  roundTripPlanner(value: PlannerGeometryWire): PlannerGeometryWire;
 }
 
 export interface RawBackendBinding {

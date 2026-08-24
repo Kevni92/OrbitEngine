@@ -57,6 +57,7 @@ test("maneuver numerical propagation crosses the backend once per query, never p
     },
     roundTripCoupled: identity,
     roundTripScheduler: identity,
+    roundTripPlanner: identity,
   };
   const motion = createNumericalMotion({
     objectId: objectId("850"),
