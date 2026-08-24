@@ -108,6 +108,11 @@ std::uint64_t identity_for_configuration(
       hash = mix(hash, dependency.revision);
     }
   }
+  for (const auto& boundary : configuration.hard_boundaries) {
+    hash = mix(hash, static_cast<std::uint64_t>(boundary.instant.seconds));
+    hash = mix(hash, boundary.instant.nanoseconds);
+    hash = mix(hash, boundary.identity);
+  }
   return hash;
 }
 
@@ -136,6 +141,10 @@ bool validate_configuration(
   for (const auto& provider : configuration.force_providers.providers()) {
     if (!provider.definition.validity.contains(anchor_sample)) {
       set_failure(failure, FailureCode::invalid_configuration, "force-provider validity does not contain the segment anchor");
+      return false;
+    }
+    if (provider.definition.requires_mass && !anchor.mass.has_value()) {
+      set_failure(failure, FailureCode::missing_mass, "force provider requires an integrated physical mass anchor");
       return false;
     }
   }
@@ -222,6 +231,39 @@ std::vector<numerical::HardBoundary> build_hard_boundaries(
   return result;
 }
 
+bool append_minimum_mass_boundaries(
+  const NumericalSegmentAnchor& anchor,
+  const NumericalMotionConfiguration& configuration,
+  std::vector<numerical::HardBoundary>& boundaries,
+  Failure& failure
+) {
+  if (!anchor.mass.has_value()) return true;
+  for (const auto& provider : configuration.force_providers.providers()) {
+    if (!provider.definition.minimum_mass_boundary) continue;
+    std::optional<time::SimulationInstant> boundary;
+    force::Failure force_failure;
+    if (!provider.definition.minimum_mass_boundary(anchor.epoch, *anchor.mass, boundary, force_failure)) {
+      set_failure(
+        failure,
+        FailureCode::invalid_configuration,
+        force_failure.message.empty() ? "minimum-mass boundary calculation failed" : force_failure.message.c_str());
+      return false;
+    }
+    if (boundary.has_value()) {
+      if (!time::is_normalized(*boundary) || time::compare(*boundary, anchor.epoch) <= 0) {
+        set_failure(failure, FailureCode::invalid_mass, "minimum-mass boundary is not after the exact segment anchor");
+        return false;
+      }
+      boundaries.push_back(numerical::HardBoundary{*boundary, provider.definition.configuration_identity});
+    }
+  }
+  std::sort(boundaries.begin(), boundaries.end(), [](const auto& left, const auto& right) {
+    if (time::compare(left.instant, right.instant) != 0) return time::compare(left.instant, right.instant) < 0;
+    return left.identity < right.identity;
+  });
+  return true;
+}
+
 bool valid_frame_sample(const FrameDynamicsSample& sample) noexcept {
   return frame::is_valid(sample.root_from_integration_frame)
     && finite_vec(sample.origin_acceleration)
@@ -238,6 +280,18 @@ void use_left_limit_at_discontinuity(
   const auto duration = time::subtract(*interval.end, original.exact_step_start);
   if (duration.has_value()
       && original.offset_seconds == time::to_seconds(*duration)) {
+    adjusted.offset_seconds = std::nextafter(original.offset_seconds, 0.0);
+  }
+}
+
+void use_left_limit_at_boundary(
+  const numerical::HardBoundary& boundary,
+  const numerical::NumericalSampleTime& original,
+  numerical::NumericalSampleTime& adjusted
+) noexcept {
+  if (original.offset_seconds <= 0.0) return;
+  const auto duration = time::subtract(boundary.instant, original.exact_step_start);
+  if (duration.has_value() && original.offset_seconds == time::to_seconds(*duration)) {
     adjusted.offset_seconds = std::nextafter(original.offset_seconds, 0.0);
   }
 }
@@ -272,6 +326,8 @@ NumericalMotionSegment::NumericalMotionSegment(
     return;
   }
   hard_boundaries_ = build_hard_boundaries(anchor_, configuration_);
+  if (!append_minimum_mass_boundaries(anchor_, configuration_, hard_boundaries_, construction_failure_)) return;
+  configuration_.hard_boundaries = hard_boundaries_;
   auto era = make_era(anchor_, configuration_, configuration_.validity.end, construction_failure_);
   if (!era) return;
   eras_.push_back(std::move(era));
@@ -531,6 +587,12 @@ bool NumericalMotionSegment::evaluate_derivative(
   numerical::NumericalSampleTime dependency_sample = sample_time;
   for (const auto& provider : era.configuration.force_providers.providers()) {
     use_left_limit_at_discontinuity(provider.definition.validity, sample_time, dependency_sample);
+    for (const auto& boundary : provider.definition.hard_boundaries) {
+      use_left_limit_at_boundary(boundary, sample_time, dependency_sample);
+    }
+  }
+  for (const auto& boundary : era.configuration.hard_boundaries) {
+    use_left_limit_at_boundary(boundary, sample_time, dependency_sample);
   }
   for (const auto& provider : era.configuration.mass_flow_providers) {
     use_left_limit_at_discontinuity(provider.definition.validity, sample_time, dependency_sample);
@@ -538,8 +600,10 @@ bool NumericalMotionSegment::evaluate_derivative(
   if (era.configuration.frame_dynamics.has_value()) {
     use_left_limit_at_discontinuity(era.configuration.frame_dynamics->validity, sample_time, dependency_sample);
   }
+  const bool left_limit = dependency_sample.offset_seconds != sample_time.offset_seconds;
 
   Vec3 acceleration{};
+  double provider_mass_rate = 0.0;
   force::Failure force_failure;
   if (!era.configuration.force_providers.evaluate(
         force::ForceEvaluationContext{
@@ -547,8 +611,10 @@ bool NumericalMotionSegment::evaluate_derivative(
           dependency_sample,
           Vec3{state[0], state[1], state[2]},
           mass,
+          left_limit,
         },
         acceleration,
+        provider_mass_rate,
         force_failure)) {
     set_force_failure(failure, force_failure);
     return false;
@@ -592,7 +658,7 @@ bool NumericalMotionSegment::evaluate_derivative(
   derivative[4] = acceleration.y;
   derivative[5] = acceleration.z;
   if (has_mass) {
-    double mass_rate = 0.0;
+    double mass_rate = provider_mass_rate;
     for (const auto& provider : era.configuration.mass_flow_providers) {
       if (!provider.definition.validity.contains(dependency_sample)) {
         set_numerical_failure(failure, numerical::FailureCode::derivative_failure, "mass-flow provider is outside its exact validity interval");
@@ -605,6 +671,7 @@ bool NumericalMotionSegment::evaluate_derivative(
               dependency_sample,
               Vec3{state[0], state[1], state[2]},
               mass,
+              left_limit,
             },
             contribution,
             force_failure)) {

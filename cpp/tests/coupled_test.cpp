@@ -1,4 +1,5 @@
 #include "orbit_engine/coupled.hpp"
+#include "orbit_engine/thrust.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -164,11 +165,48 @@ int atomic_lifecycle_and_bounds() {
   return 0;
 }
 
+int member_specific_external_thrust() {
+  force::Failure force_failure;
+  auto thrust_provider = thrust::make_finite_thrust_provider(thrust::FiniteThrustConfiguration{
+    2,
+    4,
+    force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}},
+    frame::kRootReferenceFrameId,
+    {thrust::FiniteThrustStage{
+      force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}},
+      1.0,
+      1.0,
+      thrust::Direction{thrust::ReferenceFrameDirection{frame::kRootReferenceFrameId, 9, {1.0, 0.0, 0.0}, {}}},
+      {thrust::MassFlowKind::direct, 0.0},
+    }},
+    std::nullopt,
+    101,
+    {},
+  }, force_failure);
+  CHECK(force_failure.code == force::FailureCode::none);
+  auto coupled_configuration = configuration();
+  coupled_configuration.external_providers = force::ProviderRuntime({thrust_provider});
+  coupled::CoupledAuthority authority(
+    {member(1, -10.0, 0.0, 0.0, 0.0, 1.0, 0.0), member(2, 10.0, 0.0, 0.0, 0.0, 1.0, 0.0)},
+    std::move(coupled_configuration),
+    22);
+  CHECK(authority.valid());
+  coupled::Failure failure;
+  coupled::MemberState target;
+  coupled::MemberState other;
+  CHECK(authority.state_at(2, {0, 100'000'000}, target, failure));
+  CHECK(authority.state_at(1, {0, 100'000'000}, other, failure));
+  CHECK(target.velocity.x > 0.0);
+  CHECK(std::abs(other.velocity.x) < 1e-12);
+  return 0;
+}
+
 }  // namespace
 
 int main() {
   if (mutual_gravity_and_batch() != 0) return 1;
   if (massless_response_and_figure_eight_order() != 0) return 1;
   if (atomic_lifecycle_and_bounds() != 0) return 1;
+  if (member_specific_external_thrust() != 0) return 1;
   return 0;
 }

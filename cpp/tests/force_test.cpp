@@ -1,7 +1,12 @@
 #include "orbit_engine/force.hpp"
+#include "orbit_engine/numerical_motion.hpp"
+#include "orbit_engine/thrust.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #define CHECK(condition) do { if (!(condition)) { std::cerr << "CHECK failed: " << #condition << " at line " << __LINE__ << "\n"; return 1; } } while (false)
@@ -85,10 +90,120 @@ int strength_rules_and_failures() {
   return 0;
 }
 
+int finite_thrust_provider_and_mass() {
+  using namespace orbit_engine;
+  force::Failure failure;
+  auto provider = thrust::make_finite_thrust_provider(thrust::FiniteThrustConfiguration{
+    42,
+    3,
+    force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}},
+    frame::kRootReferenceFrameId,
+    {thrust::FiniteThrustStage{
+      force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}},
+      2.0,
+      0.5,
+      thrust::Direction{thrust::ReferenceFrameDirection{frame::kRootReferenceFrameId, 7, {1.0, 0.0, 0.0}, {}}},
+      {thrust::MassFlowKind::direct, 1.0},
+    }},
+    std::nullopt,
+    99,
+    {},
+  }, failure);
+  CHECK(failure.code == force::FailureCode::none);
+  force::ProviderRuntime runtime({provider});
+  CHECK(runtime.valid());
+  frame::Vec3 acceleration{};
+  double rate = 0.0;
+  CHECK(runtime.evaluate(force::ForceEvaluationContext{42, {{0, 0}, 0.5}, {}, 10.0}, acceleration, rate, failure));
+  CHECK(std::abs(acceleration.x - 0.1) < 1e-14);
+  CHECK(std::abs(rate + 0.5) < 1e-14);
+
+  numerical::Configuration integrator;
+  integrator.has_mass_component = true;
+  integrator.position_absolute_tolerance_meters = 1e-10;
+  integrator.velocity_absolute_tolerance_meters_per_second = 1e-10;
+  integrator.mass_absolute_tolerance_kilograms = 1e-10;
+  integrator.max_step = time::Duration{0, 100'000'000};
+  numerical_motion::NumericalMotionSegment segment(
+    numerical_motion::NumericalSegmentAnchor{42, {0, 0}, frame::kRootReferenceFrameId, {}, {}, 10.0, 4},
+    numerical_motion::NumericalMotionConfiguration{
+      integrator,
+      force::ProviderRuntime({provider}),
+      force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}},
+      std::nullopt,
+      {},
+      {},
+      77,
+    });
+  CHECK(segment.valid());
+  numerical_motion::Failure motion_failure;
+  numerical_motion::NumericalState state;
+  CHECK(segment.state_at({2, 0}, state, motion_failure));
+  CHECK(std::abs(*state.mass - 9.0) < 1e-8);
+  return 0;
+}
+
+int finite_thrust_direction_and_minimum_mass() {
+  using namespace orbit_engine;
+  const auto quarter_turn = frame::Quaternion{std::sqrt(0.5), 0.0, 0.0, std::sqrt(0.5)};
+  const auto body = thrust::BodyFrameDirection{
+    {1.0, 0.0, 0.0},
+    500,
+    8,
+    [quarter_turn](const numerical::NumericalSampleTime&, frame::Quaternion& output, force::Failure&) {
+      output = quarter_turn;
+      return true;
+    },
+  };
+  force::Failure failure;
+  auto body_provider = thrust::make_finite_thrust_provider(thrust::FiniteThrustConfiguration{
+    42, 3, force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, frame::kRootReferenceFrameId,
+    {thrust::FiniteThrustStage{force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, 2.0, 1.0, thrust::Direction{body}, {thrust::MassFlowKind::direct, 0.0}}},
+    std::nullopt, 99, {},
+  }, failure);
+  force::ProviderRuntime runtime({body_provider});
+  frame::Vec3 acceleration{};
+  double rate = 0.0;
+  CHECK(runtime.evaluate(force::ForceEvaluationContext{42, {{0, 0}, 0.5}, {}, 10.0}, acceleration, rate, failure));
+  CHECK(std::abs(acceleration.x) < 1e-14);
+  CHECK(std::abs(acceleration.y - 0.2) < 1e-14);
+
+  auto minimum_provider = thrust::make_finite_thrust_provider(thrust::FiniteThrustConfiguration{
+    42, 3, force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, frame::kRootReferenceFrameId,
+    {thrust::FiniteThrustStage{force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, 2.0, 1.0, thrust::Direction{thrust::ReferenceFrameDirection{frame::kRootReferenceFrameId, 7, {1.0, 0.0, 0.0}, {}}}, {thrust::MassFlowKind::direct, 1.0}}},
+    8.0, 99, {},
+  }, failure);
+  numerical::Configuration integrator;
+  integrator.has_mass_component = true;
+  integrator.position_absolute_tolerance_meters = 1e-10;
+  integrator.velocity_absolute_tolerance_meters_per_second = 1e-10;
+  integrator.mass_absolute_tolerance_kilograms = 1e-10;
+  integrator.max_step = time::Duration{0, 100'000'000};
+  numerical_motion::NumericalMotionSegment segment(
+    numerical_motion::NumericalSegmentAnchor{42, {0, 0}, frame::kRootReferenceFrameId, {}, {}, 10.0, 4},
+    numerical_motion::NumericalMotionConfiguration{
+      integrator,
+      force::ProviderRuntime({minimum_provider}),
+      force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}},
+      std::nullopt, {}, {}, 77,
+  });
+  CHECK(segment.valid());
+  numerical_motion::Failure motion_failure;
+  numerical_motion::NumericalState boundary;
+  CHECK(segment.state_at({2, 0}, boundary, motion_failure));
+  CHECK(std::abs(*boundary.mass - 8.0) < 1e-8);
+  numerical_motion::NumericalState after;
+  CHECK(segment.state_at({3, 0}, after, motion_failure));
+  CHECK(std::abs(*after.mass - 8.0) < 1e-8);
+  return 0;
+}
+
 }  // namespace
 
 int main() {
   if (gravity_and_order() != 0) return 1;
   if (strength_rules_and_failures() != 0) return 1;
+  if (finite_thrust_provider_and_mass() != 0) return 1;
+  if (finite_thrust_direction_and_minimum_mass() != 0) return 1;
   return 0;
 }

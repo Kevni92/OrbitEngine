@@ -15,6 +15,7 @@ add_library(orbit_engine_core STATIC
   src/scheduler.cpp
   src/two_body.cpp
   src/time.cpp
+  src/thrust.cpp
 )
 
 target_include_directories(orbit_engine_core

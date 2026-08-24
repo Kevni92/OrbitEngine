@@ -71,6 +71,7 @@ inline constexpr double kQuaternionUnitTolerance = 1e-12;
 [[nodiscard]] bool is_valid(Vec3 value) noexcept;
 [[nodiscard]] bool is_valid(Quaternion value) noexcept;
 [[nodiscard]] std::optional<Quaternion> normalize(Quaternion value) noexcept;
+[[nodiscard]] std::optional<Vec3> rotate_vector(Quaternion rotation, Vec3 value) noexcept;
 
 [[nodiscard]] bool is_valid(RigidStateTransform value) noexcept;
 [[nodiscard]] std::optional<RigidStateTransform> compose(
