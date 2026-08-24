@@ -54,6 +54,11 @@ export const ScheduledWorkPayloadKind = Object.freeze({
   replace: 5,
   registryUpdate: 6,
   motionTransition: 7,
+  maneuverImpulse: 8,
+  maneuverBurnStart: 9,
+  maneuverStageBoundary: 10,
+  maneuverBurnEnd: 11,
+  maneuverMinimumMassTermination: 12,
 } as const);
 
 export type ScheduledWorkId = string & { readonly __orbitEngineScheduledWorkId: never };
