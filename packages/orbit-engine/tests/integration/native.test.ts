@@ -27,6 +27,7 @@ import { assertCollisionPrimitives } from "../shared/collision.js";
 import { assertCollisionDetection } from "../shared/collision-detection.js";
 import { assertCollisionResponse } from "../shared/collision-response.js";
 import { assertCollisionLifecycle } from "../shared/collision-lifecycle.js";
+import { assertCollisionStress } from "../shared/collision-stress.js";
 
 test("real native backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "native" });
@@ -65,4 +66,5 @@ test("real native backend initializes and reports the shared core health", async
   await assertCollisionDetection(await OrbitEngine.create({ backend: "native" }));
   await assertCollisionResponse(await OrbitEngine.create({ backend: "native" }));
   await assertCollisionLifecycle(await OrbitEngine.create({ backend: "native" }));
+  await assertCollisionStress(await OrbitEngine.create({ backend: "native" }));
 });

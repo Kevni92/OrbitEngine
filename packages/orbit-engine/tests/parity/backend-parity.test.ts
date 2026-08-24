@@ -26,6 +26,7 @@ import { assertCollisionPrimitives } from "../shared/collision.js";
 import { assertCollisionDetection } from "../shared/collision-detection.js";
 import { assertCollisionResponse } from "../shared/collision-response.js";
 import { assertCollisionLifecycle } from "../shared/collision-lifecycle.js";
+import { assertCollisionStress } from "../shared/collision-stress.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -105,5 +106,8 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   });
   test(`collision lifecycle, same-time groups and invalidation have parity on ${name}`, async () => {
     await assertCollisionLifecycle(await OrbitEngine.create({ backend: name }));
+  });
+  test(`collision broad-phase quiet/dense stress has parity on ${name}`, async () => {
+    await assertCollisionStress(await OrbitEngine.create({ backend: name }));
   });
 }

@@ -70,8 +70,8 @@ export interface CollisionContactRegistrationInput {
 
 export interface CollisionContactQuery {
   readonly objectId?: ObjectId;
-  readonly from: SimulationInstant;
-  readonly to: SimulationInstant;
+  readonly from?: SimulationInstant;
+  readonly to?: SimulationInstant;
   readonly lifecycle?: CollisionContactLifecycleValue;
 }
 
@@ -82,6 +82,11 @@ export interface CollisionContactDiagnostic {
   readonly exactContactInstant: SimulationInstant;
   readonly policyRevision: RevisionId;
   readonly profileId: string;
+  readonly quality: CollisionContactRecord["quality"];
+  readonly responseMode: CollisionContactRecord["responseMode"];
+  readonly responseResult: CollisionContactRecord["responseResult"];
+  readonly timeUncertainty: CollisionContactRecord["timeUncertainty"];
+  readonly separationUncertaintyMeters: CollisionContactRecord["separationUncertaintyMeters"];
   readonly dependencyRevisionDigest?: RevisionId;
   readonly invalidationCount: number;
   readonly lastInvalidation?: {
@@ -407,9 +412,11 @@ export class CollisionContactLifecycleManager {
 
   list(input: CollisionContactQuery): readonly CollisionContactRecord[] {
     if (typeof input !== "object" || input === null) throw new TypeError("Collision contact query must be an object");
-    const from = normalizedInstant(input.from, "from");
-    const to = normalizedInstant(input.to, "to");
-    if (compareSimulationInstants(from, to) >= 0) throw new RangeError("Collision contact query requires to after from");
+    const from = input.from === undefined ? undefined : normalizedInstant(input.from, "from");
+    const to = input.to === undefined ? undefined : normalizedInstant(input.to, "to");
+    if (from !== undefined && to !== undefined && compareSimulationInstants(from, to) >= 0) {
+      throw new RangeError("Collision contact query requires to after from");
+    }
     const object = input.objectId === undefined ? undefined : objectId(input.objectId);
     return Object.freeze([...this.#records.values()]
       .map((value) => value.record)
@@ -417,8 +424,8 @@ export class CollisionContactLifecycleManager {
         ? record.lifecycle === CollisionContactLifecycle.active
         : record.lifecycle === input.lifecycle)
       .filter((record) => object === undefined || record.objectA === object || record.objectB === object)
-      .filter((record) => compareSimulationInstants(record.exactContactInstant, from) >= 0
-        && compareSimulationInstants(record.exactContactInstant, to) < 0)
+      .filter((record) => (from === undefined || compareSimulationInstants(record.exactContactInstant, from) >= 0)
+        && (to === undefined || compareSimulationInstants(record.exactContactInstant, to) < 0))
       .sort(compareContacts));
   }
 
@@ -432,6 +439,11 @@ export class CollisionContactLifecycleManager {
       exactContactInstant: stored.record.exactContactInstant,
       policyRevision: stored.record.policyRevision,
       profileId: stored.record.profileId,
+      quality: stored.record.quality,
+      responseMode: stored.record.responseMode,
+      responseResult: stored.record.responseResult,
+      timeUncertainty: stored.record.timeUncertainty,
+      separationUncertaintyMeters: stored.record.separationUncertaintyMeters,
       ...(stored.record.motionDependencyRevisionDigest === undefined ? {} : { dependencyRevisionDigest: stored.record.motionDependencyRevisionDigest }),
       invalidationCount: stored.invalidationCount,
       ...(stored.lastInvalidation === undefined ? {} : { lastInvalidation: stored.lastInvalidation }),

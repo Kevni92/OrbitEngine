@@ -325,6 +325,8 @@ Backend-neutral TypeScript capabilities are equivalent to:
 
 ```text
 setCollisionPolicy(...)
+getCollisionProfile(profileId)
+listCollisionProfiles()
 setCollisionProfile(...)
 registerCollisionContact({ record, dependencyRevisions? })
 getCollisionContact(contactId)
