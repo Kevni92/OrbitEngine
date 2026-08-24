@@ -8,12 +8,26 @@ The package is ESM-only and exposes two public entry points:
 
 ```ts
 import { ORBIT_ENGINE_THREE_PACKAGE_NAME } from "orbit-engine-three";
-import { presentationPackageInfo } from "orbit-engine-three/presentation";
+import {
+  presentationPackageInfo,
+  resolveSurfaceAppearance,
+  resolveStellarIllumination,
+} from "orbit-engine-three/presentation";
 ```
 
-Rendering resources and renderer-neutral appearance APIs are added in the
-subsequent companion-package implementation stages. Importing the bootstrap
-package is safe in Node.js and does not create a DOM/WebGL context.
+The `/presentation` entry point contains renderer-neutral appearance records,
+optical-library fallbacks, atmosphere optics, blackbody chromaticity,
+inverse-square stellar illumination, bounded contributor selection, and
+display-exposure derivation. It accepts authoritative SI snapshot positions
+and returns plain semantic values; it does not import Three.js or create a
+DOM/WebGL context.
+
+The reusable package does not contain Solar-System scenario data. A consumer
+supplies its own `CelestialAppearance` records and adapts axis transforms at
+the renderer boundary. Stellar illumination keeps all physical contributors
+in `allContributions` and `additiveLinearLight`; `contributions` is the
+deterministically selected presentation set (four by default), with omitted
+ObjectIds reported in `diagnostics.truncatedEmitterIds`.
 
 Install compatible peer dependencies explicitly:
 

@@ -41,7 +41,7 @@ test("surface reflectance uses calibrated data before composition and preserves 
   const basalt = opticalMaterial("basaltic-rock")!.linearReflectance;
   assert.equal(composition.source, "composition");
   assert.deepEqual(composition.linearReflectance, basalt);
-  assert.equal(composition.opticalLibraryVersion, "demo-optics-1");
+  assert.equal(composition.opticalLibraryVersion, "orbit-engine-three-optics-1");
 });
 
 test("visual albedo normalization preserves chromaticity and targets linear luminance", () => {

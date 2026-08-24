@@ -1,10 +1,3 @@
-/**
- * Stable package marker for the renderer-neutral presentation entry point.
- *
- * Semantic appearance and derivation APIs are added here by the next package
- * implementation stage. Keeping this entry point separate prevents consumers
- * from depending on Three.js implementation details.
- */
 export const ORBIT_ENGINE_THREE_PRESENTATION_ENTRY = "orbit-engine-three/presentation" as const;
 
 export interface PresentationPackageInfo {
@@ -16,3 +9,9 @@ export const presentationPackageInfo: PresentationPackageInfo = Object.freeze({
   packageName: "orbit-engine-three",
   entryPoint: ORBIT_ENGINE_THREE_PRESENTATION_ENTRY,
 });
+
+export * from "./presentation/appearance.js";
+export * from "./presentation/atmosphere.js";
+export * from "./presentation/illumination.js";
+export * from "./presentation/lighting.js";
+export * from "./presentation/optics.js";

@@ -270,6 +270,17 @@ The Three.js layer translates semantic values into materials, geometry, shader p
 
 This lets shader implementations change without changing public appearance semantics.
 
+The initial `/presentation` implementation exposes these semantic families as
+plain TypeScript values: `CelestialAppearance` validation and deterministic
+optical-library fallbacks, `ResolvedSurfaceAppearance`, `AtmosphereOptics`,
+`StellarIllumination`, lighting-mode diagnostics, blackbody chromaticity,
+inverse-square irradiance, and bounded display exposure. Stellar resolution
+uses authoritative SI snapshot positions only. Its `allContributions` and
+additive total preserve every configured emitter; `contributions` is the
+default-four deterministic presentation selection and
+`diagnostics.truncatedEmitterIds` makes any cap observable. No public semantic
+type contains Three.js, GLSL, material, or uniform details.
+
 ## Scene, renderer, camera, and loop ownership
 
 The consumer owns:

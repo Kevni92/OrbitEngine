@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "pnpm build && node --test tests/public-api.test.mjs"
+    "test": "pnpm build && node --test tests/*.test.mjs"
   },
   "peerDependencies": {
     "orbit-engine": ">=0.1.0 <0.2.0",
