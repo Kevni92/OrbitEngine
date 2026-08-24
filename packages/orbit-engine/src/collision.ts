@@ -651,6 +651,15 @@ export class CollisionPolicyManager {
     return this.#policy;
   }
 
+  getProfile(profileId: CollisionProfileId | string): CollisionProfile | undefined {
+    const id = normalizedProfileId(profileId);
+    return this.#policy.profiles.find((profile) => profile.profileId === id);
+  }
+
+  listProfiles(): readonly CollisionProfile[] {
+    return this.#policy.profiles;
+  }
+
   setPolicy(value: CollisionPolicyInput): CollisionPolicy {
     const next = normalizeCollisionPolicy(value);
     if (next.revision === this.#policy.revision) {
@@ -663,6 +672,22 @@ export class CollisionPolicyManager {
     this.#policy = next;
     this.#onRevisionChange?.(previous, next);
     return next;
+  }
+
+  setProfile(value: CollisionProfileInput): CollisionPolicy {
+    const profile = normalizeCollisionProfile(value);
+    const profiles = this.#policy.profiles
+      .filter((current) => current.profileId !== profile.profileId)
+      .map((current) => ({ ...current, policyRevision: profile.policyRevision }));
+    profiles.push(profile);
+    return this.setPolicy({
+      revision: profile.policyRevision,
+      profiles,
+      pairOverrides: this.#policy.pairOverrides,
+      objectOverrides: this.#policy.objectOverrides,
+      rules: this.#policy.rules,
+      defaultResolution: this.#policy.defaultResolution,
+    });
   }
 
   resolve(objectA: ObjectId, objectB: ObjectId, facts?: CollisionPairFactsInput): CollisionPolicyResolution {

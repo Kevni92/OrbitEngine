@@ -106,6 +106,8 @@ import {
   type CollisionPolicy,
   type CollisionPolicyInput,
   type CollisionPolicyResolution,
+  type CollisionProfile,
+  type CollisionProfileInput,
 } from "./collision.js";
 import {
   buildCollisionSweptBound,
@@ -435,6 +437,26 @@ export class OrbitEngine {
 
   configureCollisionPolicy(input: CollisionPolicyInput): CollisionPolicy {
     return this.#collisionPolicyManager.setPolicy(input);
+  }
+
+  setCollisionPolicy(input: CollisionPolicyInput): CollisionPolicy {
+    return this.configureCollisionPolicy(input);
+  }
+
+  getCollisionProfile(profileId: string): CollisionProfile | undefined {
+    return this.#collisionPolicyManager.getProfile(profileId);
+  }
+
+  listCollisionProfiles(): readonly CollisionProfile[] {
+    return this.#collisionPolicyManager.listProfiles();
+  }
+
+  setCollisionProfile(input: CollisionProfileInput): CollisionPolicy {
+    return this.#collisionPolicyManager.setProfile(input);
+  }
+
+  configureCollisionProfile(input: CollisionProfileInput): CollisionPolicy {
+    return this.setCollisionProfile(input);
   }
 
   resolveCollisionPolicy(

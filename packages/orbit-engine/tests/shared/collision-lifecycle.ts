@@ -148,6 +148,11 @@ export async function assertCollisionLifecycle(engine: OrbitEngineType): Promise
   assert.equal(activeRemoval.canRemove, false);
   assert.deepEqual(activeRemoval.blockers, [{ kind: "collisionContact", id: active.contactId }]);
   assert.equal(engine.getCollisionContact(active.contactId)?.lifecycle, CollisionContactLifecycle.active);
+  assert.deepEqual(engine.listCollisionContacts({ objectId: "22" as never }).map((value) => value.contactId), [active.contactId]);
+  const activeDiagnostics = engine.getCollisionDiagnostics(active.contactId);
+  assert.equal(activeDiagnostics?.quality, CollisionContactQuality.refined);
+  assert.equal(activeDiagnostics?.timeUncertainty.nanoseconds, 1);
+  assert.equal(activeDiagnostics?.separationUncertaintyMeters, 0);
 
   const dependencyContact = contact("24", "25", CollisionResponseMode.detectOnly, exact, [
     { kind: DependencyKind.motion, id: "24", revision: "1" },
@@ -170,4 +175,9 @@ export async function assertCollisionLifecycle(engine: OrbitEngineType): Promise
   assert.equal(staleExecution.status, CollisionContactBatchStatus.rolledBack);
   assert.equal(staleExecution.errorCode, CollisionContactBatchErrorCode.staleGeneration);
   assert.deepEqual(staleExecution.outcomes[0]?.stateA, dependencyContact.stateA);
+
+  const policy = engine.setCollisionProfile(detectProfile);
+  assert.equal(engine.getCollisionProfile("detect")?.profileId, "detect");
+  assert.deepEqual(engine.listCollisionProfiles().map((value) => value.profileId), ["detect"]);
+  assert.equal(policy.revision, revisionId("1"));
 }
