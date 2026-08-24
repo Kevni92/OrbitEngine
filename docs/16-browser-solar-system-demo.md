@@ -676,7 +676,7 @@ The first complete engine-driven demo provides:
 - reference dataset/model/validity diagnostics when available;
 - a clear indicator when body radii are visually exaggerated.
 
-Document 19 defines the later appearance extension without replacing this application boundary. Resolved non-stellar spheres become lit presentation surfaces whose reflectance derives from appearance metadata when available. Atmospheres use LOD-gated shader shells. The UI exposes `Physical` and `Enhanced` lighting modes, with Enhanced clearly marked as artificial inspection fill. External photorealistic textures remain optional/deferred.
+Document 19 defines the later appearance extension without replacing this application boundary. Resolved non-stellar spheres become lit presentation surfaces whose reflectance derives from appearance metadata when available. Atmospheres use LOD-gated shader shells. The UI exposes `Physical` and `Enhanced` lighting modes, with Enhanced clearly marked as artificial inspection fill. The Solar-System demo may additionally package bounded, offline application-owned appearance textures; the SSS planet texture registry and attribution are documented alongside the static assets in `apps/solar-system-demo/public/assets/planet-textures/`.
 
 ## Orbit/path visualization
 

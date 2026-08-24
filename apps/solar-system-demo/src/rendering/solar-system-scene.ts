@@ -53,6 +53,19 @@ import {
   generateProceduralSurfaceData,
   type ProceduralSurfaceDiagnostics,
 } from "./procedural-surface.js";
+import {
+  planetTextureAssets,
+  planetTextureSetFor,
+  type PlanetTextureAsset,
+  type PlanetTexturePurpose,
+  type PlanetTextureSet,
+} from "../scenario/planet-texture-registry.js";
+import {
+  createEarthNightLightsMaterial,
+  PlanetTextureResourceManager,
+  type PlanetTextureLease,
+  type PlanetTextureResourceDiagnostics,
+} from "./planet-textures.js";
 
 export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 0.000001;
 export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
@@ -66,6 +79,17 @@ interface SceneBody {
   readonly parentId?: ObjectId;
   readonly type: RegisteredScenarioBody["definition"]["type"];
   readonly mesh: THREE.Mesh;
+}
+
+interface PlanetLayerMeshes {
+  readonly clouds?: THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial>;
+  readonly nightLights?: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+}
+
+interface PlanetTextureState {
+  readonly set: PlanetTextureSet;
+  leases: readonly PlanetTextureLease[];
+  readonly loadedKeys: Set<string>;
 }
 
 export interface SolarSystemSceneOptions {
@@ -88,6 +112,12 @@ export interface BodyRenderDiagnostics {
   readonly surfaceReflectanceSource?: string;
   readonly surfaceTextureKind?: ProceduralSurfaceDiagnostics["kind"];
   readonly surfaceTextureLuminanceRange?: number;
+  readonly planetTextureSetId?: string;
+  readonly planetTextureLayers?: readonly Readonly<{
+    readonly purpose: PlanetTexturePurpose;
+    readonly assetKey: string;
+    readonly loaded: boolean;
+  }>[];
   readonly physicalIrradianceWattsPerSquareMeter?: number;
   readonly preExposureMappedIrradiance?: number;
   readonly displayExposure: number;
@@ -131,6 +161,10 @@ export class SolarSystemScene {
   readonly #runtimeSphereMaterial: THREE.MeshLambertMaterial;
   readonly #surfaceTextures = new Map<ObjectId, THREE.DataTexture>();
   readonly #surfaceDiagnostics = new Map<ObjectId, ProceduralSurfaceDiagnostics>();
+  readonly #planetTextureResources = new PlanetTextureResourceManager();
+  readonly #planetTextureStates = new Map<ObjectId, PlanetTextureState>();
+  readonly #planetLayerMeshes = new Map<ObjectId, PlanetLayerMeshes>();
+  readonly #planetFallbackColors = new Map<ObjectId, THREE.Color>();
   readonly #stellarLights = new Map<ObjectId, THREE.PointLight>();
   readonly #illuminationByBody = new Map<ObjectId, StellarIlluminationSet>();
   readonly #representations = new Map<ObjectId, RepresentationLevel>();
@@ -217,6 +251,7 @@ export class SolarSystemScene {
       this.#positions.delete(objectId);
       this.#orbitRenderer.clearPath(objectId);
       this.#removeRuntimeSphere(objectId);
+      this.#releasePlanetTextures(objectId);
       this.#atmosphereShells.remove(objectId);
     }
     for (const entry of entries) {
@@ -260,6 +295,9 @@ export class SolarSystemScene {
       if (staticBody !== undefined) staticBody.mesh.position.set(position.x, position.y, position.z);
       const runtimeMesh = this.#runtimeSphereMeshes.get(objectId);
       if (runtimeMesh !== undefined) runtimeMesh.position.set(position.x, position.y, position.z);
+      const planetLayers = this.#planetLayerMeshes.get(objectId);
+      planetLayers?.clouds?.position.set(position.x, position.y, position.z);
+      planetLayers?.nightLights?.position.set(position.x, position.y, position.z);
       this.#positions.set(objectId, new THREE.Vector3(position.x, position.y, position.z));
       this.#states.set(objectId, state);
     }
@@ -366,6 +404,7 @@ export class SolarSystemScene {
           this.#applySphereScale(staticBody.mesh, entry, camera, perspective, viewportHeightPixels);
           presentedRadii.set(objectId, staticBody.mesh.scale.x);
         }
+        this.#updatePlanetTexturePresentation(entry, representation, staticBody);
       }
       if (this.#runtimeIds.has(objectId)) {
         if (representation === Representation.sphere) {
@@ -471,6 +510,8 @@ export class SolarSystemScene {
     }
 
     const surface = this.#surfaceDiagnostics.get(objectId);
+    const textureSet = planetTextureSetFor(objectId);
+    const textureState = this.#planetTextureStates.get(objectId);
     const activeDisplayExposure = this.displayExposureDiagnostics();
     const physicalIrradiance = this.#illuminationByBody.get(objectId)?.totalIrradianceWattsPerSquareMeter;
     const fillContribution = this.#inspectionFillTargets.has(objectId)
@@ -497,6 +538,14 @@ export class SolarSystemScene {
       })(),
       surfaceTextureKind: surface?.kind,
       surfaceTextureLuminanceRange: surface === undefined ? undefined : surface.maxLuminance - surface.minLuminance,
+      planetTextureSetId: textureSet === undefined ? undefined : objectId,
+      planetTextureLayers: textureSet === undefined
+        ? undefined
+        : Object.freeze(planetTextureAssets(textureSet).map((asset) => Object.freeze({
+          purpose: asset.purpose,
+          assetKey: asset.key,
+          loaded: textureState?.loadedKeys.has(asset.key) ?? false,
+        }))),
       physicalIrradianceWattsPerSquareMeter: physicalIrradiance,
       preExposureMappedIrradiance: physicalIrradiance === undefined
         ? undefined
@@ -603,6 +652,10 @@ export class SolarSystemScene {
     return this.#atmosphereShells.resourceCount();
   }
 
+  planetTextureResourceDiagnostics(): PlanetTextureResourceDiagnostics {
+    return this.#planetTextureResources.diagnostics();
+  }
+
   lodDiagnostics(): LodDiagnostics {
     let hiddenCount = 0;
     let markerCount = 0;
@@ -655,6 +708,8 @@ export class SolarSystemScene {
     this.#markerLayer.dispose();
     this.#selectionHalo.dispose();
     this.#atmosphereShells.dispose();
+    for (const objectId of this.#planetTextureStates.keys()) this.#releasePlanetTextures(objectId);
+    this.#planetTextureResources.dispose();
     for (const body of this.#bodies.values()) {
       this.#scene.remove(body.mesh);
       body.mesh.geometry.dispose();
@@ -664,6 +719,7 @@ export class SolarSystemScene {
     for (const texture of this.#surfaceTextures.values()) texture.dispose();
     this.#surfaceTextures.clear();
     this.#surfaceDiagnostics.clear();
+    this.#planetFallbackColors.clear();
     for (const mesh of this.#runtimeSphereMeshes.values()) this.#scene.remove(mesh);
     this.#runtimeSphereMeshes.clear();
     for (const light of this.#stellarLights.values()) {
@@ -704,7 +760,10 @@ export class SolarSystemScene {
       });
     } else {
       const reflectance = deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor);
-      const surfaceData = entry.definition.appearance === undefined
+      const textureSet = planetTextureSetFor(entry.definition.id);
+      const surfaceData = textureSet !== undefined
+        ? undefined
+        : entry.definition.appearance === undefined
         ? undefined
         : generateProceduralSurfaceData(
           entry.definition.id,
@@ -730,6 +789,16 @@ export class SolarSystemScene {
           dithering: true,
         });
       }
+      if (textureSet !== undefined) {
+        this.#planetFallbackColors.set(
+          entry.definition.id,
+          new THREE.Color(
+            reflectance.linearReflectance.r,
+            reflectance.linearReflectance.g,
+            reflectance.linearReflectance.b,
+          ),
+        );
+      }
     }
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1, 48, 32),
@@ -747,6 +816,157 @@ export class SolarSystemScene {
       mesh,
     });
     mesh.scale.setScalar(radiusToSceneUnits({ mode: "physical", physicalRadiusMeters }));
+  }
+
+  #updatePlanetTexturePresentation(
+    entry: RegisteredScenarioBody,
+    representation: RepresentationLevel,
+    body: SceneBody,
+  ): void {
+    const textureSet = planetTextureSetFor(entry.definition.id);
+    if (textureSet === undefined || representation !== Representation.sphere) {
+      this.#releasePlanetTextures(entry.definition.id);
+      return;
+    }
+
+    let state = this.#planetTextureStates.get(entry.definition.id);
+    if (state === undefined) {
+      state = { set: textureSet, leases: [], loadedKeys: new Set() };
+      this.#planetTextureStates.set(entry.definition.id, state);
+      this.#ensurePlanetLayerMeshes(entry.definition.id, textureSet);
+      state.leases = planetTextureAssets(textureSet).map((asset) => this.#planetTextureResources.acquire(
+        asset,
+        (texture) => this.#applyPlanetTexture(entry.definition.id, asset, texture),
+      ));
+    }
+    this.#updatePlanetLayerTransforms(body);
+  }
+
+  #ensurePlanetLayerMeshes(objectId: ObjectId, textureSet: PlanetTextureSet): void {
+    const existing = this.#planetLayerMeshes.get(objectId);
+    if (existing !== undefined) return;
+
+    let clouds: PlanetLayerMeshes["clouds"];
+    if (textureSet.clouds !== undefined) {
+      clouds = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 48, 32),
+        new THREE.MeshLambertMaterial({
+          color: new THREE.Color(1, 1, 1),
+          transparent: true,
+          opacity: 0.88,
+          depthWrite: false,
+          side: THREE.FrontSide,
+          dithering: true,
+        }),
+      );
+      clouds.name = `Cloud layer ${objectId}`;
+      clouds.userData.objectId = objectId;
+      clouds.visible = false;
+      clouds.renderOrder = 1;
+      this.#scene.add(clouds);
+    }
+
+    let nightLights: PlanetLayerMeshes["nightLights"];
+    if (textureSet.nightLights !== undefined) {
+      nightLights = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 48, 32),
+        createEarthNightLightsMaterial(),
+      );
+      nightLights.name = `Night lights layer ${objectId}`;
+      nightLights.userData.objectId = objectId;
+      nightLights.visible = false;
+      nightLights.renderOrder = 3;
+      this.#scene.add(nightLights);
+    }
+
+    this.#planetLayerMeshes.set(objectId, { clouds, nightLights });
+  }
+
+  #applyPlanetTexture(objectId: ObjectId, asset: PlanetTextureAsset, texture: THREE.Texture): void {
+    const state = this.#planetTextureStates.get(objectId);
+    const body = this.#bodies.get(objectId);
+    if (state === undefined || body === undefined || !planetTextureAssets(state.set).some((candidate) => candidate.key === asset.key)) {
+      return;
+    }
+    state.loadedKeys.add(asset.key);
+    if (asset === state.set.primary) {
+      const material = body.mesh.material;
+      if (material instanceof THREE.MeshLambertMaterial) {
+        material.map = texture;
+        material.color.setRGB(1, 1, 1);
+        material.emissiveMap = null;
+        material.needsUpdate = true;
+      }
+      return;
+    }
+
+    const layers = this.#planetLayerMeshes.get(objectId);
+    if (asset === state.set.clouds && layers?.clouds !== undefined) {
+      layers.clouds.material.map = texture;
+      layers.clouds.material.alphaMap = texture;
+      layers.clouds.material.needsUpdate = true;
+      layers.clouds.visible = true;
+      return;
+    }
+    if (asset === state.set.nightLights && layers?.nightLights !== undefined) {
+      layers.nightLights.material.uniforms.uMap!.value = texture;
+      layers.nightLights.material.needsUpdate = true;
+      layers.nightLights.visible = true;
+    }
+  }
+
+  #updatePlanetLayerTransforms(body: SceneBody): void {
+    const layers = this.#planetLayerMeshes.get(body.objectId);
+    if (layers === undefined) return;
+    if (layers.clouds !== undefined) {
+      layers.clouds.position.copy(body.mesh.position);
+      layers.clouds.scale.copy(body.mesh.scale).multiplyScalar(1.006);
+    }
+    if (layers.nightLights !== undefined) {
+      layers.nightLights.position.copy(body.mesh.position);
+      layers.nightLights.scale.copy(body.mesh.scale).multiplyScalar(1.009);
+    }
+  }
+
+  #releasePlanetTextures(objectId: ObjectId): void {
+    const state = this.#planetTextureStates.get(objectId);
+    if (state !== undefined) {
+      for (const lease of state.leases) lease.release();
+      this.#planetTextureStates.delete(objectId);
+    }
+    const body = this.#bodies.get(objectId);
+    const material = body?.mesh.material;
+    const fallbackColor = this.#planetFallbackColors.get(objectId);
+    if (material instanceof THREE.MeshLambertMaterial && fallbackColor !== undefined) {
+      material.map = null;
+      material.color.copy(fallbackColor);
+      material.emissiveMap = null;
+      material.needsUpdate = true;
+    }
+    const layers = this.#planetLayerMeshes.get(objectId);
+    if (layers === undefined) return;
+    for (const layer of [layers.clouds, layers.nightLights]) {
+      if (layer === undefined) continue;
+      this.#scene.remove(layer);
+      layer.geometry.dispose();
+      layer.material.dispose();
+    }
+    this.#planetLayerMeshes.delete(objectId);
+  }
+
+  #updateEarthNightLights(): void {
+    for (const [objectId, layers] of this.#planetLayerMeshes) {
+      const nightLights = layers.nightLights;
+      if (nightLights === undefined) continue;
+      const contribution = this.#illuminationByBody.get(objectId)?.contributions[0];
+      const direction = nightLights.material.uniforms.uLightDirection!.value as THREE.Vector3;
+      if (contribution === undefined) direction.set(0, 1, 0);
+      else direction.set(
+        contribution.renderDirectionToEmitter.x,
+        contribution.renderDirectionToEmitter.y,
+        contribution.renderDirectionToEmitter.z,
+      ).normalize();
+    }
   }
 
   #updateInspectionFill(camera: THREE.Camera): void {
@@ -918,6 +1138,7 @@ export class SolarSystemScene {
         resolveStellarIllumination(state.position, bodyEmitters),
       );
     }
+    this.#updateEarthNightLights();
   }
 
   #depth(entry: RegisteredScenarioBody): number {

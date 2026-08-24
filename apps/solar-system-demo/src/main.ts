@@ -56,6 +56,12 @@ interface BrowserRenderBodyDiagnostics {
   readonly markerSizePixels?: number;
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
+  readonly planetTextureSetId?: string;
+  readonly planetTextureLayers?: readonly Readonly<{
+    readonly purpose: string;
+    readonly assetKey: string;
+    readonly loaded: boolean;
+  }>[];
   readonly physicalIrradianceWattsPerSquareMeter?: number;
   readonly preExposureMappedIrradiance?: number;
   readonly displayExposure: number;
@@ -82,6 +88,7 @@ interface BrowserRenderDiagnostics {
   readonly lighting: ReturnType<typeof lightingModeDiagnostics>;
   readonly displayExposure: DisplayExposureDiagnostics;
   readonly atmosphereResourceCount: number;
+  readonly planetTextureResources: ReturnType<SolarSystemScene["planetTextureResourceDiagnostics"]>;
   readonly performance: {
     readonly frameCount: number;
     readonly lastFrameDurationMs: number;
@@ -763,6 +770,12 @@ async function bootstrap(): Promise<void> {
       lighting: scene?.lightingDiagnostics() ?? lightingModeDiagnostics(lightingMode, []),
       displayExposure: scene!.displayExposureDiagnostics(),
       atmosphereResourceCount: scene?.atmosphereResourceCount() ?? 0,
+      planetTextureResources: scene?.planetTextureResourceDiagnostics() ?? {
+        activeResourceCount: 0,
+        pendingResourceCount: 0,
+        activeReferenceCount: 0,
+        loadRequestCount: 0,
+      },
       performance: {
         frameCount: renderedFrameCount,
         lastFrameDurationMs,
@@ -793,6 +806,8 @@ async function bootstrap(): Promise<void> {
           markerSizePixels: diagnostics?.markerSizePixels,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
           surfaceReflectanceSource: diagnostics?.surfaceReflectanceSource,
+          planetTextureSetId: diagnostics?.planetTextureSetId,
+          planetTextureLayers: diagnostics?.planetTextureLayers,
           physicalIrradianceWattsPerSquareMeter: diagnostics?.physicalIrradianceWattsPerSquareMeter,
           preExposureMappedIrradiance: diagnostics?.preExposureMappedIrradiance,
           displayExposure: diagnostics?.displayExposure ?? 1,
