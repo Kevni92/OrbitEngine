@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { Backend } from "../../src/internal/backends/contract.js";
 import { createNumericalMotion } from "../../src/numerical.js";
-import { loadNativeBackend } from "../../src/internal/backends/native.js";
 import {
   duration,
   kilograms,
@@ -11,17 +11,20 @@ import {
   metersPerSecond,
   metersPerSecondSquared,
   objectId,
-  OrbitEngine,
   propagationState,
   referenceFrameId,
   revisionId,
   simulationInstant,
 } from "../../src/index.js";
 
-test("maneuver numerical propagation crosses the backend once per query, never per integrator stage", async () => {
-  const engine = await OrbitEngine.create({ backend: "native" });
+test("maneuver numerical propagation crosses the backend once per query, never per integrator stage", () => {
   const frame = referenceFrameId("1");
-  const burn = engine.scheduleFiniteBurn(objectId("850"), {
+  const burn = {
+    id: "1",
+    revision: "1",
+    objectId: objectId("850"),
+    kind: "finiteBurn" as const,
+    lifecycle: "active" as const,
     start: simulationInstant(1),
     end: simulationInstant(3),
     stages: [{
@@ -29,18 +32,31 @@ test("maneuver numerical propagation crosses the backend once per query, never p
       end: simulationInstant(3),
       forceMagnitudeNewtons: 10,
       throttle: 1,
+      effectiveForceMagnitudeNewtons: 10,
       direction: { kind: "referenceFrame", frameId: frame, unitVector: { x: 1, y: 0, z: 0 } },
-      massFlowSpecification: { kind: "directMassFlow", massFlowKilogramsPerSecond: 1 },
+      massFlowSpecification: { kind: "direct", inputValue: 1, massFlowKilogramsPerSecond: 1 },
+      effectiveMassFlowKilogramsPerSecond: 1,
     }],
-  });
-  const backend = await loadNativeBackend();
+  } as unknown as Parameters<typeof maneuverForceConfiguration>[0];
+  const identity = <T>(value: T): T => value;
   let numericalCalls = 0;
-  const instrumentedBackend = {
-    ...backend,
-    roundTripNumerical: (value: Parameters<typeof backend.roundTripNumerical>[0]) => {
+  const instrumentedBackend: Backend = {
+    kind: "native",
+    health: () => ({ protocolVersion: 10, coreVersion: 1, healthCode: 42 }),
+    roundTripTime: identity,
+    roundTripDouble: identity,
+    roundTripObject: identity,
+    roundTripFrame: identity,
+    roundTripPropagation: identity,
+    roundTripRegistry: identity,
+    roundTripFrameRegistry: identity,
+    roundTripTwoBody: identity,
+    roundTripNumerical: (value) => {
       numericalCalls += 1;
-      return backend.roundTripNumerical(value);
+      return value;
     },
+    roundTripCoupled: identity,
+    roundTripScheduler: identity,
   };
   const motion = createNumericalMotion({
     objectId: objectId("850"),
