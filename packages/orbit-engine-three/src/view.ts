@@ -12,6 +12,9 @@ import {
 } from "./presentation.js";
 import { createRenderSpaceConfig, transformSnapshotDirectionToRenderSpace, transformSnapshotPositionToSceneUnits, type RenderSpaceConfig, type RenderVector3 } from "./render-space.js";
 import { createCelestialRenderSnapshot, type BodyRepresentation, type CelestialBodyRenderState, type CelestialRenderSnapshot } from "./snapshot.js";
+import { BatchedMarkerLayer, type BatchedMarkerLayerOptions, type MarkerRenderEntry } from "./markers.js";
+import { createRepresentationPolicy, resolveRepresentationDecisions, type RepresentationDecision, type RepresentationPolicy, type RepresentationPolicyConfiguration } from "./lod.js";
+import { createAdaptiveSizingConfiguration, resolveBodySizing, type AdaptiveSizingConfiguration, type BodyProjectionMetrics, type BodySizingResult, type RadiusMode } from "./sizing.js";
 
 const MAX_LIGHTS = 4;
 const SURFACE_VERTEX_SHADER = `
@@ -116,10 +119,21 @@ export interface CelestialSystemViewConfiguration {
   readonly renderSpace?: Partial<RenderSpaceConfig>;
   readonly fallbackAccentColor?: number;
   readonly maxStellarContributors?: number;
+  readonly radiusMode?: RadiusMode;
+  readonly adaptiveSizing?: Partial<AdaptiveSizingConfiguration>;
+  readonly representationPolicy?: RepresentationPolicy | Partial<RepresentationPolicyConfiguration>;
+  readonly markerLayer?: BatchedMarkerLayerOptions;
 }
 
 export interface CelestialSystemViewContext {
   readonly cameraPositionSceneUnits?: RenderVector3;
+  readonly camera?: THREE.Camera;
+  readonly viewportWidthCssPixels?: number;
+  readonly viewportHeightCssPixels?: number;
+  readonly selectedObjectIds?: ReadonlySet<ObjectId>;
+  readonly focusedObjectId?: ObjectId;
+  readonly contextPriorityObjectIds?: ReadonlySet<ObjectId>;
+  readonly radiusMode?: RadiusMode;
 }
 
 export interface CelestialSystemViewOptions {
@@ -138,6 +152,8 @@ export interface CelestialSystemViewDiagnostics {
   readonly disposed: boolean;
   readonly bodyCount: number;
   readonly sphereCount: number;
+  readonly markerCount: number;
+  readonly hiddenCount: number;
   readonly atmosphereCount: number;
   readonly packageOwnedResourceCount: number;
   readonly committedSnapshotFingerprint?: string;
@@ -148,6 +164,13 @@ export interface CelestialSystemViewUpdateResult {
   readonly committed: boolean;
   readonly snapshotFingerprint?: string;
   readonly diagnostics: CelestialSystemViewDiagnostics;
+}
+
+export interface CelestialPickResult {
+  readonly objectId: ObjectId;
+  readonly representation: BodyRepresentation;
+  readonly distance?: number;
+  readonly screenDistancePixels?: number;
 }
 
 interface BodyResources {
@@ -167,6 +190,8 @@ interface PreparedUpdate {
   readonly bodies: Map<ObjectId, BodyResources>;
   readonly created: readonly BodyResources[];
   readonly illuminations: ReadonlyMap<ObjectId, StellarIllumination>;
+  readonly decisions: ReadonlyMap<ObjectId, RepresentationDecision>;
+  readonly markerEntries: readonly MarkerRenderEntry[];
 }
 
 function finite(name: string, value: number): void {
@@ -177,6 +202,92 @@ function sceneRadius(body: CelestialBodyRenderState, renderSpace: RenderSpaceCon
   const radius = body.physicalRadiusMeters;
   if (radius === undefined || radius <= 0) throw new RangeError(`body ${body.objectId} requires a positive physical radius for sphere resources`);
   return radius / renderSpace.metersPerSceneUnit;
+}
+
+function cameraProjectionMetrics(position: RenderVector3, camera: THREE.Camera, viewportWidthCssPixels: number, viewportHeightCssPixels: number, physicalRadiusSceneUnits = 0): BodyProjectionMetrics {
+  if (!Number.isFinite(viewportWidthCssPixels) || viewportWidthCssPixels <= 0 || !Number.isFinite(viewportHeightCssPixels) || viewportHeightCssPixels <= 0) {
+    throw new RangeError("presentation viewport must be finite and positive");
+  }
+  camera.updateMatrixWorld(true);
+  const worldPosition = new THREE.Vector3(position.x, position.y, position.z);
+  const cameraWorldPosition = camera.getWorldPosition(new THREE.Vector3());
+  const cameraSpace = worldPosition.clone().applyMatrix4(camera.matrixWorldInverse);
+  const perspective = camera instanceof THREE.PerspectiveCamera;
+  const insideBody = physicalRadiusSceneUnits > 0 && cameraWorldPosition.distanceTo(worldPosition) <= physicalRadiusSceneUnits;
+  const depth = perspective ? (insideBody ? Math.max(physicalRadiusSceneUnits, Number.EPSILON) : -cameraSpace.z) : 1;
+  const projectionScaleY = Math.abs(camera.projectionMatrix.elements[5] ?? 0);
+  const verticalFieldOfViewRadians = perspective
+    ? THREE.MathUtils.degToRad(camera.fov)
+    : projectionScaleY > 0 ? 2 * Math.atan(1 / projectionScaleY) : 1;
+  const ndc = worldPosition.clone().project(camera);
+  const projectable = insideBody || (Number.isFinite(depth) && depth > 0
+    && Number.isFinite(ndc.x) && Number.isFinite(ndc.y) && Number.isFinite(ndc.z)
+    && ndc.x >= -1 && ndc.x <= 1 && ndc.y >= -1 && ndc.y <= 1 && ndc.z >= -1 && ndc.z <= 1);
+  const centerScreenPixels = insideBody
+    ? { x: viewportWidthCssPixels / 2, y: viewportHeightCssPixels / 2 }
+    : { x: (ndc.x * 0.5 + 0.5) * viewportWidthCssPixels, y: (-ndc.y * 0.5 + 0.5) * viewportHeightCssPixels };
+  return Object.freeze({
+    projectable,
+    cameraDepthSceneUnits: depth,
+    verticalFieldOfViewRadians,
+    viewportHeightCssPixels,
+    centerScreenPixels: Object.freeze(centerScreenPixels),
+  });
+}
+
+function relatedBodies(left: CelestialBodyRenderState, right: CelestialBodyRenderState): boolean {
+  return left.parentId === right.parentId
+    || left.parentId === right.objectId
+    || right.parentId === left.objectId;
+}
+
+function nearestSeparations(
+  bodies: readonly CelestialBodyRenderState[],
+  projections: ReadonlyMap<ObjectId, BodyProjectionMetrics>,
+): ReadonlyMap<ObjectId, number> {
+  const entries = bodies
+    .map((body) => ({ body, projection: projections.get(body.objectId) }))
+    .filter((entry): entry is { body: CelestialBodyRenderState; projection: BodyProjectionMetrics } => entry.projection?.projectable === true && entry.projection.centerScreenPixels !== undefined)
+    .sort((left, right) => {
+      const leftId = BigInt(left.body.objectId);
+      const rightId = BigInt(right.body.objectId);
+      return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+    });
+  const cellSize = 32;
+  const buckets = new Map<string, typeof entries>();
+  const keyFor = (point: { readonly x: number; readonly y: number }): string => `${Math.floor(point.x / cellSize)},${Math.floor(point.y / cellSize)}`;
+  entries.forEach((entry) => {
+    const key = keyFor(entry.projection.centerScreenPixels!);
+    const bucket = buckets.get(key);
+    if (bucket === undefined) buckets.set(key, [entry]);
+    else bucket.push(entry);
+  });
+  const denseBuckets = new Set([...buckets.entries()].filter(([, bucket]) => bucket.length > 64).map(([key]) => key));
+  const result = new Map<ObjectId, number>();
+  entries.forEach((entry) => {
+    const point = entry.projection.centerScreenPixels!;
+    const cellX = Math.floor(point.x / cellSize);
+    const cellY = Math.floor(point.y / cellSize);
+    let nearest = Number.POSITIVE_INFINITY;
+    let dense = false;
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        const key = `${cellX + offsetX},${cellY + offsetY}`;
+        if (denseBuckets.has(key)) {
+          dense = true;
+          continue;
+        }
+        for (const candidate of buckets.get(key) ?? []) {
+          if (candidate.body.objectId === entry.body.objectId || !relatedBodies(entry.body, candidate.body)) continue;
+          const candidatePoint = candidate.projection.centerScreenPixels!;
+          nearest = Math.min(nearest, Math.hypot(point.x - candidatePoint.x, point.y - candidatePoint.y));
+        }
+      }
+    }
+    if (dense) result.set(entry.body.objectId, 0);
+    else if (nearest !== Number.POSITIVE_INFINITY) result.set(entry.body.objectId, nearest);
+  });
+  return result;
 }
 
 function setLightUniforms(material: THREE.ShaderMaterial, illumination: StellarIllumination, renderSpace: RenderSpaceConfig): void {
@@ -245,8 +356,8 @@ function updateSurfaceMaterialAppearance(material: THREE.ShaderMaterial, body: C
   material.uniforms.uEmissionStrength!.value = emissionGlow ? 0.22 : isEmitter ? 1 : 0;
 }
 
-function atmosphereShellRadius(body: CelestialBodyRenderState, renderSpace: RenderSpaceConfig): number {
-  const radius = sceneRadius(body, renderSpace);
+function atmosphereShellRadius(body: CelestialBodyRenderState, renderSpace: RenderSpaceConfig, presentedRadius = sceneRadius(body, renderSpace)): number {
+  const radius = presentedRadius;
   const scaleHeight = body.appearance?.atmosphere?.scaleHeightMeters ?? 0;
   return radius + Math.max(scaleHeight * 4 / renderSpace.metersPerSceneUnit, radius * 0.01);
 }
@@ -330,8 +441,14 @@ export class CelestialSystemView {
   readonly #renderSpace: RenderSpaceConfig;
   readonly #fallbackAccentColor: number;
   readonly #maxStellarContributors: number;
+  readonly #radiusMode: RadiusMode;
+  readonly #adaptiveSizing: AdaptiveSizingConfiguration;
+  readonly #representationPolicy: RepresentationPolicy;
+  readonly #markerLayerOptions: BatchedMarkerLayerOptions;
   readonly #surfaceTextureProvider?: SurfaceTextureProvider;
   readonly #resources = new Map<ObjectId, BodyResources>();
+  readonly #representations = new Map<ObjectId, BodyRepresentation>();
+  #markerLayer?: BatchedMarkerLayer;
   #lastSnapshot?: CelestialRenderSnapshot;
   #lastFailure?: VisualFailure;
   #disposed = false;
@@ -342,6 +459,14 @@ export class CelestialSystemView {
     this.#maxStellarContributors = options.configuration?.maxStellarContributors ?? 4;
     if (!Number.isSafeInteger(this.#maxStellarContributors) || this.#maxStellarContributors < 1) throw new RangeError("maxStellarContributors must be a positive safe integer");
     if (options.configuration?.fallbackAccentColor !== undefined && (!Number.isSafeInteger(options.configuration.fallbackAccentColor) || options.configuration.fallbackAccentColor < 0 || options.configuration.fallbackAccentColor > 0xffffff)) throw new RangeError("fallbackAccentColor must be a 24-bit integer");
+    this.#radiusMode = options.configuration?.radiusMode ?? "adaptive";
+    this.#adaptiveSizing = createAdaptiveSizingConfiguration(options.configuration?.adaptiveSizing);
+    this.#representationPolicy = options.configuration?.representationPolicy === undefined
+      ? createRepresentationPolicy()
+      : "resolve" in options.configuration.representationPolicy
+        ? options.configuration.representationPolicy
+        : createRepresentationPolicy(options.configuration.representationPolicy);
+    this.#markerLayerOptions = Object.freeze({ ...(options.configuration?.markerLayer ?? {}) });
     this.#surfaceTextureProvider = options.surfaceTextureProvider;
     this.#root.name = "orbit-engine-three celestial system root";
   }
@@ -358,20 +483,51 @@ export class CelestialSystemView {
     return this.#resources.get(objectId)?.anchor;
   }
 
+  pick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera, viewportWidthCssPixels?: number, viewportHeightCssPixels?: number): CelestialPickResult | undefined {
+    if (this.#disposed) return undefined;
+    this.#root.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(normalizedDeviceX, normalizedDeviceY), camera);
+    const sphereMeshes = [...this.#resources.values()]
+      .map((resource) => resource.surface)
+      .filter((surface): surface is NonNullable<BodyResources["surface"]> => surface !== undefined && surface.visible);
+    const sphereHit = raycaster.intersectObjects(sphereMeshes, false)[0];
+    const sphereResult = sphereHit === undefined ? undefined : {
+      objectId: sphereHit.object.userData.objectId as ObjectId,
+      representation: "sphere" as const,
+      distance: sphereHit.distance,
+    };
+    const markerHit = this.#markerLayer?.pick(normalizedDeviceX, normalizedDeviceY, camera, viewportWidthCssPixels, viewportHeightCssPixels);
+    if (markerHit === undefined) return sphereResult;
+    const markerPosition = this.#markerLayer!.worldPositionFor(markerHit.objectId);
+    if (markerPosition === undefined) return sphereResult;
+    const markerDistance = camera.getWorldPosition(new THREE.Vector3()).distanceTo(markerPosition);
+    if (sphereResult !== undefined && sphereResult.distance <= markerDistance + 1e-7) return sphereResult;
+    return Object.freeze({ objectId: markerHit.objectId, representation: "marker", distance: markerDistance, screenDistancePixels: markerHit.screenDistancePixels });
+  }
+
   diagnostics(): CelestialSystemViewDiagnostics {
     let sphereCount = 0;
+    let markerCount = 0;
+    let hiddenCount = 0;
     let atmosphereCount = 0;
     let packageOwnedResourceCount = 0;
     for (const resource of this.#resources.values()) {
       if (resource.surface !== undefined) sphereCount += 1;
+      if (resource.representation === "marker") markerCount += 1;
+      if (resource.representation === "hidden") hiddenCount += 1;
       if (resource.atmosphere !== undefined) atmosphereCount += 1;
       packageOwnedResourceCount += 1 + (resource.surface !== undefined ? 2 : 0) + (resource.emission !== undefined ? 2 : 0) + (resource.atmosphere !== undefined ? 2 : 0);
       if (resource.surfaceTexture?.ownership === "package") packageOwnedResourceCount += 1;
     }
+    if (this.#markerLayer !== undefined) packageOwnedResourceCount += 3;
     return Object.freeze({
       disposed: this.#disposed,
       bodyCount: this.#resources.size,
       sphereCount,
+      markerCount,
+      hiddenCount,
       atmosphereCount,
       packageOwnedResourceCount,
       ...(this.#lastSnapshot === undefined ? {} : { committedSnapshotFingerprint: this.#lastSnapshot.fingerprint }),
@@ -392,10 +548,11 @@ export class CelestialSystemView {
         finite("cameraPositionSceneUnits.y", context.cameraPositionSceneUnits.y);
         finite("cameraPositionSceneUnits.z", context.cameraPositionSceneUnits.z);
       }
-      const prepared = this.#prepare(snapshot);
+      const presentation = this.#resolvePresentation(snapshot, context);
+      const prepared = this.#prepare(presentation.snapshot, presentation.decisions);
       this.#commit(prepared, context);
       this.#lastFailure = undefined;
-      return Object.freeze({ committed: true, snapshotFingerprint: snapshot.fingerprint, diagnostics: this.diagnostics() });
+      return Object.freeze({ committed: true, snapshotFingerprint: presentation.snapshot.fingerprint, diagnostics: this.diagnostics() });
     } catch (error) {
       const failure = Object.freeze({
         code: snapshotInput?.fingerprint === undefined ? "invalidSnapshot" : "resourceAllocation",
@@ -412,18 +569,94 @@ export class CelestialSystemView {
     this.#disposed = true;
     const disposedTextures = new Set<THREE.Texture>();
     for (const resource of this.#resources.values()) disposeBodyResources(resource, new Set(), disposedTextures);
+    this.#markerLayer?.dispose();
+    this.#markerLayer = undefined;
     this.#resources.clear();
+    this.#representations.clear();
     this.#root.clear();
     this.#lastSnapshot = undefined;
   }
 
-  #prepare(snapshot: CelestialRenderSnapshot): PreparedUpdate {
+  #resolvePresentation(snapshot: CelestialRenderSnapshot, context: CelestialSystemViewContext): {
+    readonly snapshot: CelestialRenderSnapshot;
+    readonly decisions: ReadonlyMap<ObjectId, RepresentationDecision>;
+  } {
+    const camera = context.camera;
+    const hasCamera = camera !== undefined;
+    const viewportHeight = context.viewportHeightCssPixels ?? 1_000;
+    const viewportWidth = context.viewportWidthCssPixels
+      ?? (camera instanceof THREE.PerspectiveCamera ? viewportHeight * Math.max(camera.aspect, Number.EPSILON) : viewportHeight);
+    const radiusMode = context.radiusMode ?? this.#radiusMode;
+    if (radiusMode !== "physical" && radiusMode !== "adaptive") throw new RangeError(`Unknown radius mode: ${String(radiusMode)}`);
+    const projections = new Map<ObjectId, BodyProjectionMetrics>();
+    const sizingById = new Map<ObjectId, BodySizingResult>();
+    for (const body of snapshot.bodies) {
+      const scenePosition = transformSnapshotPositionToSceneUnits(body.positionRelativeToOriginMeters, this.#renderSpace);
+      const projection = hasCamera
+        ? cameraProjectionMetrics(scenePosition, camera, viewportWidth, viewportHeight, body.physicalRadiusMeters === undefined ? 0 : body.physicalRadiusMeters / this.#renderSpace.metersPerSceneUnit)
+        : Object.freeze({ projectable: true, cameraDepthSceneUnits: 1, verticalFieldOfViewRadians: 1, viewportHeightCssPixels: 1 });
+      projections.set(body.objectId, projection);
+    }
+    const separations = hasCamera ? nearestSeparations(snapshot.bodies, projections) : new Map<ObjectId, number>();
+    for (const body of snapshot.bodies) {
+      const projection = projections.get(body.objectId)!;
+      const nearest = separations.get(body.objectId);
+      const finalProjection = nearest === undefined ? projection : Object.freeze({ ...projection, nearestLocalSeparationPixels: nearest });
+      sizingById.set(body.objectId, resolveBodySizing({
+        physicalRadiusMeters: body.physicalRadiusMeters,
+        metersPerSceneUnit: this.#renderSpace.metersPerSceneUnit,
+        radiusMode: hasCamera ? radiusMode : "physical",
+        projection: finalProjection,
+        configuration: this.#adaptiveSizing,
+      }));
+    }
+    if (!hasCamera) {
+      const decisions = new Map<ObjectId, RepresentationDecision>();
+      for (const body of snapshot.bodies) {
+        const sizing = sizingById.get(body.objectId)!;
+        decisions.set(body.objectId, Object.freeze({
+          objectId: body.objectId,
+          representation: body.representation ?? "sphere",
+          sizing,
+          hierarchyEligible: true,
+          selected: false,
+          focused: false,
+        }));
+      }
+      return { snapshot, decisions };
+    }
+    const decisions = resolveRepresentationDecisions({
+      bodies: snapshot.bodies,
+      sizingById,
+      previousRepresentations: this.#representations,
+      selectedObjectIds: context.selectedObjectIds,
+      focusedObjectId: context.focusedObjectId,
+      contextPriorityObjectIds: context.contextPriorityObjectIds,
+      policy: this.#representationPolicy,
+    });
+    const resolvedSnapshot = createCelestialRenderSnapshot({
+      instant: snapshot.instant,
+      origin: snapshot.origin,
+      revision: snapshot.revision,
+      bodies: snapshot.bodies.map((body) => ({ ...body, representation: decisions.get(body.objectId)!.representation })),
+    });
+    return { snapshot: resolvedSnapshot, decisions };
+  }
+
+  #prepare(snapshot: CelestialRenderSnapshot, decisions: ReadonlyMap<ObjectId, RepresentationDecision>): PreparedUpdate {
     const next = new Map<ObjectId, BodyResources>();
     const created: BodyResources[] = [];
+    const markerEntries: MarkerRenderEntry[] = [];
     try {
       for (const body of snapshot.bodies) {
         validateCelestialAppearance(body.appearance, body.objectId);
         if ((body.representation ?? "sphere") === "sphere") sceneRadius(body, this.#renderSpace);
+        const decision = decisions.get(body.objectId);
+        if (decision === undefined) throw new RangeError(`Missing representation decision for ${body.objectId}`);
+        if (decision.representation === "marker") {
+          const position = transformSnapshotPositionToSceneUnits(body.positionRelativeToOriginMeters, this.#renderSpace);
+          markerEntries.push({ objectId: body.objectId, positionSceneUnits: position, sizePixels: decision.sizing.markerSizePixels, color: body.accentColor ?? this.#fallbackAccentColor });
+        }
         const existing = this.#resources.get(body.objectId);
         if (isSameResourceShape(existing, body)) {
           next.set(body.objectId, existing!);
@@ -440,7 +673,7 @@ export class CelestialSystemView {
         const bodyEmitters = emitters.filter((emitter) => emitter.objectId !== body.objectId);
         illuminations.set(body.objectId, resolveStellarIllumination(body.positionRelativeToOriginMeters, bodyEmitters, { maxStellarContributors: this.#maxStellarContributors }));
       }
-      return { snapshot, bodies: next, created, illuminations };
+      return { snapshot, bodies: next, created, illuminations, decisions, markerEntries: Object.freeze(markerEntries) };
     } catch (error) {
       const disposedTextures = new Set<THREE.Texture>();
       for (const resource of created) disposeBodyResources(resource, new Set(), disposedTextures);
@@ -466,6 +699,7 @@ export class CelestialSystemView {
         surface = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), createSurfaceMaterial(body, surfaceTexture));
         surface.name = `Celestial surface ${body.objectId}`;
         surface.userData.objectId = body.objectId;
+        surface.userData.representation = "sphere";
         surface.scale.setScalar(radius);
         anchor.add(surface);
         if (body.appearance?.stellarEmission !== undefined) {
@@ -540,19 +774,27 @@ export class CelestialSystemView {
     this.#resources.clear();
     for (const [objectId, resource] of nextResources) this.#resources.set(objectId, resource);
 
+    if (prepared.markerEntries.length > 0 || this.#markerLayer !== undefined) {
+      if (this.#markerLayer === undefined) this.#markerLayer = new BatchedMarkerLayer(this.#root, this.#markerLayerOptions);
+      this.#markerLayer.setEntries(prepared.markerEntries);
+    }
+
     for (const body of prepared.snapshot.bodies) {
       const resource = nextResources.get(body.objectId)!;
+      const decision = prepared.decisions.get(body.objectId)!;
       const scenePosition = transformSnapshotPositionToSceneUnits(body.positionRelativeToOriginMeters, this.#renderSpace);
       resource.anchor.position.set(scenePosition.x, scenePosition.y, scenePosition.z);
-      resource.anchor.visible = (body.representation ?? "sphere") !== "hidden";
+      resource.anchor.visible = decision.representation === "sphere";
       if (resource.surface !== undefined) {
-        resource.surface.scale.setScalar(sceneRadius(body, this.#renderSpace));
+        const presentedRadius = decision.sizing.presentedRadiusSceneUnits || sceneRadius(body, this.#renderSpace);
+        resource.surface.scale.setScalar(presentedRadius);
         updateSurfaceMaterialAppearance(resource.surface.material, body);
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.surface.material, illumination, this.#renderSpace);
       }
       if (resource.emission !== undefined) {
-        resource.emission.scale.setScalar(sceneRadius(body, this.#renderSpace) * 1.04);
+        const presentedRadius = decision.sizing.presentedRadiusSceneUnits || sceneRadius(body, this.#renderSpace);
+        resource.emission.scale.setScalar(presentedRadius * 1.04);
         updateSurfaceMaterialAppearance(resource.emission.material, body, true);
       }
       if (resource.atmosphere !== undefined) {
@@ -560,6 +802,9 @@ export class CelestialSystemView {
         if (optics === undefined) throw new Error(`atmosphere resource for ${body.objectId} has no resolved optics`);
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.atmosphere.material, illumination, this.#renderSpace);
+        const presentedRadius = decision.sizing.presentedRadiusSceneUnits || sceneRadius(body, this.#renderSpace);
+        const shellRadius = atmosphereShellRadius(body, this.#renderSpace, presentedRadius);
+        resource.atmosphere.scale.setScalar(shellRadius);
         const center = resource.anchor.position;
         const cameraPosition = context.cameraPositionSceneUnits ?? { x: center.x, y: center.y, z: center.z + 1 };
         const centerUniform = resource.atmosphere.material.uniforms.uBodyCenter!.value as THREE.Vector3;
@@ -569,6 +814,8 @@ export class CelestialSystemView {
         const rayleigh = resource.atmosphere.material.uniforms.uRayleighScattering!.value as THREE.Vector3;
         const mie = resource.atmosphere.material.uniforms.uMieScattering!.value as THREE.Vector3;
         const absorption = resource.atmosphere.material.uniforms.uAbsorption!.value as THREE.Vector3;
+        resource.atmosphere.material.uniforms.uBodyRadius!.value = presentedRadius;
+        resource.atmosphere.material.uniforms.uShellRadius!.value = shellRadius;
         rayleigh.set(optics.rayleighScattering.r, optics.rayleighScattering.g, optics.rayleighScattering.b);
         mie.set(optics.mieScattering.r, optics.mieScattering.g, optics.mieScattering.b);
         absorption.set(optics.absorption.r, optics.absorption.g, optics.absorption.b);
@@ -576,6 +823,8 @@ export class CelestialSystemView {
         resource.atmosphere.material.uniforms.uMieAnisotropy!.value = optics.mieAnisotropy;
       }
     }
+    this.#representations.clear();
+    for (const [objectId, decision] of prepared.decisions) this.#representations.set(objectId, decision.representation);
     this.#lastSnapshot = prepared.snapshot;
   }
 }
