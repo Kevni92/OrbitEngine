@@ -53,6 +53,7 @@ test("resolved planetary child orbits are local, selectable, and parent-anchored
   await page.goto("/");
   await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
   await expect(page.locator("#rendering-status")).toHaveAttribute("data-state", "ready");
+  await expect(page.locator("#orbit-status")).toContainText("reference orbits ready");
 
   let diagnostics = await focus(page, "1006");
   for (const objectId of ["1201", "1202", "1203", "1204", "1205"]) {

@@ -619,6 +619,18 @@ query normal public states
 
 A missing required shard is a startup/scenario error. Physics queries do not initiate implicit asset/network loads.
 
+### Startup staging and OEP activation boundary
+
+The browser demo stages startup so the page shell, controls/status UI, WebGL renderer, and an empty render frame become available before authoritative scenario state is ready. The UI keeps controls disabled and reports manifest, shard-validation, dataset, state, and orbit-population progress; it never presents fixture coordinates as production reference state while OEP loading is pending or failed.
+
+The startup overlay shows an exact percentage for the observable data-package validation phase. The subsequent WASM dataset/index build is intentionally indeterminate because the current synchronous `loadEphemerisPack()` API exposes no intermediate progress; the UI does not display a fabricated percentage for that phase.
+
+Production manifest/shard requests use normal browser HTTP-cache semantics. The dataset identity, canonical manifest hash, and every declared shard SHA-256 remain validated before the bytes enter `OrbitEngine`; a cache hit therefore cannot bypass integrity or identity checks.
+
+The current public `OepLoadInput`/`loadEphemerisPack()` contract is atomic: all manifest-declared shards must be present in one load. Issue #218 therefore defers the complete validated pack load until after the first WebGL frame but does not pretend to provide per-shard activation. Incremental shard activation requires a separate Architecture decision and follow-up implementation covering dataset handles, dependency availability, source registration, and deterministic error/isolation semantics. Until that contract exists, the demo must not query authoritative state before the complete dataset is ready.
+
+The demo exposes lightweight `performance.mark()` milestones for bootstrap start, WASM readiness, manifest readiness, validated OEP data, dataset readiness, WebGL/scene readiness, first state frame, first rendered frame, and deferred orbit completion. These diagnostics describe startup ordering only; they do not alter simulation time or propagation behavior.
+
 ### Provenance
 
 The committed scenario/dataset must state:
