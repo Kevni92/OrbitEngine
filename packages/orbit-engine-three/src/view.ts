@@ -15,6 +15,8 @@ import { createCelestialRenderSnapshot, type BodyRepresentation, type CelestialB
 import { BatchedMarkerLayer, type BatchedMarkerLayerOptions, type MarkerRenderEntry } from "./markers.js";
 import { createRepresentationPolicy, resolveRepresentationDecisions, type RepresentationDecision, type RepresentationPolicy, type RepresentationPolicyConfiguration } from "./lod.js";
 import { createAdaptiveSizingConfiguration, resolveBodySizing, type AdaptiveSizingConfiguration, type BodyProjectionMetrics, type BodySizingResult, type RadiusMode } from "./sizing.js";
+import { OrbitPathRenderer, type OrbitPathRendererOptions, type OrbitPathStyle } from "./orbit-renderer.js";
+import { SelectionIndicator, type SelectionIndicatorOptions } from "./selection.js";
 
 const MAX_LIGHTS = 4;
 const SURFACE_VERTEX_SHADER = `
@@ -123,6 +125,8 @@ export interface CelestialSystemViewConfiguration {
   readonly adaptiveSizing?: Partial<AdaptiveSizingConfiguration>;
   readonly representationPolicy?: RepresentationPolicy | Partial<RepresentationPolicyConfiguration>;
   readonly markerLayer?: BatchedMarkerLayerOptions;
+  readonly orbitPaths?: OrbitPathRendererOptions;
+  readonly selectionIndicator?: SelectionIndicatorOptions;
 }
 
 export interface CelestialSystemViewContext {
@@ -131,9 +135,12 @@ export interface CelestialSystemViewContext {
   readonly viewportWidthCssPixels?: number;
   readonly viewportHeightCssPixels?: number;
   readonly selectedObjectIds?: ReadonlySet<ObjectId>;
+  readonly selectedObjectId?: ObjectId;
   readonly focusedObjectId?: ObjectId;
   readonly contextPriorityObjectIds?: ReadonlySet<ObjectId>;
   readonly radiusMode?: RadiusMode;
+  readonly orbitVisible?: boolean;
+  readonly orbitStyle?: OrbitPathStyle;
 }
 
 export interface CelestialSystemViewOptions {
@@ -168,7 +175,7 @@ export interface CelestialSystemViewUpdateResult {
 
 export interface CelestialPickResult {
   readonly objectId: ObjectId;
-  readonly representation: BodyRepresentation;
+  readonly representation: BodyRepresentation | "orbit";
   readonly distance?: number;
   readonly screenDistancePixels?: number;
 }
@@ -445,10 +452,14 @@ export class CelestialSystemView {
   readonly #adaptiveSizing: AdaptiveSizingConfiguration;
   readonly #representationPolicy: RepresentationPolicy;
   readonly #markerLayerOptions: BatchedMarkerLayerOptions;
+  readonly #orbitRendererOptions?: OrbitPathRendererOptions;
+  readonly #selectionIndicatorOptions?: SelectionIndicatorOptions;
   readonly #surfaceTextureProvider?: SurfaceTextureProvider;
   readonly #resources = new Map<ObjectId, BodyResources>();
   readonly #representations = new Map<ObjectId, BodyRepresentation>();
   #markerLayer?: BatchedMarkerLayer;
+  #orbitRenderer?: OrbitPathRenderer;
+  #selectionIndicator?: SelectionIndicator;
   #lastSnapshot?: CelestialRenderSnapshot;
   #lastFailure?: VisualFailure;
   #disposed = false;
@@ -467,6 +478,12 @@ export class CelestialSystemView {
         ? options.configuration.representationPolicy
         : createRepresentationPolicy(options.configuration.representationPolicy);
     this.#markerLayerOptions = Object.freeze({ ...(options.configuration?.markerLayer ?? {}) });
+    this.#orbitRendererOptions = options.configuration?.orbitPaths === undefined
+      ? undefined
+      : Object.freeze({ ...options.configuration.orbitPaths, renderSpace: this.#renderSpace });
+    this.#selectionIndicatorOptions = options.configuration?.selectionIndicator === undefined
+      ? undefined
+      : Object.freeze({ ...options.configuration.selectionIndicator });
     this.#surfaceTextureProvider = options.surfaceTextureProvider;
     this.#root.name = "orbit-engine-three celestial system root";
   }
@@ -498,13 +515,20 @@ export class CelestialSystemView {
       representation: "sphere" as const,
       distance: sphereHit.distance,
     };
+    let best: CelestialPickResult | undefined = sphereResult;
     const markerHit = this.#markerLayer?.pick(normalizedDeviceX, normalizedDeviceY, camera, viewportWidthCssPixels, viewportHeightCssPixels);
-    if (markerHit === undefined) return sphereResult;
-    const markerPosition = this.#markerLayer!.worldPositionFor(markerHit.objectId);
-    if (markerPosition === undefined) return sphereResult;
-    const markerDistance = camera.getWorldPosition(new THREE.Vector3()).distanceTo(markerPosition);
-    if (sphereResult !== undefined && sphereResult.distance <= markerDistance + 1e-7) return sphereResult;
-    return Object.freeze({ objectId: markerHit.objectId, representation: "marker", distance: markerDistance, screenDistancePixels: markerHit.screenDistancePixels });
+    if (markerHit !== undefined) {
+      const markerPosition = this.#markerLayer!.worldPositionFor(markerHit.objectId);
+      if (markerPosition !== undefined) {
+        const markerDistance = camera.getWorldPosition(new THREE.Vector3()).distanceTo(markerPosition);
+        if (best === undefined || markerDistance < (best.distance ?? Number.POSITIVE_INFINITY) + 1e-7) {
+          best = Object.freeze({ objectId: markerHit.objectId, representation: "marker", distance: markerDistance, screenDistancePixels: markerHit.screenDistancePixels });
+        }
+      }
+    }
+    const orbitHit = this.#orbitRenderer?.pick(normalizedDeviceX, normalizedDeviceY, camera);
+    if (orbitHit !== undefined && (best === undefined || orbitHit.distance < (best.distance ?? Number.POSITIVE_INFINITY))) best = orbitHit;
+    return best;
   }
 
   diagnostics(): CelestialSystemViewDiagnostics {
@@ -522,6 +546,8 @@ export class CelestialSystemView {
       if (resource.surfaceTexture?.ownership === "package") packageOwnedResourceCount += 1;
     }
     if (this.#markerLayer !== undefined) packageOwnedResourceCount += 3;
+    if (this.#orbitRenderer !== undefined) packageOwnedResourceCount += 3 * this.#orbitRenderer.pathCount();
+    if (this.#selectionIndicator !== undefined) packageOwnedResourceCount += 2;
     return Object.freeze({
       disposed: this.#disposed,
       bodyCount: this.#resources.size,
@@ -571,6 +597,10 @@ export class CelestialSystemView {
     for (const resource of this.#resources.values()) disposeBodyResources(resource, new Set(), disposedTextures);
     this.#markerLayer?.dispose();
     this.#markerLayer = undefined;
+    this.#orbitRenderer?.dispose();
+    this.#orbitRenderer = undefined;
+    this.#selectionIndicator?.dispose();
+    this.#selectionIndicator = undefined;
     this.#resources.clear();
     this.#representations.clear();
     this.#root.clear();
@@ -639,6 +669,7 @@ export class CelestialSystemView {
       origin: snapshot.origin,
       revision: snapshot.revision,
       bodies: snapshot.bodies.map((body) => ({ ...body, representation: decisions.get(body.objectId)!.representation })),
+      ...(snapshot.orbitPaths === undefined ? {} : { orbitPaths: snapshot.orbitPaths }),
     });
     return { snapshot: resolvedSnapshot, decisions };
   }
@@ -822,6 +853,44 @@ export class CelestialSystemView {
         resource.atmosphere.material.uniforms.uReferenceVerticalOpticalDepth!.value = optics.referenceVerticalOpticalDepth;
         resource.atmosphere.material.uniforms.uMieAnisotropy!.value = optics.mieAnisotropy;
       }
+    }
+    const selectedObjectId = context.selectedObjectId
+      ?? (context.selectedObjectIds?.size === 1 ? [...context.selectedObjectIds][0] : undefined);
+    if (prepared.snapshot.orbitPaths !== undefined || this.#orbitRenderer !== undefined) {
+      if (this.#orbitRenderer === undefined && (prepared.snapshot.orbitPaths?.length ?? 0) > 0) {
+        this.#orbitRenderer = new OrbitPathRenderer(this.#root, this.#orbitRendererOptions ?? { renderSpace: this.#renderSpace });
+      }
+      if (this.#orbitRenderer !== undefined) {
+        if (prepared.snapshot.orbitPaths !== undefined) {
+          if (context.orbitStyle === undefined) this.#orbitRenderer.setPaths(prepared.snapshot.orbitPaths);
+          else {
+            this.#orbitRenderer.clearPaths();
+            for (const path of prepared.snapshot.orbitPaths) this.#orbitRenderer.setPath(path, context.orbitStyle);
+          }
+        }
+        const positions = new Map<ObjectId, RenderVector3>();
+        for (const body of prepared.snapshot.bodies) positions.set(body.objectId, transformSnapshotPositionToSceneUnits(body.positionRelativeToOriginMeters, this.#renderSpace));
+        this.#orbitRenderer.updateBodyPositions(positions);
+        this.#orbitRenderer.setSelected(selectedObjectId);
+        this.#orbitRenderer.setVisible(context.orbitVisible ?? true);
+        for (const [objectId, decision] of prepared.decisions) this.#orbitRenderer.setBodyRepresentation(objectId, decision.representation !== "hidden");
+      }
+    }
+    if (selectedObjectId !== undefined && context.camera !== undefined) {
+      const body = prepared.snapshot.bodies.find((candidate) => candidate.objectId === selectedObjectId);
+      const decision = prepared.decisions.get(selectedObjectId);
+      if (body !== undefined && decision !== undefined) {
+        if (this.#selectionIndicator === undefined) this.#selectionIndicator = new SelectionIndicator(this.#root, this.#selectionIndicatorOptions);
+        const position = transformSnapshotPositionToSceneUnits(body.positionRelativeToOriginMeters, this.#renderSpace);
+        const radiusPixels = decision.representation === "marker"
+          ? Math.max(decision.sizing.presentedRadiusPixels, decision.sizing.markerSizePixels / 2)
+          : decision.sizing.presentedRadiusPixels;
+        this.#selectionIndicator.update({ objectId: selectedObjectId, positionSceneUnits: position, bodyRadiusPixels: radiusPixels }, context.camera, context.viewportHeightCssPixels ?? 1_000);
+      } else {
+        this.#selectionIndicator?.hide();
+      }
+    } else {
+      this.#selectionIndicator?.hide();
     }
     this.#representations.clear();
     for (const [objectId, decision] of prepared.decisions) this.#representations.set(objectId, decision.representation);

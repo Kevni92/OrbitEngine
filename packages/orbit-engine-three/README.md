@@ -44,6 +44,16 @@ projected physical diameter, while adaptive markers use the configured
 viewport-stable size. `CelestialSystemView.pick()` maps sphere and batched
 marker hits back to stable ObjectIds.
 
+Orbit paths are supplied as immutable `OrbitPathSnapshot` values. Use
+`sampleOrbitPath`/`OrbitPathCache` for bounded, exact-epoch samples or
+`createOrbitEngineSnapshotSource` to adapt the public OrbitEngine batch,
+relative-state, and state-at-time APIs. The adapter never advances the engine,
+installs fidelity requirements, polls, or computes a local Kepler/ephemeris
+replacement. `OrbitPathRenderer` consumes those samples, supports
+parent-relative anchoring, configurable styling, selected emphasis, optional
+direction gradients, and stable ObjectId picking. `SelectionIndicator` is a
+presentation-only CSS-pixel halo associated with the selected ObjectId.
+
 The reusable package does not contain Solar-System scenario data. A consumer
 supplies its own `CelestialAppearance` records and adapts axis transforms at
 the renderer boundary. Stellar illumination keeps all physical contributors
