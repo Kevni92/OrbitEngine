@@ -77,3 +77,11 @@ add_executable(orbit_engine_advance_test
 target_link_libraries(orbit_engine_advance_test PRIVATE orbit_engine_core)
 
 add_test(NAME orbit_engine_advance_test COMMAND orbit_engine_advance_test)
+
+add_executable(orbit_engine_lambert_test
+  lambert_test.cpp
+)
+
+target_link_libraries(orbit_engine_lambert_test PRIVATE orbit_engine_core)
+
+add_test(NAME orbit_engine_lambert_test COMMAND orbit_engine_lambert_test)

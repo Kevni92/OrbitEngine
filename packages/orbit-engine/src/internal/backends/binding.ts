@@ -17,7 +17,7 @@ import { validateTwoBodyWire, type TwoBodyWire } from "../two-body-wire.js";
 import { validateNumericalWire, type NumericalWire } from "../numerical-wire.js";
 import { validateCoupledWire, type CoupledWire } from "../coupled-wire.js";
 import { validateSchedulerWire, type SchedulerWire } from "../scheduler-wire.js";
-import { roundTripPlannerGeometryWire, validatePlannerGeometryWire } from "../planner-wire.js";
+import { roundTripPlannerGeometryWire, validatePlannerGeometryWire, withPlannerGeometryResult } from "../planner-wire.js";
 import type { PlannerGeometryWire } from "../../planner.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -201,6 +201,11 @@ export async function backendFromRawBinding(
     roundTripPlanner: (value: PlannerGeometryWire): PlannerGeometryWire => {
       const input = validatePlannerGeometryWire(value);
       try {
+        if (typeof binding.roundTripPlanner === "function") {
+          const output = binding.roundTripPlanner(Float64Array.from(input.words));
+          if (!(output instanceof Float64Array) && !Array.isArray(output)) throw new TypeError("planner codec returned a non-array result");
+          return withPlannerGeometryResult(input, [...output]);
+        }
         return roundTripPlannerGeometryWire(input, (word) => {
           const result = binding.roundTripDouble(word);
           if (typeof result !== "number") throw new TypeError("planner codec returned a non-numeric word");

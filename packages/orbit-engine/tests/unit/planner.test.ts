@@ -71,10 +71,11 @@ test("planner rejects implicit or invalid physical assumptions", () => {
     centralBodyId: objectId("1"), planningFrameId: frame, mu: 0,
     departurePosition: { x: 0, y: 0, z: 0 }, arrivalPosition: { x: 1, y: 0, z: 0 }, timeOfFlight: duration(1), branch: branch(),
   }), /mu must be positive/);
-  assert.throws(() => normalizeLambertGeometryRequest({
+  const normalizedUnsupportedRevolution = normalizeLambertGeometryRequest({
     centralBodyId: objectId("1"), planningFrameId: frame, mu: 1,
     departurePosition: { x: 0, y: 0, z: 0 }, arrivalPosition: { x: 1, y: 0, z: 0 }, timeOfFlight: duration(1), branch: { ...branch(), revolutions: 1 },
-  }), /revolutions/);
+  });
+  assert.equal(normalizedUnsupportedRevolution.branch.revolutions, 1);
   assert.throws(() => normalizeTrajectoryTransferRequest(transfer({ arrival: instant(100) })), /strictly later/);
   assert.throws(() => normalizeTrajectoryTransferRequest(transfer({ centralBodyId: objectId("1"), constraints: { allowedPlanningFrameIds: [referenceFrameId("2")] } })), /not allowed/);
 });

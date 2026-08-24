@@ -31,7 +31,7 @@ import { assertCollisionStress } from "../shared/collision-stress.js";
 import { assertManeuverLifecycle } from "../shared/maneuver.js";
 import { assertManeuverAuthorityHandoff } from "../shared/maneuver-authority.js";
 import { assertManeuverRegressionMatrix } from "../shared/maneuver-regressions.js";
-import { assertPlannerCodec } from "../shared/planner.js";
+import { assertLambertSolver, assertPlannerCodec } from "../shared/planner.js";
 
 test("real native backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "native" });
@@ -48,6 +48,7 @@ test("real native backend initializes and reports the shared core health", async
   const backend = await loadNativeBackend();
   assertTimeRoundTrip(backend);
   assertPlannerCodec(backend);
+  assertLambertSolver(engine);
   assertObjectRoundTrip(backend);
   assertFrameRoundTrip(backend);
   assertPropagationRoundTrip(backend);
