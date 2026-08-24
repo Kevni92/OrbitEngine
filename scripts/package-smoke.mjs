@@ -54,6 +54,10 @@ const hasNative = hasWindowsNative || hasLinuxNative;
 const hasWasm = existsSync(path.join(installedPackage, "wasm", "orbit_engine_wasm.js"))
   && existsSync(path.join(installedPackage, "wasm", "orbit_engine_wasm.wasm"));
 
+if (existsSync(path.join(consumerDirectory, "node_modules", "three"))) {
+  throw new Error("base orbit-engine package smoke unexpectedly installed Three.js");
+}
+
 if (requireAllArtifacts && (!hasWindowsNative || !hasLinuxNative || !hasWasm)) {
   throw new Error(
     `packed package is missing required artifacts (win32=${hasWindowsNative}, linux=${hasLinuxNative}, wasm=${hasWasm})`,

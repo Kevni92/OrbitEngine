@@ -32,7 +32,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:ts
+      - run: pnpm build:three
       - run: pnpm test:ts
+      - run: pnpm test:three
 
   oep-importer:
     name: OEP importer + CSPICE oracle
@@ -157,6 +159,44 @@ jobs:
       # visual suite remains part of the local demo validation; running all
       # 15 large-dataset pages here exhausts the hosted runner over time.
       - run: pnpm --filter orbit-engine-solar-system-demo exec playwright test tests/production-oep.smoke.spec.ts
+
+  three-package:
+    name: orbit-engine-three package and peer smoke
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:ts
+      - run: pnpm build:three
+      - run: pnpm test:three
+      - run: pnpm package:three-smoke
+
+  three-browser-smoke:
+    name: orbit-engine-three browser consumer smoke
+    runs-on: ubuntu-22.04
+    needs: [three-package]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:three
+      - run: pnpm --filter orbit-engine-three-browser-smoke typecheck
+      - run: pnpm --filter orbit-engine-three-browser-smoke build
+      - run: pnpm --filter orbit-engine-three-browser-smoke exec playwright install --with-deps chromium
+      - run: pnpm --filter orbit-engine-three-browser-smoke smoke
 
   parity:
     name: Backend parity (Node ${{ matrix.node }})
