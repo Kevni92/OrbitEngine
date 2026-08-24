@@ -1204,6 +1204,36 @@ Napi::Value RoundTripPlanner(const Napi::CallbackInfo& info) {
   return output;
 }
 
+Napi::Value RoundTripPlannerBatch(const Napi::CallbackInfo& info) {
+  const auto env = info.Env();
+  if (info.Length() != 1 || !info[0].IsTypedArray() || info[0].As<Napi::TypedArray>().TypedArrayType() != napi_float64_array) {
+    Napi::TypeError::New(env, "roundTripPlannerBatch expects one Float64Array packet").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  const auto input = info[0].As<Napi::Float64Array>();
+  if (input.ElementLength() == 0 || input.ElementLength() % orbit_engine::lambert::kInputWords != 0) {
+    Napi::RangeError::New(env, "roundTripPlannerBatch received an invalid packet length").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  const auto count = input.ElementLength() / orbit_engine::lambert::kInputWords;
+  auto output = Napi::Float64Array::New(env, count * orbit_engine::lambert::kOutputWords);
+  for (std::size_t index = 0; index < count; index += 1) {
+    orbit_engine::lambert::GeometryWire wire;
+    const auto offset = index * orbit_engine::lambert::kInputWords;
+    if (!orbit_engine::lambert::decode_packet(std::span<const double>(input.Data() + offset, orbit_engine::lambert::kInputWords), wire)) {
+      Napi::TypeError::New(env, "roundTripPlannerBatch received an invalid packet").ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    const auto result = orbit_engine::lambert::evaluate(wire);
+    const auto output_offset = index * orbit_engine::lambert::kOutputWords;
+    if (!orbit_engine::lambert::encode_packet(result, std::span<double>(output.Data() + output_offset, orbit_engine::lambert::kOutputWords))) {
+      Napi::RangeError::New(env, "roundTripPlannerBatch could not encode its result").ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+  }
+  return output;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("protocolVersion", Napi::Number::New(env, orbit_engine::kBindingProtocolVersion));
   exports.Set("initialize", Napi::Function::New(env, Initialize));
@@ -1219,6 +1249,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("roundTripCoupled", Napi::Function::New(env, RoundTripCoupled));
   exports.Set("roundTripScheduler", Napi::Function::New(env, RoundTripScheduler));
   exports.Set("roundTripPlanner", Napi::Function::New(env, RoundTripPlanner));
+  exports.Set("roundTripPlannerBatch", Napi::Function::New(env, RoundTripPlannerBatch));
   return exports;
 }
 

@@ -15,7 +15,8 @@
   "files": [
     "dist",
     "prebuilds/**/*.node",
-    "wasm",
+    "wasm/*.js",
+    "wasm/*.wasm",
     "README.md"
   ],
   "scripts": {

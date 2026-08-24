@@ -11,7 +11,7 @@ import type { TwoBodyWire } from "../two-body-wire.js";
 import type { NumericalWire } from "../numerical-wire.js";
 import { decodeCoupledPacket, encodeCoupledPacket, type CoupledWire } from "../coupled-wire.js";
 import { decodeSchedulerPacket, encodeSchedulerPacket, SCHEDULER_OUTPUT_WORDS, type SchedulerWire } from "../scheduler-wire.js";
-import { PLANNER_GEOMETRY_RESULT_WORDS } from "../planner-wire.js";
+import { PLANNER_GEOMETRY_PACKET_WORDS, PLANNER_GEOMETRY_RESULT_WORDS } from "../planner-wire.js";
 import type { EmscriptenWasmFactoryModule } from "../wasm-factory.js";
 
 type ObjectRoundTripArgs = [
@@ -259,6 +259,7 @@ interface WasmModule {
   readonly _orbit_engine_round_trip_coupled: (inputPointer: number, inputLength: number, outputPointer: number, outputLength: number) => number;
   readonly _orbit_engine_round_trip_scheduler: (inputPointer: number, inputLength: number, outputPointer: number, outputLength: number) => number;
   readonly _orbit_engine_round_trip_planner: (inputPointer: number, inputLength: number, outputPointer: number, outputLength: number) => number;
+  readonly _orbit_engine_round_trip_planner_batch: (inputPointer: number, inputLength: number, outputPointer: number, outputLength: number) => number;
 }
 
 interface WasmModuleFactory {
@@ -875,6 +876,28 @@ export async function loadWasmBackend(): Promise<Backend> {
       try {
         module.HEAPF64.set(input, inputPointer / Float64Array.BYTES_PER_ELEMENT);
         if (module._orbit_engine_round_trip_planner(inputPointer, input.length, outputPointer, outputLength) === 0) throw new RangeError("WASM planner operation was rejected");
+        return module.HEAPF64.slice(outputPointer / Float64Array.BYTES_PER_ELEMENT, outputPointer / Float64Array.BYTES_PER_ELEMENT + outputLength);
+      } finally {
+        module._free(inputPointer);
+        module._free(outputPointer);
+      }
+    },
+    roundTripPlannerBatch: (value: unknown) => {
+      if (!(value instanceof Float64Array) && !Array.isArray(value)) throw new TypeError("WASM planner batch codec expects a numeric packet");
+      const input = value instanceof Float64Array ? value : Float64Array.from(value);
+      if (input.length === 0 || input.length % PLANNER_GEOMETRY_PACKET_WORDS !== 0) throw new RangeError("WASM planner batch packet has an invalid length");
+      const count = input.length / PLANNER_GEOMETRY_PACKET_WORDS;
+      const outputLength = count * PLANNER_GEOMETRY_RESULT_WORDS;
+      const inputPointer = module._malloc(input.byteLength);
+      const outputPointer = module._malloc(outputLength * Float64Array.BYTES_PER_ELEMENT);
+      if (inputPointer === 0 || outputPointer === 0) {
+        if (inputPointer !== 0) module._free(inputPointer);
+        if (outputPointer !== 0) module._free(outputPointer);
+        throw new RangeError("WASM planner batch operation could not allocate its packet buffers");
+      }
+      try {
+        module.HEAPF64.set(input, inputPointer / Float64Array.BYTES_PER_ELEMENT);
+        if (module._orbit_engine_round_trip_planner_batch(inputPointer, input.length, outputPointer, outputLength) === 0) throw new RangeError("WASM planner batch operation was rejected");
         return module.HEAPF64.slice(outputPointer / Float64Array.BYTES_PER_ELEMENT, outputPointer / Float64Array.BYTES_PER_ELEMENT + outputLength);
       } finally {
         module._free(inputPointer);

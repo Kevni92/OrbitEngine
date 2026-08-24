@@ -17,7 +17,7 @@ import { validateTwoBodyWire, type TwoBodyWire } from "../two-body-wire.js";
 import { validateNumericalWire, type NumericalWire } from "../numerical-wire.js";
 import { validateCoupledWire, type CoupledWire } from "../coupled-wire.js";
 import { validateSchedulerWire, type SchedulerWire } from "../scheduler-wire.js";
-import { roundTripPlannerGeometryWire, validatePlannerGeometryWire, withPlannerGeometryResult } from "../planner-wire.js";
+import { PLANNER_GEOMETRY_RESULT_WORDS, roundTripPlannerGeometryWire, validatePlannerGeometryWire, withPlannerGeometryResult } from "../planner-wire.js";
 import type { PlannerGeometryWire } from "../../planner.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -213,6 +213,33 @@ export async function backendFromRawBinding(
         });
       } catch (cause) {
         throw new BackendInitializationError(kind, `${kind} planner codec round-trip failed`, cause);
+      }
+    },
+    roundTripPlannerBatch: (values: readonly PlannerGeometryWire[]): readonly PlannerGeometryWire[] => {
+      const inputs = Object.freeze([...values].map(validatePlannerGeometryWire));
+      if (inputs.length === 0) return Object.freeze([]);
+      try {
+        if (typeof binding.roundTripPlannerBatch === "function") {
+          const flattened = Float64Array.from(inputs.flatMap((value) => value.words));
+          const output = binding.roundTripPlannerBatch(flattened);
+          if (!(output instanceof Float64Array) && !Array.isArray(output)) throw new TypeError("planner batch codec returned a non-array result");
+          if (output.length !== inputs.length * PLANNER_GEOMETRY_RESULT_WORDS) throw new RangeError("planner batch codec returned the wrong number of words");
+          return Object.freeze(inputs.map((input, index) => withPlannerGeometryResult(input, [...output].slice(index * PLANNER_GEOMETRY_RESULT_WORDS, (index + 1) * PLANNER_GEOMETRY_RESULT_WORDS))));
+        }
+        return Object.freeze(inputs.map((input) => {
+          if (typeof binding.roundTripPlanner === "function") {
+            const output = binding.roundTripPlanner(Float64Array.from(input.words));
+            if (!(output instanceof Float64Array) && !Array.isArray(output)) throw new TypeError("planner codec returned a non-array result");
+            return withPlannerGeometryResult(input, [...output]);
+          }
+          return roundTripPlannerGeometryWire(input, (word) => {
+            const result = binding.roundTripDouble(word);
+            if (typeof result !== "number") throw new TypeError("planner codec returned a non-numeric word");
+            return result;
+          });
+        }));
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} planner batch codec failed`, cause);
       }
     },
   };

@@ -32,6 +32,10 @@ export function assertPlannerCodec(backend: Backend): void {
   const wire = encodeLambertGeometryWire(request);
   const returned = backend.roundTripPlanner(wire);
   assert.deepEqual({ version: returned.version, words: returned.words }, { version: wire.version, words: wire.words });
+  const batch = backend.roundTripPlannerBatch?.([wire, wire]);
+  assert.ok(batch !== undefined);
+  assert.equal(batch?.length, 2);
+  assert.deepEqual({ version: batch?.[0]?.version, words: batch?.[0]?.words }, { version: wire.version, words: wire.words });
 }
 
 export function assertLambertSolver(engine: OrbitEngine): void {
@@ -219,6 +223,39 @@ export async function assertEngineBoundTransferPlanning(engine: OrbitEngine): Pr
   assert.equal(invalidState.status, "stateUnavailable");
   assert.deepEqual(engine.currentTime, beforeClock);
   assert.deepEqual(engine.registry().get(source).state, beforeSource);
+
+  const searchRequest = {
+    sourceObjectId: source,
+    targetObjectId: target,
+    centralBodyId: centralBody,
+    planningFrameId: frame,
+    departureWindow: { start: departure, end: simulationInstant(3) },
+    arrivalWindow: { start: arrival, end: simulationInstant(2_917) },
+    branchSet: [request.branch, { ...request.branch, motionSense: "retrograde" as const }],
+    purpose: "intercept" as const,
+    rankingMetric: "minimumTotalDeltaV" as const,
+    sampling: { departureSamples: 2, arrivalSamples: 2 },
+    searchBudget: { maxCoarseCells: 8, maxLambertSolves: 100, maxRefinementSeeds: 2, maxRefinementIterationsPerSeed: 1, maxReturnedCandidates: 4 },
+  };
+  const search = await engine.planner.searchTransfers(searchRequest, { includeGrid: true });
+  assert.equal(search.status, "completed");
+  if (search.status !== "completed") return;
+  assert.equal(search.diagnostics.coarseCellsEvaluated, 8);
+  assert.ok(search.diagnostics.lambertSolves >= search.diagnostics.coarseCellsEvaluated);
+  assert.ok(search.candidates.length > 0);
+  assert.equal(search.grid?.length, search.diagnostics.lambertSolves);
+  assert.equal(search.candidates[0]?.quality.rankingMetric, "minimumTotalDeltaV");
+  const repeatedSearch = await engine.planner.searchTransfers(searchRequest);
+  assert.equal(repeatedSearch.status, "completed");
+  if (repeatedSearch.status === "completed") assert.deepEqual(repeatedSearch.candidates.map((plan) => plan.digest), search.candidates.map((plan) => plan.digest));
+
+  const budgetedSearch = await engine.planner.searchTransfers({ ...searchRequest, searchBudget: { ...searchRequest.searchBudget, maxLambertSolves: 1 } });
+  assert.equal(budgetedSearch.status, "budgetExceeded");
+  assert.equal(budgetedSearch.diagnostics.lambertSolves, 1);
+  const controller = new AbortController();
+  controller.abort();
+  const cancelledSearch = await engine.planner.searchTransfers(searchRequest, { signal: controller.signal });
+  assert.equal(cancelledSearch.status, "cancelled");
 }
 
 export async function lambertParitySnapshot(engine: OrbitEngine): Promise<Readonly<Record<string, unknown>>> {
