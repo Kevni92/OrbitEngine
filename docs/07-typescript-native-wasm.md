@@ -160,6 +160,22 @@ engine.listInvalidationDiagnostics()
 
 Invalidation is indexed by dependency identity, retires only affected work at or after the exact effective instant, and rechecks stale revisions immediately before advancement. Work strictly before the boundary remains eligible; rebuilds are explicitly bounded and scheduled through the same queue. The API exposes reports and read-only diagnostics, never queue nodes or backend mutation state.
 
+### Maneuver definitions
+
+The public maneuver facade keeps physical maneuver values backend-neutral:
+
+```ts
+engine.scheduleImpulse(objectId, { instant, deltaVelocity, frame })
+engine.scheduleFiniteBurn(objectId, { start, end, stages })
+engine.updateManeuver(maneuverId, replacement)
+engine.cancelManeuver(maneuverId)
+engine.getManeuver(maneuverId)
+engine.listManeuvers({ objectId, from, to, lifecycle })
+engine.getManeuverStatus(maneuverId)
+```
+
+The value layer validates exact half-open stage intervals, explicit reference/body-frame directions, throttle, and the three SI mass-flow parameterizations. It normalizes standard gravity using `g0 = 9.80665 m/s²`, allocates non-reused engine-scoped maneuver IDs, retains IDs across revisions, and rejects overlapping finite burns for one object. `encodeManeuverWire`/`decodeManeuverWire` preserve exact IDs, revisions, instants, lifecycle codes, stage boundaries, and normalized physical values without exposing backend packing. This layer defines no thrust integration, event execution, or arbitrary per-step JavaScript callback.
+
 Raw binding objects, Emscripten modules, artifact paths, backend implementation classes, dense indexes, propagator/provider vtables, integrator work arrays, cache handles, and pointers are not exported from the normal public package entry point.
 
 ## Numeric, time, object, frame, and propagation transfer contract
