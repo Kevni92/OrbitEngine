@@ -21,6 +21,7 @@ function fakeBackend(kind: "native" | "wasm"): Backend {
     roundTripNumerical: (value) => value,
     roundTripCoupled: (value) => value,
     roundTripScheduler: (value) => value,
+    roundTripPlanner: (value) => value,
   };
 }
 

@@ -30,6 +30,7 @@ import { assertCollisionStress } from "../shared/collision-stress.js";
 import { assertManeuverLifecycle } from "../shared/maneuver.js";
 import { assertManeuverAuthorityHandoff } from "../shared/maneuver-authority.js";
 import { assertManeuverRegressionMatrix, maneuverParitySnapshot } from "../shared/maneuver-regressions.js";
+import { assertPlannerCodec } from "../shared/planner.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -46,6 +47,9 @@ for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngine
 for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBackend]] as const) {
   test(`object identity and property wire parity has exact semantics on ${name}`, async () => {
     assertObjectRoundTrip(await load());
+  });
+  test(`planner geometry codec parity has exact semantics on ${name}`, async () => {
+    assertPlannerCodec(await load());
   });
   test(`reference frame wire parity has exact semantics on ${name}`, async () => {
     assertFrameRoundTrip(await load());

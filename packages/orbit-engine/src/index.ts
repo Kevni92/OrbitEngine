@@ -187,6 +187,7 @@ import {
   type ManeuverScheduledEvent,
   type ManeuverForceConfiguration,
 } from "./maneuver.js";
+import { TrajectoryPlanner } from "./planner.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -212,6 +213,7 @@ export * from "./collision-detection.js";
 export * from "./collision-response.js";
 export * from "./collision-lifecycle.js";
 export * from "./maneuver.js";
+export * from "./planner.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -439,6 +441,7 @@ export class OrbitEngine {
   readonly #collisionSuppressionManager: CollisionContactSuppressionManager;
   readonly #collisionContactLifecycleManager: CollisionContactLifecycleManager;
   readonly #maneuverManager: ManeuverManager;
+  readonly #planner: TrajectoryPlanner;
   readonly #authorityBindings = new Map<ObjectId, MotionAuthority>();
   readonly #maneuverActions = new Map<ScheduledWorkId, { readonly work: ScheduledWorkRecord; readonly event: ManeuverScheduledEvent }>();
   readonly #maneuverWorkById = new Map<ManeuverId, Set<ScheduledWorkId>>();
@@ -446,6 +449,7 @@ export class OrbitEngine {
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
     this.#backend = backend;
+    this.#planner = new TrajectoryPlanner(backend);
     this.#health = health;
     this.#scheduledWorkQueue = new ScheduledWorkQueue(backend, scheduler);
     this.#fidelityManager = new FidelityManager();
@@ -496,6 +500,10 @@ export class OrbitEngine {
 
   get currentTime(): SimulationInstant {
     return this.#scheduledWorkQueue.status().currentTime;
+  }
+
+  get planner(): TrajectoryPlanner {
+    return this.#planner;
   }
 
   clock(): SimulationClockStatus {

@@ -17,6 +17,8 @@ import { validateTwoBodyWire, type TwoBodyWire } from "../two-body-wire.js";
 import { validateNumericalWire, type NumericalWire } from "../numerical-wire.js";
 import { validateCoupledWire, type CoupledWire } from "../coupled-wire.js";
 import { validateSchedulerWire, type SchedulerWire } from "../scheduler-wire.js";
+import { roundTripPlannerGeometryWire, validatePlannerGeometryWire } from "../planner-wire.js";
+import type { PlannerGeometryWire } from "../../planner.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -195,6 +197,18 @@ export async function backendFromRawBinding(
         throw new BackendInitializationError(kind, `${kind} scheduler operation failed`, cause);
       }
       return validateSchedulerWire({ ...input, ...(result as object) });
+    },
+    roundTripPlanner: (value: PlannerGeometryWire): PlannerGeometryWire => {
+      const input = validatePlannerGeometryWire(value);
+      try {
+        return roundTripPlannerGeometryWire(input, (word) => {
+          const result = binding.roundTripDouble(word);
+          if (typeof result !== "number") throw new TypeError("planner codec returned a non-numeric word");
+          return result;
+        });
+      } catch (cause) {
+        throw new BackendInitializationError(kind, `${kind} planner codec round-trip failed`, cause);
+      }
     },
   };
 }
