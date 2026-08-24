@@ -65,8 +65,7 @@ async function setCameraFixture(page: Page, fixture: CameraFixture): Promise<voi
 }
 
 async function focusEarth(page: Page): Promise<BodyDiagnostics> {
-  await page.selectOption("#selected-select", "1003");
-  await page.selectOption("#focus-select", "1003");
+  await page.locator('#celestial-browser-tree button[data-object-id="1003"]').click();
   await expect.poll(async () => (await readDiagnostics(page))?.focusId).toBe("1003");
   await expect.poll(async () => (await readDiagnostics(page))?.bodies.find((body) => body.objectId === "1003")?.stellarDirections.length).toBeGreaterThan(0);
   return (await readDiagnostics(page))!.bodies.find((body) => body.objectId === "1003")!;
@@ -223,8 +222,8 @@ test("atmosphere stellar direction remains aligned in actual canvas output acros
   const behindRight = await atmosphereSideMetrics(page, behindBody, [1, 0]);
   const verticalMean = (behindTop.luminance + behindBottom.luminance) / 2;
   const horizontalMean = (behindLeft.luminance + behindRight.luminance) / 2;
-  expect(Math.abs(behindTop.luminance - behindBottom.luminance) / Math.max(verticalMean, 1)).toBeLessThan(0.45);
-  expect(Math.abs(behindLeft.luminance - behindRight.luminance) / Math.max(horizontalMean, 1)).toBeLessThan(0.45);
+  expect(Math.abs(behindTop.luminance - behindBottom.luminance) / Math.max(verticalMean, 1)).toBeLessThan(0.25);
+  expect(Math.abs(behindLeft.luminance - behindRight.luminance) / Math.max(horizontalMean, 1)).toBeLessThan(0.25);
 
   const expectedSides = [
     ["above", [0, -1]],

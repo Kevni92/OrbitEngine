@@ -1,5 +1,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import {
+  DEFAULT_DISPLAY_EXPOSURE,
+  DISPLAY_TONE_MAPPING_MODE,
+  MAX_DISPLAY_EXPOSURE,
+  MIN_DISPLAY_EXPOSURE,
+} from "./celestial-appearance-rendering.js";
 import { SCENE_UP_VECTOR } from "./render-space.js";
 
 export class WebGL2UnavailableError extends Error {
@@ -14,7 +20,13 @@ export interface RenderShell {
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
   readonly controls: OrbitControls;
-  centerOn(target: THREE.Vector3, preferredDistance?: number): void;
+  readonly toneMappingMode: typeof DISPLAY_TONE_MAPPING_MODE;
+  setDisplayExposure(exposure: number): void;
+  centerOn(
+    target: THREE.Vector3,
+    preferredDistance?: number,
+    viewDirection?: Readonly<{ readonly x: number; readonly y: number; readonly z: number }>,
+  ): void;
   resize(width: number, height: number): void;
   dispose(): void;
 }
@@ -77,6 +89,9 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = DEFAULT_DISPLAY_EXPOSURE;
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);
   controls.update();
@@ -95,7 +110,11 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
     scene.clear();
   }
 
-  function centerOn(target: THREE.Vector3, preferredDistance?: number): void {
+  function centerOn(
+    target: THREE.Vector3,
+    preferredDistance?: number,
+    viewDirection?: Readonly<{ readonly x: number; readonly y: number; readonly z: number }>,
+  ): void {
     const nextTarget = target.clone();
     if (preferredDistance === undefined) {
       translateViewTo(camera, controls.target, nextTarget);
@@ -104,9 +123,12 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
         throw new RangeError("Preferred camera distance must be finite and positive");
       }
       const offset = camera.position.clone().sub(controls.target);
-      const direction = offset.lengthSq() > Number.EPSILON
-        ? offset.normalize()
-        : new THREE.Vector3(0, -1, 0.6).normalize();
+      const direction = viewDirection === undefined
+        ? offset.lengthSq() > Number.EPSILON
+          ? offset.normalize()
+          : new THREE.Vector3(0, -1, 0.6).normalize()
+        : new THREE.Vector3(viewDirection.x, viewDirection.y, viewDirection.z).normalize();
+      if (direction.lengthSq() <= Number.EPSILON) throw new RangeError("View direction must be non-zero");
       camera.position.copy(nextTarget).addScaledVector(direction, preferredDistance);
       controls.target.copy(nextTarget);
     }
@@ -114,7 +136,24 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
     updateCameraClipPlanes(camera, controls.target);
   }
 
-  return { scene, camera, renderer, controls, centerOn, resize, dispose };
+  function setDisplayExposure(exposure: number): void {
+    if (!Number.isFinite(exposure) || exposure < MIN_DISPLAY_EXPOSURE || exposure > MAX_DISPLAY_EXPOSURE) {
+      throw new RangeError(`Display exposure must be finite and within [${MIN_DISPLAY_EXPOSURE}, ${MAX_DISPLAY_EXPOSURE}]`);
+    }
+    renderer.toneMappingExposure = exposure;
+  }
+
+  return {
+    scene,
+    camera,
+    renderer,
+    controls,
+    toneMappingMode: DISPLAY_TONE_MAPPING_MODE,
+    setDisplayExposure,
+    centerOn,
+    resize,
+    dispose,
+  };
 }
 
 export interface AnimationLoop {

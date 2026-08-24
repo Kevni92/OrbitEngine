@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   blackbodyTemperatureToLinearRgb,
+  displayExposureDiagnostics,
+  displayExposureForIrradiance,
+  MAX_DISPLAY_EXPOSURE,
+  MIN_DISPLAY_EXPOSURE,
   deriveSurfaceReflectance,
   LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION,
   LINEAR_SRGB_LUMINANCE,
@@ -100,6 +104,21 @@ test("stellar diagnostics retain physical direction and expose the once-rotated 
   assert.ok(Math.abs(contribution.renderDirectionToEmitter.x - expected.x) < 1e-12);
   assert.ok(Math.abs(contribution.renderDirectionToEmitter.y - expected.y) < 1e-12);
   assert.ok(Math.abs(contribution.renderDirectionToEmitter.z - expected.z) < 1e-12);
+});
+
+test("display exposure adapts to physical irradiance without changing the pre-exposure mapping", () => {
+  const earth = displayExposureDiagnostics(1_361);
+  const mercury = displayExposureDiagnostics(9_000);
+  const neptune = displayExposureDiagnostics(1.2);
+  assert.equal(earth.preExposureMappedIrradiance, 1);
+  assert.equal(earth.toneMappingMode, "ACESFilmic");
+  assert.ok(mercury.displayExposure < earth.displayExposure);
+  assert.ok(neptune.displayExposure > earth.displayExposure);
+  assert.ok(neptune.displayExposure <= MAX_DISPLAY_EXPOSURE);
+  assert.ok(mercury.displayExposure >= MIN_DISPLAY_EXPOSURE);
+  assert.ok(Number.isFinite(displayExposureForIrradiance(0)));
+  assert.ok(Number.isFinite(displayExposureForIrradiance(Number.MAX_VALUE)));
+  assert.throws(() => displayExposureForIrradiance(-1), /non-negative/);
 });
 
 test("Lambert renderer conversion compensates reciprocal PI exactly once", () => {

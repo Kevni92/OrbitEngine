@@ -10,6 +10,11 @@ export const LINEAR_SRGB_LUMINANCE = Object.freeze({ r: 0.2126, g: 0.7152, b: 0.
 export const FALLBACK_VISUAL_ALBEDO = 0.32;
 export const REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER = 1_361;
 export const MIN_STELLAR_DISTANCE_METERS = 1;
+export const DEFAULT_DISPLAY_EXPOSURE = 1;
+export const MIN_DISPLAY_EXPOSURE = 0.18;
+export const MAX_DISPLAY_EXPOSURE = 512;
+export const DISPLAY_EXPOSURE_RESPONSE = 1;
+export const DISPLAY_TONE_MAPPING_MODE = "ACESFilmic" as const;
 /**
  * Three.js MeshLambertMaterial applies the Lambert BRDF factor 1 / PI.
  * Document 19 defines mapped scene irradiance as the final diffuse scalar,
@@ -24,6 +29,13 @@ export interface SurfaceReflectanceResult {
   readonly source: SurfaceReflectanceSource;
   readonly visualAlbedoApplied: number | undefined;
   readonly opticalLibraryVersion: string | undefined;
+}
+
+export interface DisplayExposureDiagnostics {
+  readonly physicalIrradianceWattsPerSquareMeter: number | undefined;
+  readonly preExposureMappedIrradiance: number;
+  readonly displayExposure: number;
+  readonly toneMappingMode: typeof DISPLAY_TONE_MAPPING_MODE;
 }
 
 export interface CartesianPosition {
@@ -184,6 +196,38 @@ export function mapIrradianceToSceneIntensity(irradianceWattsPerSquareMeter: num
   finite("irradiance", irradianceWattsPerSquareMeter);
   if (irradianceWattsPerSquareMeter < 0) throw new RangeError("irradiance must be non-negative");
   return irradianceWattsPerSquareMeter / REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER;
+}
+
+/**
+ * Returns a bounded camera/display exposure for the focused body's physical
+ * stellar irradiance. This changes only the final photograph, never the
+ * irradiance used by the simulation or diagnostics.
+ */
+export function displayExposureForIrradiance(irradianceWattsPerSquareMeter: number): number {
+  finite("irradiance", irradianceWattsPerSquareMeter);
+  if (irradianceWattsPerSquareMeter < 0) throw new RangeError("irradiance must be non-negative");
+  if (irradianceWattsPerSquareMeter === 0) return MAX_DISPLAY_EXPOSURE;
+  const relativeExposure = REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER / irradianceWattsPerSquareMeter;
+  return Math.min(
+    MAX_DISPLAY_EXPOSURE,
+    Math.max(MIN_DISPLAY_EXPOSURE, relativeExposure ** DISPLAY_EXPOSURE_RESPONSE),
+  );
+}
+
+export function displayExposureDiagnostics(
+  physicalIrradianceWattsPerSquareMeter: number | undefined,
+): DisplayExposureDiagnostics {
+  const preExposureMappedIrradiance = physicalIrradianceWattsPerSquareMeter === undefined
+    ? 0
+    : mapIrradianceToSceneIntensity(physicalIrradianceWattsPerSquareMeter);
+  return Object.freeze({
+    physicalIrradianceWattsPerSquareMeter,
+    preExposureMappedIrradiance,
+    displayExposure: physicalIrradianceWattsPerSquareMeter === undefined
+      ? DEFAULT_DISPLAY_EXPOSURE
+      : displayExposureForIrradiance(physicalIrradianceWattsPerSquareMeter),
+    toneMappingMode: DISPLAY_TONE_MAPPING_MODE,
+  });
 }
 
 export function mapSceneDiffuseContributionToLambertLightIntensity(sceneDiffuseContribution: number): number {

@@ -9,6 +9,7 @@ import {
 import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
 import { SolarSystemScene, type StellarDirectionDiagnostics } from "./rendering/solar-system-scene.js";
 import type { AtmosphereDiagnostics } from "./rendering/atmosphere-rendering.js";
+import type { DisplayExposureDiagnostics } from "./rendering/celestial-appearance-rendering.js";
 import { lightingModeDiagnostics, type LightingMode } from "./rendering/lighting-mode.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
 import { loadSolarSystemReferenceDataset } from "./scenario/load-reference-dataset.js";
@@ -56,7 +57,10 @@ interface BrowserRenderBodyDiagnostics {
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
   readonly physicalIrradianceWattsPerSquareMeter?: number;
-  readonly atmosphere: Pick<AtmosphereDiagnostics, "resourcesAllocated" | "visible" | "projectedDiameterPixels" | "viewSampleCount" | "opticalSource">;
+  readonly preExposureMappedIrradiance?: number;
+  readonly displayExposure: number;
+  readonly toneMappingMode: DisplayExposureDiagnostics["toneMappingMode"];
+  readonly atmosphere: Pick<AtmosphereDiagnostics, "resourcesAllocated" | "visible" | "projectedDiameterPixels" | "viewSampleCount" | "opticalSource" | "resolvedOptics">;
   readonly stellarDirections: readonly StellarDirectionDiagnostics[];
   readonly lightingMode: LightingMode;
   readonly inspectionFillApplied: boolean;
@@ -76,6 +80,7 @@ interface BrowserRenderDiagnostics {
   readonly focusId: string;
   readonly selectedId: string;
   readonly lighting: ReturnType<typeof lightingModeDiagnostics>;
+  readonly displayExposure: DisplayExposureDiagnostics;
   readonly atmosphereResourceCount: number;
   readonly performance: {
     readonly frameCount: number;
@@ -215,7 +220,14 @@ async function bootstrap(): Promise<void> {
     const currentScene = scene;
     const focusPosition = currentScene?.positionFor(focusId);
     if (focusPosition === undefined || renderShell === undefined || currentScene === undefined) return;
-    renderShell.centerOn(focusPosition, currentScene.focusDistanceFor(focusId));
+    const sunDirection = currentScene.renderDiagnosticsFor(focusId, renderShell.camera)?.stellarDirections
+      .find((direction) => direction.emitterId === SUN_ID)
+      ?.renderDirectionToEmitter;
+    renderShell.centerOn(focusPosition, currentScene.focusDistanceFor(focusId), sunDirection);
+  }
+
+  function updateDisplayExposure(): void {
+    renderShell?.setDisplayExposure(scene?.displayExposureDiagnostics().displayExposure ?? 1);
   }
 
   function updateClockUi(): void {
@@ -544,6 +556,7 @@ async function bootstrap(): Promise<void> {
     updateCameraClipPlanes(camera, controls.target);
     guides?.updateForCamera(camera);
     scene?.updatePresentation(camera, canvas.clientHeight || window.innerHeight);
+    updateDisplayExposure();
     renderShell!.renderer.render(renderShell!.scene, camera);
   };
 
@@ -570,6 +583,7 @@ async function bootstrap(): Promise<void> {
       panel.setPopulationDiagnostics(runtimeOverlay?.count ?? 0, scene.lodDiagnostics());
       updateSelectedPanel(latest.value);
     }
+    updateDisplayExposure();
     renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
     if (renderedFrameCount === 0) startup.mark("first-rendered-frame");
     lastFrameDurationMs = Math.max(0, performance.now() - frameStartedAt);
@@ -742,10 +756,12 @@ async function bootstrap(): Promise<void> {
     scene.setCurrentBodies(stateSource.currentBodies());
     scene.setFocusId(focusId);
     scene.setSelected(selectedId);
+    updateDisplayExposure();
     window.__orbitDemoRenderDiagnostics = () => ({
       focusId,
       selectedId,
       lighting: scene?.lightingDiagnostics() ?? lightingModeDiagnostics(lightingMode, []),
+      displayExposure: scene!.displayExposureDiagnostics(),
       atmosphereResourceCount: scene?.atmosphereResourceCount() ?? 0,
       performance: {
         frameCount: renderedFrameCount,
@@ -778,6 +794,9 @@ async function bootstrap(): Promise<void> {
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
           surfaceReflectanceSource: diagnostics?.surfaceReflectanceSource,
           physicalIrradianceWattsPerSquareMeter: diagnostics?.physicalIrradianceWattsPerSquareMeter,
+          preExposureMappedIrradiance: diagnostics?.preExposureMappedIrradiance,
+          displayExposure: diagnostics?.displayExposure ?? 1,
+          toneMappingMode: diagnostics?.toneMappingMode ?? "ACESFilmic",
           stellarDirections: diagnostics?.stellarDirections ?? [],
           lightingMode: diagnostics?.lightingMode ?? lightingMode,
           inspectionFillApplied: diagnostics?.inspectionFillApplied ?? false,
@@ -790,6 +809,7 @@ async function bootstrap(): Promise<void> {
               projectedDiameterPixels: atmosphere?.projectedDiameterPixels ?? 0,
               viewSampleCount: atmosphere?.viewSampleCount ?? 0,
               opticalSource: atmosphere?.opticalSource,
+              resolvedOptics: atmosphere?.resolvedOptics,
             };
           })(),
         };

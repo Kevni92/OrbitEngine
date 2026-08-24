@@ -43,6 +43,7 @@ export interface AtmosphereDiagnostics {
   readonly viewSampleCount: number;
   readonly physicalExtentScaleHeights: number;
   readonly opticalSource?: ResolvedAtmosphereOptics["source"];
+  readonly resolvedOptics?: ResolvedAtmosphereOptics;
   readonly shaderLightDirections?: readonly AtmosphereShaderLightDirectionDiagnostics[];
 }
 
@@ -68,6 +69,7 @@ interface AtmosphereShellRecord {
   presentationThicknessSceneUnits: number;
   projectedDiameterPixels: number;
   opticalSource: ResolvedAtmosphereOptics["source"];
+  optics: ResolvedAtmosphereOptics;
   shaderLightDirections: readonly AtmosphereShaderLightDirectionDiagnostics[];
 }
 
@@ -233,7 +235,6 @@ const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
 const float LIMB_DISPLAY_GAIN = ${ATMOSPHERE_LIMB_DISPLAY_GAIN.toFixed(2)};
-const vec3 DISPLAY_CHROMATICITY = vec3(0.20, 0.60, 3.00);
 
 float rayleighPhase(float cosine) {
   return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
@@ -264,8 +265,10 @@ void main() {
   if (segmentEnd <= segmentStart) discard;
 
   vec2 bodyInterval = raySphereInterval(rayOrigin, rayDirection, uBodyRadius);
+  bool bodyOccludesShell = false;
   if (bodyInterval.y >= bodyInterval.x && bodyInterval.x > segmentStart) {
     segmentEnd = min(segmentEnd, bodyInterval.x);
+    bodyOccludesShell = true;
   }
   if (segmentEnd <= segmentStart) discard;
 
@@ -304,9 +307,11 @@ void main() {
       float absorptionMean = (uAbsorption.r + uAbsorption.g + uAbsorption.b) / 3.0;
       float transmittance = exp(-absorptionMean * verticalDepthAboveSample * lightPathFactor);
       float phaseCosine = dot(viewDirection, lightDirection);
-      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine) * 4.0
-        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy) * 0.3;
-      scatteringSource *= DISPLAY_CHROMATICITY;
+      // The resolved body optics own the spectral balance. Renderer gains
+      // below are intentionally neutral so Mars, Earth, haze, and cloud-deck
+      // atmospheres cannot be pushed toward one global display tint.
+      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
+        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
       integratedScattering += scatteringSource
         * uLightChromaticities[lightIndex]
         * uLightIrradiances[lightIndex]
@@ -318,13 +323,18 @@ void main() {
 
   float densityPath = integratedDensityScaleHeights / verticalIntegral;
   float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
-  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
+  // The opaque body is rendered before this transparent shell. Do not let a
+  // dense atmosphere repaint the body's disk; keep the shell as the visible
+  // limb outside the silhouette, where its scattering remains readable.
+  float alpha = bodyOccludesShell
+    ? 0.0
+    : clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
   float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
   vec3 radiance = integratedScattering * DISPLAY_GAIN * limbGain;
-  radiance = radiance / (vec3(1.0) + radiance);
   // The material uses premultiplied-alpha blending. Emit premultiplied
   // scattering so the transparent shell preserves the background instead of
   // darkening it wherever the integrated source is below the clear color.
+  // Final HDR compression is applied once by the shared renderer tone map.
   gl_FragColor = vec4(radiance * alpha, alpha);
 }
 `;
@@ -526,6 +536,7 @@ export class AtmosphereShellManager {
           presentationThicknessSceneUnits: presentationThickness,
           projectedDiameterPixels: projectedDiameter,
           opticalSource: optics.source,
+          optics,
           shaderLightDirections: shaderLightDirectionDiagnostics(illumination),
         };
         this.#shells.set(bodyId, shell);
@@ -541,6 +552,7 @@ export class AtmosphereShellManager {
         shell.presentationThicknessSceneUnits = presentationThickness;
         shell.projectedDiameterPixels = projectedDiameter;
         shell.opticalSource = optics.source;
+        shell.optics = optics;
         shell.shaderLightDirections = shaderLightDirectionDiagnostics(illumination);
       }
       shell.mesh.position.copy(position);
@@ -563,6 +575,7 @@ export class AtmosphereShellManager {
       ...(shell === undefined ? {} : {
         presentationThicknessSceneUnits: shell.presentationThicknessSceneUnits,
         opticalSource: shell.opticalSource,
+        resolvedOptics: shell.optics,
         shaderLightDirections: shell.shaderLightDirections,
       }),
       viewSampleCount: ATMOSPHERE_VIEW_SAMPLES,

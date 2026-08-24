@@ -8,11 +8,14 @@ import {
 } from "orbit-engine";
 import {
   blackbodyTemperatureToLinearRgb,
+  displayExposureDiagnostics as resolveDisplayExposureDiagnostics,
   deriveSurfaceReflectance,
   LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION,
+  mapIrradianceToSceneIntensity,
   mapSceneDiffuseContributionToLambertLightIntensity,
   REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER,
   resolveStellarIllumination,
+  type DisplayExposureDiagnostics,
   type StellarEmitter,
   type StellarIlluminationSet,
 } from "./celestial-appearance-rendering.js";
@@ -86,6 +89,9 @@ export interface BodyRenderDiagnostics {
   readonly surfaceTextureKind?: ProceduralSurfaceDiagnostics["kind"];
   readonly surfaceTextureLuminanceRange?: number;
   readonly physicalIrradianceWattsPerSquareMeter?: number;
+  readonly preExposureMappedIrradiance?: number;
+  readonly displayExposure: number;
+  readonly toneMappingMode: DisplayExposureDiagnostics["toneMappingMode"];
   readonly lightingMode: LightingMode;
   readonly inspectionFillApplied: boolean;
   readonly inspectionFillContribution: number;
@@ -416,6 +422,19 @@ export class SolarSystemScene {
     return this.#illuminationByBody.get(objectId);
   }
 
+  displayExposureDiagnostics(): DisplayExposureDiagnostics {
+    const illumination = this.#focusId === undefined
+      ? undefined
+      : this.#illuminationByBody.get(this.#focusId);
+    // A stellar body has no self-illumination contribution. Keep the default
+    // exposure for that camera focus instead of treating the absent set as a
+    // pathological zero-irradiance photograph.
+    const physicalIrradiance = illumination?.contributions.length === 0
+      ? undefined
+      : illumination?.totalIrradianceWattsPerSquareMeter;
+    return resolveDisplayExposureDiagnostics(physicalIrradiance);
+  }
+
   lightingDiagnostics(): LightingModeDiagnostics {
     return lightingModeDiagnostics(this.#lightingMode, this.#inspectionFillTargets);
   }
@@ -452,6 +471,8 @@ export class SolarSystemScene {
     }
 
     const surface = this.#surfaceDiagnostics.get(objectId);
+    const activeDisplayExposure = this.displayExposureDiagnostics();
+    const physicalIrradiance = this.#illuminationByBody.get(objectId)?.totalIrradianceWattsPerSquareMeter;
     const fillContribution = this.#inspectionFillTargets.has(objectId)
       ? inspectionFillContribution(this.#lightingMode)
       : 0;
@@ -476,7 +497,12 @@ export class SolarSystemScene {
       })(),
       surfaceTextureKind: surface?.kind,
       surfaceTextureLuminanceRange: surface === undefined ? undefined : surface.maxLuminance - surface.minLuminance,
-      physicalIrradianceWattsPerSquareMeter: this.#illuminationByBody.get(objectId)?.totalIrradianceWattsPerSquareMeter,
+      physicalIrradianceWattsPerSquareMeter: physicalIrradiance,
+      preExposureMappedIrradiance: physicalIrradiance === undefined
+        ? undefined
+        : mapIrradianceToSceneIntensity(physicalIrradiance),
+      displayExposure: activeDisplayExposure.displayExposure,
+      toneMappingMode: activeDisplayExposure.toneMappingMode,
       lightingMode: this.#lightingMode,
       inspectionFillApplied: this.#inspectionFillTargets.has(objectId),
       inspectionFillContribution: fillContribution,
@@ -692,7 +718,6 @@ export class SolarSystemScene {
         material = new THREE.MeshLambertMaterial({
           color: new THREE.Color(1, 1, 1),
           map: texture,
-          emissiveMap: texture,
           dithering: true,
         });
       } else {

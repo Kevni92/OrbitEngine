@@ -354,6 +354,8 @@ W/m² is not passed off as a literal display luminance. The renderer uses one do
 
 A useful reference normalization may map the solar constant at 1 AU to a named unit exposure, but the normalization is presentation policy only. Tone mapping/exposure must not feed back into physical irradiance calculations.
 
+The demo's photographic display policy uses one shared `ACESFilmic` renderer tone map for celestial surfaces and atmosphere shells. The active exposure is selected from the focused body's total physical stellar irradiance: `clamp(1361 / irradiance, 0.18, 512)`, with the default exposure of `1` when the focus has no contributing emitter. This is a bounded camera/display multiplier applied after physical lighting derivation; it does not alter the stored W/m² value, inverse-square ratios, or Enhanced inspection-fill semantics. Diagnostics expose the pre-exposure mapped irradiance, active exposure, and tone-mapping mode.
+
 ## Surface lighting model
 
 Resolved non-stellar body spheres use a lit material rather than `MeshBasicMaterial`.
@@ -440,7 +442,7 @@ The default WebGL 2 path uses a bounded fixed-cost single-scattering approximati
 4. approximate optical depth toward each light analytically from local altitude, scale height, and light zenith angle instead of nesting a second full raymarch;
 5. apply Rayleigh phase and Henyey-Greenstein-like Mie phase functions;
 6. accumulate stellar contributions in linear RGB;
-7. output premultiplied/transparent scattering and extinction compatible with normal scene depth.
+7. output premultiplied/transparent HDR scattering and extinction compatible with normal scene depth; final exposure/tone mapping is applied once by the shared renderer output. Where the ray intersects the opaque body, the shell yields to the body disk and remains visible on the projected limb, so dense atmospheres cannot repaint an opaque surface white.
 
 The initial target is 6–8 fixed view samples per atmosphere fragment. The exact selected value is a presentation constant validated by the shader implementation tests and browser profiling; adaptive/unbounded sample counts are forbidden in the default path.
 
@@ -452,6 +454,8 @@ This produces the required qualitative behavior:
 - Rayleigh-dominated blue/short-wavelength scattering when coefficients support it;
 - Mie/haze-forward-scattering for aerosol-rich atmospheres;
 - dense cloud/haze-dominated appearances through optical overrides.
+
+Resolved body optics provide the atmospheric chromaticity. Renderer gains are spectrally neutral, and no universal display-blue tint or fixed cross-channel Rayleigh/Mie multiplier may override the body's calibrated optical inputs.
 
 A future focused-body high-quality raymarching mode may be added only through a separate task. It is not part of the default contract and must not change the underlying atmosphere data model.
 

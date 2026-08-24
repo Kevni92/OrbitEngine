@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  displayExposureDiagnostics,
   deriveSurfaceReflectance,
   resolveStellarIllumination,
 } from "../src/rendering/celestial-appearance-rendering.js";
@@ -39,6 +40,28 @@ test("representative appearance matrix keeps optical sources and conservative fa
   assert.equal(resolveAtmosphereOptics(vesta.appearance), undefined);
   assert.equal(resolveAtmosphereOptics(fallback.appearance), undefined);
   assert.equal(deriveSurfaceReflectance(fallback.appearance, fallback.display.accentColor).source, "fallbackAccent");
+});
+
+test("Earth and Mars keep distinct body-driven atmosphere chromaticity", () => {
+  const earth = resolveAtmosphereOptics(body(EARTH_ID).appearance)!;
+  const mars = resolveAtmosphereOptics(body(MARS_ID).appearance)!;
+  const earthRayleighBlueRatio = earth.rayleighScattering.b / earth.rayleighScattering.r;
+  const marsMieWarmRatio = mars.mieScattering.r / mars.mieScattering.b;
+  assert.ok(earthRayleighBlueRatio > 10);
+  assert.ok(marsMieWarmRatio > 3);
+
+  const changedMars = resolveAtmosphereOptics({
+    ...body(MARS_ID).appearance!,
+    atmosphere: {
+      ...body(MARS_ID).appearance!.atmosphere!,
+      optics: {
+        ...body(MARS_ID).appearance!.atmosphere!.optics!,
+        mieScattering: { r: 0.08, g: 0.12, b: 0.42 },
+      },
+    },
+  })!;
+  assert.notDeepEqual(changedMars.mieScattering, mars.mieScattering);
+  assert.equal(displayExposureDiagnostics(1_361).displayExposure, 1);
 });
 
 test("appearance diagnostics do not depend on presentation radius and preserve authoritative positions", () => {
