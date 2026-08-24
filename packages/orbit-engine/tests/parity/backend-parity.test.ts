@@ -29,6 +29,7 @@ import { assertCollisionLifecycle } from "../shared/collision-lifecycle.js";
 import { assertCollisionStress } from "../shared/collision-stress.js";
 import { assertManeuverLifecycle } from "../shared/maneuver.js";
 import { assertManeuverAuthorityHandoff } from "../shared/maneuver-authority.js";
+import { assertManeuverRegressionMatrix, maneuverParitySnapshot } from "../shared/maneuver-regressions.js";
 
 for (const backend of ["native", "wasm"] as const satisfies readonly OrbitEngineBackend[]) {
   test(`shared health scenario has equivalent semantics on ${backend}`, async () => {
@@ -118,4 +119,26 @@ for (const [name, load] of [["native", loadNativeBackend], ["wasm", loadWasmBack
   test(`maneuver authority handoff has parity on ${name}`, async () => {
     await assertManeuverAuthorityHandoff(await OrbitEngine.create({ backend: name }));
   });
+  test(`maneuver regression matrix has parity on ${name}`, async () => {
+    await assertManeuverRegressionMatrix(name);
+  });
 }
+
+test("native and WASM maneuver fixtures agree on discrete outcomes and numerical tolerances", async () => {
+  const native = await maneuverParitySnapshot("native");
+  const wasm = await maneuverParitySnapshot("wasm");
+  assert.deepEqual(native.queued, wasm.queued);
+  assert.deepEqual(native.result, wasm.result);
+  assert.deepEqual(native.maneuver, wasm.maneuver);
+  for (const [left, right] of [
+    [native.state.position.x, wasm.state.position.x],
+    [native.state.position.y, wasm.state.position.y],
+    [native.state.position.z, wasm.state.position.z],
+    [native.state.velocity.x, wasm.state.velocity.x],
+    [native.state.velocity.y, wasm.state.velocity.y],
+    [native.state.velocity.z, wasm.state.velocity.z],
+    [native.state.mass, wasm.state.mass],
+  ] as const) {
+    assert.ok(Math.abs((left ?? 0) - (right ?? 0)) <= 1e-8);
+  }
+});

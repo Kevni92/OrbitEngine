@@ -384,6 +384,13 @@ Read-only status may expose:
 - execution/truncation/transition failure diagnostics;
 - dependency digest.
 
+The TypeScript status facade names these physical values `effectiveThrustVectorNewtons`,
+`effectiveThrustMagnitudeNewtons`, `massFlowRateKilogramsPerSecond`, and
+`physicalMassKilograms`. They are snapshots from the last committed maneuver boundary;
+future intent is not reported as active execution, and a failed/uncommitted timestamp does
+not replace the previous committed diagnostics. `effectiveThrustFrame` identifies whether
+the vector is expressed in its declared reference frame or the prescribed body frame.
+
 Diagnostics must distinguish an uncommitted failed advance attempt from a committed maneuver lifecycle transition.
 
 ## Native/WASM parity

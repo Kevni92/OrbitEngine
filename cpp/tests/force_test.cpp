@@ -168,6 +168,31 @@ int finite_thrust_direction_and_minimum_mass() {
   CHECK(std::abs(acceleration.x) < 1e-14);
   CHECK(std::abs(acceleration.y - 0.2) < 1e-14);
 
+  auto missing_attitude = body;
+  missing_attitude.sample_attitude = {};
+  auto missing_provider = thrust::make_finite_thrust_provider(thrust::FiniteThrustConfiguration{
+    42, 3, force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, frame::kRootReferenceFrameId,
+    {thrust::FiniteThrustStage{force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, 2.0, 1.0, thrust::Direction{missing_attitude}, {thrust::MassFlowKind::direct, 0.0}}},
+    std::nullopt, 100, {},
+  }, failure);
+  CHECK(!missing_provider.evaluate_combined);
+  CHECK(failure.code == force::FailureCode::invalid_direction);
+
+  auto stale_attitude = body;
+  stale_attitude.sample_attitude = [](const numerical::NumericalSampleTime&, frame::Quaternion&, force::Failure& failure) {
+    failure = {force::FailureCode::source_unavailable, "prescribed attitude revision is stale"};
+    return false;
+  };
+  auto stale_provider = thrust::make_finite_thrust_provider(thrust::FiniteThrustConfiguration{
+    42, 3, force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, frame::kRootReferenceFrameId,
+    {thrust::FiniteThrustStage{force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, 2.0, 1.0, thrust::Direction{stale_attitude}, {thrust::MassFlowKind::direct, 0.0}}},
+    std::nullopt, 101, {},
+  }, failure);
+  CHECK(stale_provider.evaluate_combined);
+  force::ProviderRuntime stale_runtime({stale_provider});
+  CHECK(!stale_runtime.evaluate(force::ForceEvaluationContext{42, {{0, 0}, 0.5}, {}, 10.0}, acceleration, rate, failure));
+  CHECK(failure.code == force::FailureCode::source_unavailable);
+
   auto minimum_provider = thrust::make_finite_thrust_provider(thrust::FiniteThrustConfiguration{
     42, 3, force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, frame::kRootReferenceFrameId,
     {thrust::FiniteThrustStage{force::TimeInterval{time::SimulationInstant{0, 0}, time::SimulationInstant{10, 0}}, 2.0, 1.0, thrust::Direction{thrust::ReferenceFrameDirection{frame::kRootReferenceFrameId, 7, {1.0, 0.0, 0.0}, {}}}, {thrust::MassFlowKind::direct, 1.0}}},
