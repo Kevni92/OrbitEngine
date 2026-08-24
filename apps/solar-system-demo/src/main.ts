@@ -7,7 +7,7 @@ import {
   type RenderShell,
 } from "./rendering/three-shell.js";
 import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
-import { SolarSystemScene } from "./rendering/solar-system-scene.js";
+import { SolarSystemScene, type StellarDirectionDiagnostics } from "./rendering/solar-system-scene.js";
 import type { AtmosphereDiagnostics } from "./rendering/atmosphere-rendering.js";
 import { lightingModeDiagnostics, type LightingMode } from "./rendering/lighting-mode.js";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
@@ -48,11 +48,13 @@ interface BrowserRenderBodyDiagnostics {
   readonly inViewport: boolean;
   readonly ndcX: number;
   readonly ndcY: number;
+  readonly renderWorldPosition: { readonly x: number; readonly y: number; readonly z: number };
   readonly markerSizePixels?: number;
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
   readonly physicalIrradianceWattsPerSquareMeter?: number;
   readonly atmosphere: Pick<AtmosphereDiagnostics, "resourcesAllocated" | "visible" | "projectedDiameterPixels" | "viewSampleCount" | "opticalSource">;
+  readonly stellarDirections: readonly StellarDirectionDiagnostics[];
   readonly lightingMode: LightingMode;
   readonly inspectionFillApplied: boolean;
   readonly inspectionFillContribution: number;
@@ -79,6 +81,12 @@ interface BrowserRenderDiagnostics {
   readonly bodies: readonly BrowserRenderBodyDiagnostics[];
 }
 
+interface BrowserCameraFixture {
+  readonly position: readonly [number, number, number];
+  readonly target: readonly [number, number, number];
+  readonly up?: readonly [number, number, number];
+}
+
 interface EclipseRegressionDiagnostics {
   readonly instant: { readonly seconds: number; readonly nanoseconds: number };
   readonly angularSeparationRadians: number;
@@ -90,6 +98,8 @@ interface EclipseRegressionDiagnostics {
 declare global {
   interface Window {
     __orbitDemoRenderDiagnostics?: () => BrowserRenderDiagnostics;
+    /** Deterministic camera control for renderer regression scenarios. */
+    __orbitDemoSetCameraFixture?: (fixture: BrowserCameraFixture) => void;
     __orbitDemoReferenceDiagnostics?: () => {
       readonly datasetId: string;
       readonly datasetVersion: string;
@@ -597,10 +607,12 @@ async function bootstrap(): Promise<void> {
           inViewport: diagnostics?.inViewport ?? false,
           ndcX: diagnostics?.ndcX ?? 0,
           ndcY: diagnostics?.ndcY ?? 0,
+          renderWorldPosition: diagnostics?.renderWorldPosition ?? { x: 0, y: 0, z: 0 },
           markerSizePixels: diagnostics?.markerSizePixels,
           positionErrorSceneUnits: diagnostics?.positionErrorSceneUnits,
           surfaceReflectanceSource: diagnostics?.surfaceReflectanceSource,
           physicalIrradianceWattsPerSquareMeter: diagnostics?.physicalIrradianceWattsPerSquareMeter,
+          stellarDirections: diagnostics?.stellarDirections ?? [],
           lightingMode: diagnostics?.lightingMode ?? lightingMode,
           inspectionFillApplied: diagnostics?.inspectionFillApplied ?? false,
           inspectionFillContribution: diagnostics?.inspectionFillContribution ?? 0,
@@ -640,6 +652,30 @@ async function bootstrap(): Promise<void> {
   window.addEventListener("resize", resize);
   resize();
 
+  window.__orbitDemoSetCameraFixture = (fixture) => {
+    const { camera, controls } = renderShell!;
+    const values = [...fixture.position, ...fixture.target, ...(fixture.up ?? [0, 0, 1])];
+    if (!values.every((value) => Number.isFinite(value))) {
+      throw new RangeError("Camera fixture coordinates must be finite");
+    }
+    camera.position.set(fixture.position[0], fixture.position[1], fixture.position[2]);
+    camera.up.set(
+      fixture.up?.[0] ?? 0,
+      fixture.up?.[1] ?? 0,
+      fixture.up?.[2] ?? 1,
+    );
+    controls.target.set(fixture.target[0], fixture.target[1], fixture.target[2]);
+    controls.update();
+    // OrbitControls caches its previous quaternion. Re-apply the requested
+    // up vector after the control update so directional fixtures can use a
+    // deterministic roll as well as a deterministic orbit position.
+    camera.lookAt(controls.target);
+    updateCameraClipPlanes(camera, controls.target);
+    guides?.updateForCamera(camera);
+    scene?.updatePresentation(camera, canvas.clientHeight || window.innerHeight);
+    renderShell!.renderer.render(renderShell!.scene, camera);
+  };
+
   canvas.addEventListener("click", (event) => {
     if (scene === undefined || renderShell === undefined) return;
     const bounds = canvas.getBoundingClientRect();
@@ -674,6 +710,7 @@ async function bootstrap(): Promise<void> {
     surfaceManager.dispose();
     window.removeEventListener("resize", resize);
     delete window.__orbitDemoRenderDiagnostics;
+    delete window.__orbitDemoSetCameraFixture;
     guides?.dispose();
     scene?.dispose();
     renderShell?.dispose();

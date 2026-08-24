@@ -10,6 +10,7 @@ import {
   normalizeLinearReflectanceToAlbedo,
   resolveStellarIllumination,
 } from "../src/rendering/celestial-appearance-rendering.js";
+import { icrsToJ2000Ecliptic } from "../src/rendering/render-space.js";
 import { opticalMaterial } from "../src/scenario/celestial-appearance.js";
 import { EARTH_ID, SUN_ID } from "../src/scenario/scenario-data.js";
 
@@ -75,6 +76,7 @@ test("stellar illumination uses authoritative SI distance and inverse-square fal
   assert.ok(Math.abs(oneDistance.contributions[0]!.irradianceWattsPerSquareMeter / 4
     - twoDistance.contributions[0]!.irradianceWattsPerSquareMeter) < 1e-15);
   assert.equal(oneDistance.contributions[0]!.directionToEmitter.x, 1);
+  assert.deepEqual(oneDistance.contributions[0]!.renderDirectionToEmitter, { x: 1, y: 0, z: 0 });
   assert.equal(mapIrradianceToSceneIntensity(1_361), 1);
   assert.throws(() => resolveStellarIllumination({ x: 0, y: 0, z: 0 }, [{
     objectId: EARTH_ID,
@@ -82,6 +84,22 @@ test("stellar illumination uses authoritative SI distance and inverse-square fal
     effectiveTemperatureKelvin: 5_772,
     luminosityWatts: 1,
   }]), /finite guard/);
+});
+
+test("stellar diagnostics retain physical direction and expose the once-rotated render direction", () => {
+  const direction = { x: 0, y: 1, z: 0 } as const;
+  const illumination = resolveStellarIllumination({ x: 0, y: 0, z: 0 }, [{
+    objectId: SUN_ID,
+    position: direction,
+    effectiveTemperatureKelvin: 5_772,
+    luminosityWatts: 4 * Math.PI,
+  }]);
+  const contribution = illumination.contributions[0]!;
+  const expected = icrsToJ2000Ecliptic(direction);
+  assert.deepEqual(contribution.directionToEmitter, direction);
+  assert.ok(Math.abs(contribution.renderDirectionToEmitter.x - expected.x) < 1e-12);
+  assert.ok(Math.abs(contribution.renderDirectionToEmitter.y - expected.y) < 1e-12);
+  assert.ok(Math.abs(contribution.renderDirectionToEmitter.z - expected.z) < 1e-12);
 });
 
 test("Lambert renderer conversion compensates reciprocal PI exactly once", () => {

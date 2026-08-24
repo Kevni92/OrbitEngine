@@ -15,8 +15,9 @@ import {
   presentationAtmosphereThickness,
   resolveAtmosphereOptics,
 } from "../src/rendering/atmosphere-rendering.js";
+import { resolveStellarIllumination } from "../src/rendering/celestial-appearance-rendering.js";
 import { createCelestialAppearance } from "../src/scenario/celestial-appearance.js";
-import { EARTH_ID, SCENARIO_BODIES } from "../src/scenario/scenario-data.js";
+import { EARTH_ID, SCENARIO_BODIES, SUN_ID } from "../src/scenario/scenario-data.js";
 import { positionToSceneUnits } from "../src/rendering/render-space.js";
 import { objectId } from "orbit-engine";
 import type { RegisteredScenarioBody } from "../src/scenario/load-solar-system.js";
@@ -133,6 +134,51 @@ test("atmosphere shell resources are allocated only for forced sphere bodies and
   );
   assert.equal(manager.diagnosticsFor(EARTH_ID).resourcesAllocated, false);
   assert.equal(manager.resourceCount(), 0);
+  manager.dispose();
+});
+
+test("atmosphere shader directions use the render-world vector exactly once", () => {
+  const earthDefinition = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
+  const entry = {
+    definition: earthDefinition,
+    record: { properties: earthDefinition.properties },
+  } as never;
+  const bodyPosition = positionToSceneUnits(earthDefinition.anchor.position);
+  const scene = new THREE.Scene();
+  const manager = new AtmosphereShellManager(scene);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10_000);
+  camera.position.set(bodyPosition.x, bodyPosition.y - 1, bodyPosition.z + 0.6);
+  camera.lookAt(bodyPosition.x, bodyPosition.y, bodyPosition.z);
+  const illumination = resolveStellarIllumination(
+    { x: 0, y: 0, z: 0 },
+    [{
+      objectId: SUN_ID,
+      position: { x: 0, y: 1, z: 0 },
+      effectiveTemperatureKelvin: 5_772,
+      luminosityWatts: 4 * Math.PI,
+    }],
+  );
+  manager.update(
+    [entry],
+    new Map([[EARTH_ID, "sphere"]]),
+    new Map([[EARTH_ID, new THREE.Vector3(bodyPosition.x, bodyPosition.y, bodyPosition.z)]]),
+    new Map([[EARTH_ID, 0.02]]),
+    camera,
+    900,
+    new Set([EARTH_ID]),
+    new Map([[EARTH_ID, illumination]]),
+  );
+  const mesh = scene.getObjectByName(`Atmosphere ${EARTH_ID}`) as THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+  const shaderDirection = (mesh.material.uniforms.uLightDirections!.value as THREE.Vector3[])[0]!;
+  const contribution = illumination.contributions[0]!;
+  assert.ok(Math.abs(shaderDirection.x - contribution.renderDirectionToEmitter.x) < 1e-12);
+  assert.ok(Math.abs(shaderDirection.y - contribution.renderDirectionToEmitter.y) < 1e-12);
+  assert.ok(Math.abs(shaderDirection.z - contribution.renderDirectionToEmitter.z) < 1e-12);
+  assert.deepEqual(manager.diagnosticsFor(EARTH_ID).shaderLightDirections, [{
+    emitterId: SUN_ID,
+    physicalDirectionToEmitter: contribution.directionToEmitter,
+    shaderDirectionToEmitter: contribution.renderDirectionToEmitter,
+  }]);
   manager.dispose();
 });
 
