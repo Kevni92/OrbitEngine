@@ -5,6 +5,7 @@ import {
   encodeSimulationInstant,
 } from "./internal/time-wire.js";
 import { objectId, type ObjectId } from "./objects.js";
+import type { ManeuverForceConfiguration } from "./maneuver.js";
 import { objectIdToWire } from "./internal/object-wire.js";
 import { validateNumericalWire, type NumericalWire } from "./internal/numerical-wire.js";
 import {
@@ -92,7 +93,14 @@ export interface NumericalMotionConfiguration {
   readonly constantAcceleration?: Vec3<MetersPerSecondSquared>;
   readonly gravitySource?: NumericalGravitySource;
   readonly frameRevision?: RevisionId;
+  /** Immutable maneuver force/mass configuration for an authority successor. */
+  readonly maneuverForceConfiguration?: ManeuverForceConfiguration;
 }
+
+export type NumericalMotionFactoryTemplate = Omit<
+  NumericalMotionConfiguration,
+  "objectId" | "anchor" | "configurationRevision" | "motionRevision" | "mass" | "maneuverForceConfiguration"
+>;
 
 export interface NumericalMotionStatus {
   readonly kind: "numerical";
@@ -125,6 +133,7 @@ interface NormalizedConfiguration {
   readonly constantAcceleration: Vec3<MetersPerSecondSquared>;
   readonly gravitySource?: NumericalGravitySource;
   readonly frameRevision: RevisionId;
+  readonly maneuverForceConfiguration?: ManeuverForceConfiguration;
 }
 
 function finite(value: unknown, name: string): number {
@@ -263,7 +272,26 @@ function normalizeConfiguration(value: NumericalMotionConfiguration): Normalized
     constantAcceleration: vector(value.constantAcceleration, "constantAcceleration", metersPerSecondSquared),
     ...(gravitySource === undefined ? {} : { gravitySource }),
     frameRevision: revisionId(value.frameRevision ?? configurationRevision),
+    ...(value.maneuverForceConfiguration === undefined ? {} : {
+      maneuverForceConfiguration: Object.freeze({
+        ...value.maneuverForceConfiguration,
+        maneuverId: value.maneuverForceConfiguration.maneuverId,
+        maneuverRevision: revisionId(value.maneuverForceConfiguration.maneuverRevision),
+        objectId: objectId(value.maneuverForceConfiguration.objectId),
+        configurationRevision: revisionId(value.maneuverForceConfiguration.configurationRevision),
+        stages: Object.freeze([...value.maneuverForceConfiguration.stages]),
+      }),
+    }),
   });
+}
+
+function textWords(value: string): { readonly high: number; readonly low: number } {
+  let hash = 14_695_981_039_346_656_037n;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = (hash * 1_099_511_628_211n) & ((1n << 64n) - 1n);
+  }
+  return { high: Number(hash >> 32n), low: Number(hash & 4_294_967_295n) };
 }
 
 function mapResultError(code: number): PropagationError {
@@ -305,6 +333,30 @@ function encodeWire(configuration: NormalizedConfiguration, target: SimulationIn
   const massPresent = configuration.mass !== undefined;
   const sourceMuPresent = configuration.gravitySource?.mu !== undefined;
   const sourceMassPresent = configuration.gravitySource?.mass !== undefined;
+  const maneuver = configuration.maneuverForceConfiguration?.kind === "finiteThrust"
+    ? configuration.maneuverForceConfiguration : undefined;
+  const maneuverStageIndex = maneuver?.activeStageIndex
+    ?? maneuver?.stages.findIndex((stage) => compareSimulationInstants(stage.start, configuration.anchor.epoch) <= 0
+      && compareSimulationInstants(configuration.anchor.epoch, stage.end) < 0);
+  const maneuverStage = maneuver === undefined || maneuverStageIndex === undefined || maneuverStageIndex < 0
+    ? undefined : maneuver.stages[maneuverStageIndex];
+  const maneuverIdWords = maneuverStage === undefined ? { high: 0, low: 0 } : uint64Words(maneuver!.maneuverId, "maneuverId");
+  const maneuverRevisionWords = maneuverStage === undefined ? { high: 0, low: 0 } : uint64Words(maneuver!.maneuverRevision, "maneuverRevision");
+  const maneuverStageStart = maneuverStage === undefined ? encodeSimulationInstant(simulationInstant(0)) : encodeSimulationInstant(maneuverStage.start);
+  const maneuverStageEnd = maneuverStage === undefined ? encodeSimulationInstant(simulationInstant(0)) : encodeSimulationInstant(maneuverStage.end);
+  const maneuverDirectionFrame = maneuverStage?.direction.kind === "referenceFrame"
+    ? uint64Words(maneuverStage.direction.frameId, "maneuverDirectionFrame") : { high: 0, low: 0 };
+  const maneuverDirectionFrameRevision = maneuverStage?.direction.kind === "referenceFrame"
+    ? uint64Words(maneuver!.maneuverRevision, "maneuverDirectionFrameRevision") : { high: 0, low: 0 };
+  const maneuverAttitudeSource = maneuverStage?.direction.kind === "bodyFrame"
+    ? textWords(maneuverStage.direction.attitudeSourceId) : { high: 0, low: 0 };
+  const maneuverAttitudeRevision = maneuverStage?.direction.kind === "bodyFrame"
+    ? uint64Words(maneuverStage.direction.attitudeRevision, "maneuverAttitudeRevision") : { high: 0, low: 0 };
+  const maneuverDirection = maneuverStage === undefined
+    ? { kind: 0, x: 0, y: 0, z: 0 } as const
+    : maneuverStage.direction.kind === "referenceFrame"
+      ? { kind: 1, x: maneuverStage.direction.unitVector.x, y: maneuverStage.direction.unitVector.y, z: maneuverStage.direction.unitVector.z } as const
+      : { kind: 2, x: maneuverStage.direction.unitVectorBody.x, y: maneuverStage.direction.unitVectorBody.y, z: maneuverStage.direction.unitVectorBody.z } as const;
   const targetEpoch = encodeSimulationInstant(target);
   return validateNumericalWire({
     resultCode: NumericalResultCode.success,
@@ -354,6 +406,30 @@ function encodeWire(configuration: NormalizedConfiguration, target: SimulationIn
     configurationRevisionLow: configurationWords.low,
     motionRevisionHigh: motionWords.high,
     motionRevisionLow: motionWords.low,
+    maneuverPresent: maneuverStage !== undefined,
+    maneuverIdHigh: maneuverIdWords.high,
+    maneuverIdLow: maneuverIdWords.low,
+    maneuverRevisionHigh: maneuverRevisionWords.high,
+    maneuverRevisionLow: maneuverRevisionWords.low,
+    maneuverStageIndex: maneuverStageIndex === undefined || maneuverStageIndex < 0 ? 0 : maneuverStageIndex,
+    maneuverStageStart,
+    maneuverStageEnd,
+    maneuverForceMagnitudeNewtons: maneuverStage?.effectiveForceMagnitudeNewtons ?? 0,
+    maneuverMassFlowKilogramsPerSecond: maneuverStage?.effectiveMassFlowKilogramsPerSecond ?? 0,
+    maneuverMinimumMassPresent: maneuver?.minimumMassKilograms !== undefined,
+    maneuverMinimumMassKilograms: maneuver?.minimumMassKilograms ?? 0,
+    maneuverDirectionKind: maneuverDirection.kind,
+    maneuverDirectionFrameHigh: maneuverDirectionFrame.high,
+    maneuverDirectionFrameLow: maneuverDirectionFrame.low,
+    maneuverDirectionFrameRevisionHigh: maneuverDirectionFrameRevision.high,
+    maneuverDirectionFrameRevisionLow: maneuverDirectionFrameRevision.low,
+    maneuverDirectionX: maneuverDirection.x,
+    maneuverDirectionY: maneuverDirection.y,
+    maneuverDirectionZ: maneuverDirection.z,
+    maneuverAttitudeSourceHigh: maneuverAttitudeSource.high,
+    maneuverAttitudeSourceLow: maneuverAttitudeSource.low,
+    maneuverAttitudeRevisionHigh: maneuverAttitudeRevision.high,
+    maneuverAttitudeRevisionLow: maneuverAttitudeRevision.low,
     resultEpoch: targetEpoch,
     resultPositionX: configuration.anchor.position.x,
     resultPositionY: configuration.anchor.position.y,
@@ -391,6 +467,9 @@ export class NumericalMotion {
       { kind: "object" as const, id: this.#configuration.objectId, revision: this.#configuration.motionRevision },
       ...(this.#configuration.gravitySource === undefined ? [] : [
         { kind: "object" as const, id: this.#configuration.gravitySource.objectId, revision: this.#configuration.gravitySource.revision },
+      ]),
+      ...(this.#configuration.maneuverForceConfiguration === undefined ? [] : [
+        { kind: "source" as const, id: `maneuver:${this.#configuration.maneuverForceConfiguration.maneuverId}`, revision: this.#configuration.maneuverForceConfiguration.maneuverRevision },
       ]),
     ];
     this.#declaration = propagationModelDeclaration({
@@ -461,6 +540,7 @@ export class NumericalMotion {
         }
         return this.stateAt(target);
       },
+      massAt: (target: SimulationInstant) => this.massAt(target),
     });
   }
 }

@@ -11,12 +11,30 @@ export interface CoupledMemberWire {
   readonly massRevisionHigh: number; readonly massRevisionLow: number;
 }
 
+export interface CoupledManeuverWire {
+  readonly present: boolean;
+  readonly objectIdHigh: number; readonly objectIdLow: number;
+  readonly maneuverIdHigh: number; readonly maneuverIdLow: number;
+  readonly maneuverRevisionHigh: number; readonly maneuverRevisionLow: number;
+  readonly configurationRevisionHigh: number; readonly configurationRevisionLow: number;
+  readonly stageIndex: number; readonly stageStart: TimeWire; readonly stageEnd: TimeWire;
+  readonly forceMagnitudeNewtons: number; readonly massFlowKilogramsPerSecond: number;
+  readonly minimumMassPresent: boolean; readonly minimumMassKilograms: number;
+  readonly directionKind: number;
+  readonly directionFrameHigh: number; readonly directionFrameLow: number;
+  readonly directionFrameRevisionHigh: number; readonly directionFrameRevisionLow: number;
+  readonly directionX: number; readonly directionY: number; readonly directionZ: number;
+  readonly attitudeSourceHigh: number; readonly attitudeSourceLow: number;
+  readonly attitudeRevisionHigh: number; readonly attitudeRevisionLow: number;
+}
+
 export interface CoupledWire {
   readonly resultCode: number; readonly operationCode: number; readonly targetEpoch: TimeWire;
   readonly authorityIdHigh: number; readonly authorityIdLow: number;
   readonly groupRevisionHigh: number; readonly groupRevisionLow: number;
   readonly memberCount: number; readonly members: readonly CoupledMemberWire[];
   readonly requestedCount: number; readonly requestedIds: readonly { readonly high: number; readonly low: number }[];
+  readonly maneuverCount: number; readonly maneuvers: readonly CoupledManeuverWire[];
   readonly configurationRevisionHigh: number; readonly configurationRevisionLow: number;
   readonly relativeTolerance: number; readonly positionAbsoluteToleranceMeters: number;
   readonly velocityAbsoluteToleranceMetersPerSecond: number; readonly massAbsoluteToleranceKilograms: number;
@@ -51,6 +69,28 @@ function member(value: unknown): CoupledMemberWire {
   return Object.freeze(result);
 }
 
+function maneuver(value: unknown): CoupledManeuverWire {
+  if (typeof value !== "object" || value === null) throw new TypeError("coupled maneuver wire must be an object");
+  const v = value as Record<string, unknown>;
+  const result = {
+    present: Boolean(v.present),
+    objectIdHigh: integer(v.objectIdHigh, "maneuver.objectIdHigh"), objectIdLow: integer(v.objectIdLow, "maneuver.objectIdLow"),
+    maneuverIdHigh: integer(v.maneuverIdHigh, "maneuver.maneuverIdHigh"), maneuverIdLow: integer(v.maneuverIdLow, "maneuver.maneuverIdLow"),
+    maneuverRevisionHigh: integer(v.maneuverRevisionHigh, "maneuver.maneuverRevisionHigh"), maneuverRevisionLow: integer(v.maneuverRevisionLow, "maneuver.maneuverRevisionLow"),
+    configurationRevisionHigh: integer(v.configurationRevisionHigh, "maneuver.configurationRevisionHigh"), configurationRevisionLow: integer(v.configurationRevisionLow, "maneuver.configurationRevisionLow"),
+    stageIndex: integer(v.stageIndex, "maneuver.stageIndex", 0, 63), stageStart: validateTimeWire(v.stageStart), stageEnd: validateTimeWire(v.stageEnd),
+    forceMagnitudeNewtons: finite(v.forceMagnitudeNewtons, "maneuver.forceMagnitudeNewtons"), massFlowKilogramsPerSecond: finite(v.massFlowKilogramsPerSecond, "maneuver.massFlowKilogramsPerSecond"),
+    minimumMassPresent: Boolean(v.minimumMassPresent), minimumMassKilograms: finite(v.minimumMassKilograms, "maneuver.minimumMassKilograms"),
+    directionKind: integer(v.directionKind, "maneuver.directionKind", 0, 2),
+    directionFrameHigh: integer(v.directionFrameHigh, "maneuver.directionFrameHigh"), directionFrameLow: integer(v.directionFrameLow, "maneuver.directionFrameLow"),
+    directionFrameRevisionHigh: integer(v.directionFrameRevisionHigh, "maneuver.directionFrameRevisionHigh"), directionFrameRevisionLow: integer(v.directionFrameRevisionLow, "maneuver.directionFrameRevisionLow"),
+    directionX: finite(v.directionX, "maneuver.directionX"), directionY: finite(v.directionY, "maneuver.directionY"), directionZ: finite(v.directionZ, "maneuver.directionZ"),
+    attitudeSourceHigh: integer(v.attitudeSourceHigh, "maneuver.attitudeSourceHigh"), attitudeSourceLow: integer(v.attitudeSourceLow, "maneuver.attitudeSourceLow"),
+    attitudeRevisionHigh: integer(v.attitudeRevisionHigh, "maneuver.attitudeRevisionHigh"), attitudeRevisionLow: integer(v.attitudeRevisionLow, "maneuver.attitudeRevisionLow"),
+  } satisfies CoupledManeuverWire;
+  return Object.freeze(result);
+}
+
 export function validateCoupledWire(value: unknown): CoupledWire {
   if (typeof value !== "object" || value === null) throw new TypeError("coupled wire value must be an object");
   const v = value as Record<string, unknown>;
@@ -61,10 +101,12 @@ export function validateCoupledWire(value: unknown): CoupledWire {
     const item = id as Record<string, unknown>;
     return Object.freeze({ high: integer(item.high, "requestedId.high"), low: integer(item.low, "requestedId.low") });
   }) : (() => { throw new TypeError("coupled requested IDs must be an array"); })();
+  const maneuvers = Array.isArray(v.maneuvers) ? v.maneuvers.map(maneuver) : (() => { throw new TypeError("coupled maneuvers must be an array"); })();
   return Object.freeze({
     resultCode: integer(v.resultCode, "resultCode", 0, 65_535), operationCode: integer(v.operationCode, "operationCode", 1, 4), targetEpoch: validateTimeWire(v.targetEpoch),
     authorityIdHigh: integer(v.authorityIdHigh, "authorityIdHigh"), authorityIdLow: integer(v.authorityIdLow, "authorityIdLow"), groupRevisionHigh: integer(v.groupRevisionHigh, "groupRevisionHigh"), groupRevisionLow: integer(v.groupRevisionLow, "groupRevisionLow"),
     memberCount: integer(v.memberCount, "memberCount", 0, 32), members, requestedCount: integer(v.requestedCount, "requestedCount", 0, 32), requestedIds,
+    maneuverCount: integer(v.maneuverCount, "maneuverCount", 0, 32), maneuvers,
     configurationRevisionHigh: integer(v.configurationRevisionHigh, "configurationRevisionHigh"), configurationRevisionLow: integer(v.configurationRevisionLow, "configurationRevisionLow"),
     relativeTolerance: finite(v.relativeTolerance, "relativeTolerance"), positionAbsoluteToleranceMeters: finite(v.positionAbsoluteToleranceMeters, "positionAbsoluteToleranceMeters"), velocityAbsoluteToleranceMetersPerSecond: finite(v.velocityAbsoluteToleranceMetersPerSecond, "velocityAbsoluteToleranceMetersPerSecond"), massAbsoluteToleranceKilograms: finite(v.massAbsoluteToleranceKilograms, "massAbsoluteToleranceKilograms"),
     checkpointStrideAcceptedSteps: integer(v.checkpointStrideAcceptedSteps, "checkpointStrideAcceptedSteps", 1), maxCheckpointCount: integer(v.maxCheckpointCount, "maxCheckpointCount", 1), maxDenseStepCount: integer(v.maxDenseStepCount, "maxDenseStepCount", 1), maxAcceptedStepsPerExtension: integer(v.maxAcceptedStepsPerExtension, "maxAcceptedStepsPerExtension", 1), maxRejectedStepsPerExtension: integer(v.maxRejectedStepsPerExtension, "maxRejectedStepsPerExtension", 1),
@@ -74,7 +116,8 @@ export function validateCoupledWire(value: unknown): CoupledWire {
 }
 
 const MEMBER_WORDS = 23;
-const INPUT_WORDS = 31 + 32 * MEMBER_WORDS + 32 * 2;
+const MANEUVER_WORDS = 32;
+const INPUT_WORDS = 31 + 32 * MEMBER_WORDS + 32 * 2 + 1 + 32 * MANEUVER_WORDS;
 const OUTPUT_WORDS = 9 + 32 * MEMBER_WORDS;
 
 function memberPacket(value: CoupledMemberWire | undefined, output: number[]): void {
@@ -88,6 +131,23 @@ function memberPacket(value: CoupledMemberWire | undefined, output: number[]): v
     item.motionRevisionHigh, item.motionRevisionLow, item.propertyRevisionHigh, item.propertyRevisionLow, item.massRevisionHigh, item.massRevisionLow);
 }
 
+function maneuverPacket(value: CoupledManeuverWire | undefined, output: number[]): void {
+  const item = value ?? {
+    present: false, objectIdHigh: 0, objectIdLow: 0, maneuverIdHigh: 0, maneuverIdLow: 0,
+    maneuverRevisionHigh: 0, maneuverRevisionLow: 0, configurationRevisionHigh: 0, configurationRevisionLow: 0,
+    stageIndex: 0, stageStart: { secondsHigh: 0, secondsLow: 0, nanoseconds: 0 }, stageEnd: { secondsHigh: 0, secondsLow: 0, nanoseconds: 0 },
+    forceMagnitudeNewtons: 0, massFlowKilogramsPerSecond: 0, minimumMassPresent: false, minimumMassKilograms: 0,
+    directionKind: 0, directionFrameHigh: 0, directionFrameLow: 0, directionFrameRevisionHigh: 0, directionFrameRevisionLow: 0,
+    directionX: 0, directionY: 0, directionZ: 0, attitudeSourceHigh: 0, attitudeSourceLow: 0, attitudeRevisionHigh: 0, attitudeRevisionLow: 0,
+  } satisfies CoupledManeuverWire;
+  output.push(item.present ? 1 : 0, item.objectIdHigh, item.objectIdLow, item.maneuverIdHigh, item.maneuverIdLow,
+    item.maneuverRevisionHigh, item.maneuverRevisionLow, item.configurationRevisionHigh, item.configurationRevisionLow, item.stageIndex,
+    item.stageStart.secondsHigh, item.stageStart.secondsLow, item.stageStart.nanoseconds, item.stageEnd.secondsHigh, item.stageEnd.secondsLow, item.stageEnd.nanoseconds,
+    item.forceMagnitudeNewtons, item.massFlowKilogramsPerSecond, item.minimumMassPresent ? 1 : 0, item.minimumMassKilograms,
+    item.directionKind, item.directionFrameHigh, item.directionFrameLow, item.directionFrameRevisionHigh, item.directionFrameRevisionLow,
+    item.directionX, item.directionY, item.directionZ, item.attitudeSourceHigh, item.attitudeSourceLow, item.attitudeRevisionHigh, item.attitudeRevisionLow);
+}
+
 export function encodeCoupledPacket(value: CoupledWire): Float64Array {
   const input: number[] = [
     value.resultCode, value.operationCode, value.targetEpoch.secondsHigh, value.targetEpoch.secondsLow, value.targetEpoch.nanoseconds,
@@ -96,6 +156,8 @@ export function encodeCoupledPacket(value: CoupledWire): Float64Array {
   for (let index = 0; index < 32; index += 1) memberPacket(value.members[index], input);
   input.push(value.requestedCount);
   for (let index = 0; index < 32; index += 1) input.push(value.requestedIds[index]?.high ?? 0, value.requestedIds[index]?.low ?? 0);
+  input.push(value.maneuverCount);
+  for (let index = 0; index < 32; index += 1) maneuverPacket(value.maneuvers[index], input);
   input.push(value.configurationRevisionHigh, value.configurationRevisionLow, value.relativeTolerance, value.positionAbsoluteToleranceMeters,
     value.velocityAbsoluteToleranceMetersPerSecond, value.massAbsoluteToleranceKilograms, value.checkpointStrideAcceptedSteps, value.maxCheckpointCount,
     value.maxDenseStepCount, value.maxAcceptedStepsPerExtension, value.maxRejectedStepsPerExtension,

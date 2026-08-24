@@ -7,6 +7,7 @@ import {
   kilograms,
   meters,
   metersPerSecond,
+  maneuverForceConfiguration,
   objectId,
   propagationState,
   referenceFrameId,
@@ -46,6 +47,39 @@ export async function assertCoupledMotion(backend: OrbitEngineBackend): Promise<
   assert.equal(removed.position.x, -1);
   assert.deepEqual(motion.status().members, [objectId("2"), objectId("3")]);
   assert.equal(motion.status().active, true);
+
+  const burn = {
+    id: "1",
+    revision: "1",
+    objectId: objectId("1"),
+    kind: "finiteBurn",
+    lifecycle: "active",
+    start: simulationInstant(1),
+    end: simulationInstant(3),
+    stages: [{
+      start: simulationInstant(1),
+      end: simulationInstant(3),
+      forceMagnitudeNewtons: 1,
+      throttle: 1,
+      effectiveForceMagnitudeNewtons: 1,
+      direction: { kind: "referenceFrame" as const, frameId: frame, unitVector: { x: 1, y: 0, z: 0 } },
+      massFlowSpecification: { kind: "direct" as const, inputValue: 0, massFlowKilogramsPerSecond: 0 },
+      effectiveMassFlowKilogramsPerSecond: 0,
+    }],
+  } as unknown as Parameters<typeof maneuverForceConfiguration>[0];
+  const thrustConfiguration = {
+    ...configuration,
+    members: configuration.members.map((item) => ({ ...item, anchor: propagationState({
+      ...item.anchor,
+      epoch: simulationInstant(1),
+    }) })),
+    maneuverForceConfigurations: [maneuverForceConfiguration(burn, 0)],
+  } as const;
+  const thrustMotion = engine.coupledMotion(thrustConfiguration);
+  const thrustState = thrustMotion.stateAt(objectId("1"), simulationInstant(2));
+  assert.ok(thrustState.velocity.x > 0.9);
+  assert.equal(thrustMotion.configuration.maneuverForceConfigurations?.length, 1);
+  assert.ok(thrustMotion.modelFor(objectId("1")).declaration.dependencies.some((dependency) => dependency.id === `maneuver:${burn.id}`));
 
   const boundConfiguration = {
     ...configuration,

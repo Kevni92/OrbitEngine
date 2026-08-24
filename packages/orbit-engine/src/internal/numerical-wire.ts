@@ -48,6 +48,30 @@ export interface NumericalWire {
   readonly configurationRevisionLow: number;
   readonly motionRevisionHigh: number;
   readonly motionRevisionLow: number;
+  readonly maneuverPresent: boolean;
+  readonly maneuverIdHigh: number;
+  readonly maneuverIdLow: number;
+  readonly maneuverRevisionHigh: number;
+  readonly maneuverRevisionLow: number;
+  readonly maneuverStageIndex: number;
+  readonly maneuverStageStart: TimeWire;
+  readonly maneuverStageEnd: TimeWire;
+  readonly maneuverForceMagnitudeNewtons: number;
+  readonly maneuverMassFlowKilogramsPerSecond: number;
+  readonly maneuverMinimumMassPresent: boolean;
+  readonly maneuverMinimumMassKilograms: number;
+  readonly maneuverDirectionKind: number;
+  readonly maneuverDirectionFrameHigh: number;
+  readonly maneuverDirectionFrameLow: number;
+  readonly maneuverDirectionFrameRevisionHigh: number;
+  readonly maneuverDirectionFrameRevisionLow: number;
+  readonly maneuverDirectionX: number;
+  readonly maneuverDirectionY: number;
+  readonly maneuverDirectionZ: number;
+  readonly maneuverAttitudeSourceHigh: number;
+  readonly maneuverAttitudeSourceLow: number;
+  readonly maneuverAttitudeRevisionHigh: number;
+  readonly maneuverAttitudeRevisionLow: number;
   readonly resultEpoch: TimeWire;
   readonly resultPositionX: number;
   readonly resultPositionY: number;
@@ -101,6 +125,18 @@ export function validateNumericalWire(value: unknown): NumericalWire {
     minStep: readTime("minStep"), maxStep: readTime("maxStep"),
     configurationRevisionHigh: integer(candidate.configurationRevisionHigh, "configurationRevisionHigh", 0, 4_294_967_295), configurationRevisionLow: integer(candidate.configurationRevisionLow, "configurationRevisionLow", 0, 4_294_967_295),
     motionRevisionHigh: integer(candidate.motionRevisionHigh, "motionRevisionHigh", 0, 4_294_967_295), motionRevisionLow: integer(candidate.motionRevisionLow, "motionRevisionLow", 0, 4_294_967_295),
+    maneuverPresent: boolean(candidate.maneuverPresent, "maneuverPresent"),
+    maneuverIdHigh: integer(candidate.maneuverIdHigh, "maneuverIdHigh", 0, 4_294_967_295), maneuverIdLow: integer(candidate.maneuverIdLow, "maneuverIdLow", 0, 4_294_967_295),
+    maneuverRevisionHigh: integer(candidate.maneuverRevisionHigh, "maneuverRevisionHigh", 0, 4_294_967_295), maneuverRevisionLow: integer(candidate.maneuverRevisionLow, "maneuverRevisionLow", 0, 4_294_967_295),
+    maneuverStageIndex: integer(candidate.maneuverStageIndex, "maneuverStageIndex", 0, 63), maneuverStageStart: readTime("maneuverStageStart"), maneuverStageEnd: readTime("maneuverStageEnd"),
+    maneuverForceMagnitudeNewtons: finite(candidate.maneuverForceMagnitudeNewtons, "maneuverForceMagnitudeNewtons"), maneuverMassFlowKilogramsPerSecond: finite(candidate.maneuverMassFlowKilogramsPerSecond, "maneuverMassFlowKilogramsPerSecond"),
+    maneuverMinimumMassPresent: boolean(candidate.maneuverMinimumMassPresent, "maneuverMinimumMassPresent"), maneuverMinimumMassKilograms: finite(candidate.maneuverMinimumMassKilograms, "maneuverMinimumMassKilograms"),
+    maneuverDirectionKind: integer(candidate.maneuverDirectionKind, "maneuverDirectionKind", 0, 2),
+    maneuverDirectionFrameHigh: integer(candidate.maneuverDirectionFrameHigh, "maneuverDirectionFrameHigh", 0, 4_294_967_295), maneuverDirectionFrameLow: integer(candidate.maneuverDirectionFrameLow, "maneuverDirectionFrameLow", 0, 4_294_967_295),
+    maneuverDirectionFrameRevisionHigh: integer(candidate.maneuverDirectionFrameRevisionHigh, "maneuverDirectionFrameRevisionHigh", 0, 4_294_967_295), maneuverDirectionFrameRevisionLow: integer(candidate.maneuverDirectionFrameRevisionLow, "maneuverDirectionFrameRevisionLow", 0, 4_294_967_295),
+    maneuverDirectionX: finite(candidate.maneuverDirectionX, "maneuverDirectionX"), maneuverDirectionY: finite(candidate.maneuverDirectionY, "maneuverDirectionY"), maneuverDirectionZ: finite(candidate.maneuverDirectionZ, "maneuverDirectionZ"),
+    maneuverAttitudeSourceHigh: integer(candidate.maneuverAttitudeSourceHigh, "maneuverAttitudeSourceHigh", 0, 4_294_967_295), maneuverAttitudeSourceLow: integer(candidate.maneuverAttitudeSourceLow, "maneuverAttitudeSourceLow", 0, 4_294_967_295),
+    maneuverAttitudeRevisionHigh: integer(candidate.maneuverAttitudeRevisionHigh, "maneuverAttitudeRevisionHigh", 0, 4_294_967_295), maneuverAttitudeRevisionLow: integer(candidate.maneuverAttitudeRevisionLow, "maneuverAttitudeRevisionLow", 0, 4_294_967_295),
     resultEpoch: readTime("resultEpoch"), resultPositionX: finite(candidate.resultPositionX, "resultPositionX"), resultPositionY: finite(candidate.resultPositionY, "resultPositionY"), resultPositionZ: finite(candidate.resultPositionZ, "resultPositionZ"),
     resultVelocityX: finite(candidate.resultVelocityX, "resultVelocityX"), resultVelocityY: finite(candidate.resultVelocityY, "resultVelocityY"), resultVelocityZ: finite(candidate.resultVelocityZ, "resultVelocityZ"), resultMassPresent: boolean(candidate.resultMassPresent, "resultMassPresent"), resultMass: finite(candidate.resultMass, "resultMass"),
   } satisfies NumericalWire;

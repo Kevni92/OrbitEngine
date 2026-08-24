@@ -1,4 +1,5 @@
 import { objectId, type ObjectId } from "./objects.js";
+import type { ManeuverForceConfiguration } from "./maneuver.js";
 import {
   evaluatePropagationModel,
   MotionAuthority,
@@ -12,6 +13,8 @@ import {
   type ReadOnlyPropagationEvaluationContext,
   type RevisionId,
   type SwitchTolerance,
+  type AuthoritySnapshot,
+  type AuthorityTransitionDraft,
 } from "./propagation.js";
 import {
   addDurationToInstant,
@@ -91,6 +94,7 @@ export interface FidelityCandidateInput {
   readonly capabilities: FidelityCapabilitiesInput;
   readonly model?: PropagationModel;
   readonly switchTolerance?: SwitchTolerance;
+  readonly candidateFactory?: FidelityAuthorityCandidateFactory;
 }
 
 export interface FidelityCandidate {
@@ -101,12 +105,10 @@ export interface FidelityCandidate {
   readonly capabilities: FidelityCapabilities;
   readonly model?: PropagationModel;
   readonly switchTolerance?: SwitchTolerance;
+  readonly candidateFactory?: FidelityAuthorityCandidateFactory;
 }
 
-export type FidelityAuthorityCandidateInput = FidelityCandidateInput & {
-  readonly model: PropagationModel;
-  readonly switchTolerance: SwitchTolerance;
-};
+export type FidelityAuthorityCandidateInput = FidelityCandidateInput;
 
 export interface FidelityAuthorityTransitionPolicy {
   readonly minimumDwell?: Duration;
@@ -117,6 +119,22 @@ export interface FidelityAuthorityTransitionPolicy {
   readonly frameResolver?: PropagationFrameResolver;
   readonly context?: ReadOnlyPropagationEvaluationContext;
 }
+
+export interface AuthorityTransitionRequest {
+  readonly objectId: ObjectId;
+  readonly instant: SimulationInstant;
+  readonly handoff: import("./propagation.js").PropagationState;
+  readonly authoritativeMass?: number;
+  readonly requirement: FidelityRequirement;
+  readonly currentAuthority: AuthoritySnapshot;
+  readonly forceConfiguration?: ManeuverForceConfiguration;
+  readonly dependencies: readonly { readonly kind: string; readonly id: string; readonly revision: RevisionId }[];
+}
+
+export type FidelityAuthorityCandidateFactory = (
+  request: AuthorityTransitionRequest,
+  candidate: FidelityCandidate,
+) => PropagationModel;
 
 export interface FidelityAuthorityRef {
   readonly candidateId?: string;
@@ -150,12 +168,22 @@ export interface FidelityStatus {
   readonly since: SimulationInstant;
   readonly reasons: readonly string[];
   readonly nextReevaluation?: SimulationInstant;
+  readonly futureRequirements: readonly { readonly signalId: string; readonly requirement: FidelityRequirement }[];
   readonly lastTransitionResult?: FidelityTransitionResult;
 }
 
 export interface FidelitySelection {
   readonly candidate: FidelityCandidate;
   readonly preservedCurrentAuthority: boolean;
+}
+
+export interface PreparedAuthorityTransition {
+  readonly candidate: FidelityCandidate;
+  readonly model: PropagationModel;
+  readonly authorityDraft: AuthorityTransitionDraft;
+  readonly beforeStatus: FidelityStatus;
+  commit(reevaluate?: boolean): FidelityStatus;
+  rollback(): void;
 }
 
 export const FidelityErrorCode = Object.freeze({
@@ -380,8 +408,14 @@ export function fidelityCandidate(value: FidelityCandidateInput): FidelityCandid
   if (value.model !== undefined && (typeof value.model !== "object" || value.model === null || typeof value.model.evaluate !== "function")) {
     throw new TypeError("Fidelity candidate model must be a PropagationModel");
   }
-  if ((value.model === undefined) !== (value.switchTolerance === undefined)) {
+  if (value.candidateFactory !== undefined && typeof value.candidateFactory !== "function") {
+    throw new TypeError("Fidelity candidateFactory must be a function");
+  }
+  if (value.model !== undefined && value.switchTolerance === undefined) {
     throw new TypeError("A fidelity candidate model requires switchTolerance and vice versa");
+  }
+  if (value.model === undefined && value.switchTolerance !== undefined && value.candidateFactory === undefined) {
+    throw new TypeError("A static fidelity candidate without a model cannot declare switchTolerance");
   }
   return Object.freeze({
     id: value.id,
@@ -389,10 +423,9 @@ export function fidelityCandidate(value: FidelityCandidateInput): FidelityCandid
     configurationRevision: revisionId(value.configurationRevision),
     cost: value.cost,
     capabilities: normalizeCapabilities(value.capabilities),
-    ...(value.model === undefined ? {} : {
-      model: value.model,
-      switchTolerance: switchTolerance(value.switchTolerance!),
-    }),
+    ...(value.model === undefined ? {} : { model: value.model }),
+    ...(value.switchTolerance === undefined ? {} : { switchTolerance: switchTolerance(value.switchTolerance) }),
+    ...(value.candidateFactory === undefined ? {} : { candidateFactory: value.candidateFactory }),
   });
 }
 
@@ -478,6 +511,10 @@ function freezeStatus(value: FidelityStatus): FidelityStatus {
     effectiveRequirement: value.effectiveRequirement,
     since: simulationInstant(value.since.seconds, value.since.nanoseconds),
     reasons: Object.freeze([...value.reasons]),
+    futureRequirements: Object.freeze(value.futureRequirements.map((item) => Object.freeze({
+      signalId: item.signalId,
+      requirement: fidelityRequirement(item.requirement),
+    }))),
     ...(value.nextReevaluation === undefined ? {} : {
       nextReevaluation: simulationInstant(value.nextReevaluation.seconds, value.nextReevaluation.nanoseconds),
     }),
@@ -507,7 +544,37 @@ function defaultStatus(): FidelityStatus {
     effectiveRequirement: requirement,
     since: simulationInstant(0),
     reasons: requirement.reasons,
+    futureRequirements: [],
   });
+}
+
+function candidatesForAuthority(
+  state: FidelityState,
+): readonly FidelityCandidate[] {
+  if (state.authority?.referenceStatus() !== "diverged") return state.candidates;
+  return state.candidates.filter((candidate) => candidate.authorityKind !== "referenceEphemeris"
+    && candidate.model?.declaration.kind !== "referenceEphemeris");
+}
+
+function futureRequirements(
+  signals: ReadonlyMap<string, FidelityRequirement>,
+  now: SimulationInstant,
+): readonly { readonly signalId: string; readonly requirement: FidelityRequirement }[] {
+  return [...signals.entries()]
+    .filter(([, requirement]) => requirement.validFrom !== undefined
+      && compareSimulationInstants(requirement.validFrom, now) > 0)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([signalId, requirement]) => ({ signalId, requirement }));
+}
+
+function earliestFutureActivation(
+  values: readonly { readonly requirement: FidelityRequirement }[],
+): SimulationInstant | undefined {
+  return values.reduce<SimulationInstant | undefined>((earliest, item) => {
+    const validFrom = item.requirement.validFrom;
+    if (validFrom === undefined) return earliest;
+    return earliest === undefined || compareSimulationInstants(validFrom, earliest) < 0 ? validFrom : earliest;
+  }, undefined);
 }
 
 export class FidelityManager {
@@ -607,10 +674,32 @@ export class FidelityManager {
       state.retryAt = undefined;
       return { code: FidelityTransitionCode.selected, candidateId: candidate.id, message: "A configured fidelity authority was selected" };
     }
-    if (candidate.model === undefined || candidate.switchTolerance === undefined) {
+    let executableCandidate = candidate;
+    if (executableCandidate.model === undefined && executableCandidate.candidateFactory !== undefined) {
+      const context = state.transitionPolicy.context ?? propagationEvaluationContext({ objectId: id, currentTime: now });
+      const handoff = authority.evaluate(now, context);
+      const built = executableCandidate.candidateFactory({
+        objectId: id,
+        instant: now,
+        handoff,
+        requirement: state.status.effectiveRequirement,
+        currentAuthority: authority.snapshot(),
+        dependencies: [],
+      }, executableCandidate);
+      executableCandidate = Object.freeze({
+        ...executableCandidate,
+        model: built,
+        configurationRevision: built.declaration.configurationRevision,
+      });
+    }
+    if (executableCandidate.model === undefined || executableCandidate.switchTolerance === undefined) {
       return { code: FidelityTransitionCode.switchFailed, message: "Selected fidelity candidate has no executable propagation authority" };
     }
-    const isDemotion = current !== undefined && candidate.cost < current.cost;
+    if (authority.referenceStatus() === "diverged"
+        && executableCandidate.model.declaration.kind === "referenceEphemeris") {
+      return { code: FidelityTransitionCode.switchFailed, message: "A diverged authority cannot resume its reference ephemeris future" };
+    }
+    const isDemotion = current !== undefined && executableCandidate.cost < current.cost;
     if (isDemotion) {
       if (state.retryAt !== undefined && compareSimulationInstants(now, state.retryAt) < 0) {
         return { code: FidelityTransitionCode.quietWindowBlocked, message: "Demotion is waiting for its bounded retry/backoff instant" };
@@ -622,12 +711,12 @@ export class FidelityManager {
       if (state.quietUntil !== undefined && compareSimulationInstants(now, state.quietUntil) < 0) {
         return this.#deferDemotion(state, now, FidelityTransitionCode.quietWindowBlocked, "Configured quiet-window hysteresis has not elapsed", state.quietUntil);
       }
-      const validation = this.#validateDemotion(id, state, candidate, now);
+      const validation = this.#validateDemotion(id, state, executableCandidate, now);
       if (validation !== undefined) return validation;
     }
     const context = state.transitionPolicy.context ?? propagationEvaluationContext({ objectId: id, currentTime: now });
-    const result = authority.switchModel(candidate.model, now, {
-      tolerance: candidate.switchTolerance,
+    const result = authority.switchModel(executableCandidate.model, now, {
+      tolerance: executableCandidate.switchTolerance!,
       frameResolver: state.transitionPolicy.frameResolver,
       context,
     });
@@ -638,7 +727,7 @@ export class FidelityManager {
     state.quietUntil = undefined;
     return {
       code: FidelityTransitionCode.selected,
-      candidateId: candidate.id,
+      candidateId: executableCandidate.id,
       message: isDemotion ? "A validated cheaper fidelity authority was committed" : "A satisfying fidelity authority was committed at the exact transition instant",
     };
   }
@@ -646,19 +735,23 @@ export class FidelityManager {
   #recompute(id: ObjectId, now: SimulationInstant): FidelityStatus {
     const state = this.#state(id);
     const normalizedNow = simulationInstant(now.seconds, now.nanoseconds);
-    const requirements: FidelityRequirement[] = [...state.signals.values()];
+    const requirements: FidelityRequirement[] = [...state.signals.values()]
+      .filter((requirement) => requirement.validFrom === undefined
+        || compareSimulationInstants(requirement.validFrom, normalizedNow) <= 0);
     if (state.minimumRequirement !== undefined) requirements.push(state.minimumRequirement);
     const effectiveRequirement = combineFidelityRequirements(requirements);
+    const future = futureRequirements(state.signals, normalizedNow);
     let result: FidelityTransitionResult = {
       code: FidelityTransitionCode.unchanged,
       message: "Current fidelity authority remains valid",
     };
 
-    if (hasPhysicalRequirement(effectiveRequirement) || state.authority !== undefined) {
+    if ((hasPhysicalRequirement(effectiveRequirement) || state.authority !== undefined)
+        && !(future.length > 0 && !hasPhysicalRequirement(effectiveRequirement))) {
       try {
         const selection = selectFidelityCandidate(
           effectiveRequirement,
-          state.candidates,
+          candidatesForAuthority(state),
           hasPhysicalRequirement(effectiveRequirement) ? state.current : undefined,
         );
         if (!sameCandidate(state.current, selection.candidate)) {
@@ -675,7 +768,8 @@ export class FidelityManager {
           currentCandidateId: state.current?.id,
           since: state.since,
           reasons: effectiveRequirement.reasons,
-          nextReevaluation: earlierInstant(effectiveRequirement.reevaluateBy, state.retryAt),
+          nextReevaluation: earlierInstant(earliestFutureActivation(future), earlierInstant(effectiveRequirement.reevaluateBy, state.retryAt)),
+          futureRequirements: future,
           lastTransitionResult: result,
         });
         throw error;
@@ -689,7 +783,8 @@ export class FidelityManager {
       currentCandidateId: state.current?.id,
       since: state.since,
       reasons: effectiveRequirement.reasons,
-      nextReevaluation: earlierInstant(effectiveRequirement.reevaluateBy, state.retryAt),
+      nextReevaluation: earlierInstant(earliestFutureActivation(future), earlierInstant(effectiveRequirement.reevaluateBy, state.retryAt)),
+      futureRequirements: future,
       lastTransitionResult: result,
     });
     return state.status;
@@ -754,6 +849,125 @@ export class FidelityManager {
     const state = this.#state(id);
     if (state.authority === undefined) throw new TypeError("No MotionAuthority is bound for this fidelity object");
     return this.#recompute(id, now);
+  }
+
+  /**
+   * Prepare a maneuver authority transition from the caller's canonical
+   * physical handoff.  Candidate factories are intentionally invoked here,
+   * after Fidelity selection, so maneuver callers never construct a model
+   * outside the normal Fidelity/model-switch boundary.
+   */
+  prepareAuthorityTransition(
+    id: ObjectId,
+    request: AuthorityTransitionRequest,
+  ): PreparedAuthorityTransition {
+    const normalizedId = objectId(id);
+    const state = this.#state(normalizedId);
+    if (state.authority === undefined) throw new TypeError("No MotionAuthority is bound for this fidelity object");
+    const requirement = fidelityRequirement(request.requirement);
+    const selection = selectFidelityCandidate(requirement, candidatesForAuthority(state), state.current);
+    const candidate = selection.candidate;
+    const model = candidate.candidateFactory === undefined
+      ? candidate.model
+      : candidate.candidateFactory({ ...request, objectId: normalizedId, requirement }, candidate);
+    if (model === undefined || candidate.switchTolerance === undefined) {
+      throw new TypeError("Selected maneuver authority candidate cannot build an executable successor");
+    }
+    if (state.authority.referenceStatus() === "diverged"
+        && model.declaration.kind === "referenceEphemeris") {
+      throw new TypeError("A diverged authority cannot resume its reference ephemeris future");
+    }
+    const executableCandidate = Object.freeze({
+      ...candidate,
+      model,
+      configurationRevision: model.declaration.configurationRevision,
+    });
+    const beforeCurrent = state.current;
+    const beforeSince = state.since;
+    const beforeRetryAt = state.retryAt;
+    const beforeQuietUntil = state.quietUntil;
+    const beforeDemotionFailures = state.demotionFailures;
+    const context = state.transitionPolicy.context ?? propagationEvaluationContext({
+      objectId: normalizedId,
+      currentTime: request.instant,
+    });
+    const authorityDraft = state.authority.prepareFromHandoff(model, request.instant, request.handoff, {
+      tolerance: executableCandidate.switchTolerance!,
+      frameResolver: state.transitionPolicy.frameResolver,
+      context,
+    }, request.currentAuthority);
+    const beforeStatus = state.status;
+    return Object.freeze({
+      candidate: executableCandidate,
+      model,
+      authorityDraft,
+      beforeStatus,
+      commit: (reevaluate = true) => {
+        state.authority!.commitTransition(authorityDraft);
+        state.current = executableCandidate;
+        state.since = simulationInstant(request.instant.seconds, request.instant.nanoseconds);
+        state.retryAt = undefined;
+        state.quietUntil = undefined;
+        state.demotionFailures = 0;
+        if (reevaluate) return this.#recompute(normalizedId, request.instant);
+        const activeRequirements = [...state.signals.values()]
+          .filter((item) => item.validFrom === undefined
+            || compareSimulationInstants(item.validFrom, request.instant) <= 0);
+        const effectiveRequirement = combineFidelityRequirements(activeRequirements);
+        state.status = freezeStatus({
+          effectiveRequirement,
+          currentAuthorityKind: state.current?.authorityKind,
+          currentConfigurationRevision: state.current?.configurationRevision,
+          currentCandidateId: state.current?.id,
+          since: state.since,
+          reasons: effectiveRequirement.reasons,
+          futureRequirements: futureRequirements(state.signals, request.instant),
+          lastTransitionResult: {
+            code: FidelityTransitionCode.selected,
+            candidateId: executableCandidate.id,
+            message: "A maneuver authority was committed at the exact physical handoff",
+          },
+        });
+        return state.status;
+      },
+      rollback: () => {
+        state.authority!.restore(authorityDraft.before);
+        state.current = beforeCurrent;
+        state.since = beforeSince;
+        state.retryAt = beforeRetryAt;
+        state.quietUntil = beforeQuietUntil;
+        state.demotionFailures = beforeDemotionFailures;
+        state.status = beforeStatus;
+      },
+    });
+  }
+
+  /** Remove a maneuver-owned requirement without triggering a demotion. */
+  retireSignal(
+    id: ObjectId,
+    signalId: string,
+    now: SimulationInstant = simulationInstant(0),
+    reevaluate = true,
+  ): FidelityStatus {
+    const state = this.#state(id);
+    state.signals.delete(signalId);
+    if (reevaluate) return this.#recompute(id, now);
+    const normalizedNow = simulationInstant(now.seconds, now.nanoseconds);
+    const requirements = [...state.signals.values()]
+      .filter((requirement) => requirement.validFrom === undefined
+        || compareSimulationInstants(requirement.validFrom, normalizedNow) <= 0);
+    const effectiveRequirement = combineFidelityRequirements(requirements);
+    state.status = freezeStatus({
+      effectiveRequirement,
+      currentAuthorityKind: state.current?.authorityKind,
+      currentConfigurationRevision: state.current?.configurationRevision,
+      currentCandidateId: state.current?.id,
+      since: state.since,
+      reasons: effectiveRequirement.reasons,
+      futureRequirements: futureRequirements(state.signals, normalizedNow),
+      lastTransitionResult: state.status.lastTransitionResult,
+    });
+    return state.status;
   }
 
   setMinimumRequirement(

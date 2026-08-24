@@ -18,6 +18,7 @@ enum class Operation : std::uint16_t {
   remove_object = 4,
   diverge = 5,
   advance_clock = 6,
+  replace_motion = 7,
 };
 
 enum class ResultCode : std::uint16_t {

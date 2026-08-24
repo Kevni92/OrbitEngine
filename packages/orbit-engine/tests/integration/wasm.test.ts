@@ -29,6 +29,7 @@ import { assertCollisionResponse } from "../shared/collision-response.js";
 import { assertCollisionLifecycle } from "../shared/collision-lifecycle.js";
 import { assertCollisionStress } from "../shared/collision-stress.js";
 import { assertManeuverLifecycle } from "../shared/maneuver.js";
+import { assertManeuverAuthorityHandoff } from "../shared/maneuver-authority.js";
 
 test("real WASM backend initializes and reports the shared core health", async () => {
   const engine = await OrbitEngine.create({ backend: "wasm" });
@@ -69,4 +70,5 @@ test("real WASM backend initializes and reports the shared core health", async (
   await assertCollisionLifecycle(await OrbitEngine.create({ backend: "wasm" }));
   await assertCollisionStress(await OrbitEngine.create({ backend: "wasm" }));
   await assertManeuverLifecycle(await OrbitEngine.create({ backend: "wasm" }));
+  await assertManeuverAuthorityHandoff(await OrbitEngine.create({ backend: "wasm" }));
 });

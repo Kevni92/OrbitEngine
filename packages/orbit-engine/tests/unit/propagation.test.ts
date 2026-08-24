@@ -174,6 +174,18 @@ test("cross-frame switches transform at the same exact epoch before comparing to
   if (result.ok) assert.equal(result.handoff.referenceFrame, secondFrame);
 });
 
+test("authority transition drafts do not mutate until commit", () => {
+  const oldModel = model(PropagationModelKind.referenceEphemeris, simulationInstant(0), simulationInstant(10), state);
+  const candidateModel = model(PropagationModelKind.numerical, simulationInstant(0), simulationInstant(10), state);
+  const authority = new MotionAuthority(object, motionSegment({ start: simulationInstant(0), model: oldModel, motionRevision: revisionId("1") }));
+  const before = authority.snapshot();
+  const draft = authority.prepareSwitchModel(candidateModel, simulationInstant(1), { tolerance, context });
+  assert.deepEqual(authority.snapshot(), before);
+  authority.commitTransition(draft);
+  assert.equal(authority.segments().at(-1)?.modelKind, PropagationModelKind.numerical);
+  assert.equal(authority.referenceStatus(), "diverged");
+});
+
 test("force providers execute in declared order and distinguish absent/zero mass", () => {
   const declaration = (id: string, order: number, requiresMass: boolean) => ({
     id: revisionId(id), order, validity: propagationTimeInterval(simulationInstant(-1), simulationInstant(2)),

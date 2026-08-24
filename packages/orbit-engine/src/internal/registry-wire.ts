@@ -45,6 +45,7 @@ export const RegistryOperationCode = Object.freeze({
   remove: 4,
   diverge: 5,
   advanceClock: 6,
+  replaceMotion: 7,
 } as const);
 
 export const RegistryResultCode = Object.freeze({
@@ -198,7 +199,7 @@ function validateCommon(value: unknown): Record<string, unknown> {
   const candidate = value as Record<string, unknown>;
   const operationCode = uint16(candidate.operationCode, "operationCode");
   const resultCode = uint16(candidate.resultCode, "resultCode");
-  if (operationCode > RegistryOperationCode.advanceClock) throw new RangeError("Unknown registry operation code");
+  if (operationCode > RegistryOperationCode.replaceMotion) throw new RangeError("Unknown registry operation code");
   if (resultCode > RegistryResultCode.invalidTransition) throw new RangeError("Unknown registry result code");
   const objectIdHigh = uint32(candidate.objectIdHigh, "objectIdHigh");
   const objectIdLow = uint32(candidate.objectIdLow, "objectIdLow");

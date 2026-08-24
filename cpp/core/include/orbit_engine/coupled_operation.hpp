@@ -10,7 +10,8 @@ namespace orbit_engine::coupled_operation {
 
 inline constexpr std::size_t kMaxMembers = 32;
 inline constexpr std::size_t kMemberWords = 23;
-inline constexpr std::size_t kInputWords = 31 + kMaxMembers * kMemberWords + kMaxMembers * 2;
+inline constexpr std::size_t kManeuverWords = 32;
+inline constexpr std::size_t kInputWords = 31 + kMaxMembers * kMemberWords + kMaxMembers * 2 + 1 + kMaxMembers * kManeuverWords;
 inline constexpr std::size_t kOutputWords = 9 + kMaxMembers * kMemberWords;
 
 enum class OperationCode : std::uint16_t { promote = 1, evaluate = 2, demote = 3, remove = 4 };
@@ -48,6 +49,37 @@ struct MemberWire {
   std::uint32_t mass_revision_low = 0;
 };
 
+struct ManeuverWire {
+  bool present = false;
+  std::uint32_t object_id_high = 0;
+  std::uint32_t object_id_low = 0;
+  std::uint32_t maneuver_id_high = 0;
+  std::uint32_t maneuver_id_low = 0;
+  std::uint32_t maneuver_revision_high = 0;
+  std::uint32_t maneuver_revision_low = 0;
+  std::uint32_t configuration_revision_high = 0;
+  std::uint32_t configuration_revision_low = 0;
+  std::uint32_t stage_index = 0;
+  time::TimeWire stage_start{};
+  time::TimeWire stage_end{};
+  double force_magnitude_newtons = 0.0;
+  double mass_flow_kilograms_per_second = 0.0;
+  bool minimum_mass_present = false;
+  double minimum_mass_kilograms = 0.0;
+  std::uint32_t direction_kind = 0;
+  std::uint32_t direction_frame_high = 0;
+  std::uint32_t direction_frame_low = 0;
+  std::uint32_t direction_frame_revision_high = 0;
+  std::uint32_t direction_frame_revision_low = 0;
+  double direction_x = 0.0;
+  double direction_y = 0.0;
+  double direction_z = 0.0;
+  std::uint32_t attitude_source_high = 0;
+  std::uint32_t attitude_source_low = 0;
+  std::uint32_t attitude_revision_high = 0;
+  std::uint32_t attitude_revision_low = 0;
+};
+
 struct CoupledWire {
   std::uint16_t result_code = 0;
   std::uint16_t operation_code = 0;
@@ -61,6 +93,8 @@ struct CoupledWire {
   std::uint32_t requested_count = 0;
   std::array<std::uint32_t, kMaxMembers> requested_id_high{};
   std::array<std::uint32_t, kMaxMembers> requested_id_low{};
+  std::uint32_t maneuver_count = 0;
+  std::array<ManeuverWire, kMaxMembers> maneuvers{};
   std::uint32_t configuration_revision_high = 0;
   std::uint32_t configuration_revision_low = 0;
   double relative_tolerance = 0.0;
