@@ -18,3 +18,6 @@ packages/orbit-engine/wasm/*
 apps/solar-system-demo/public/data/solar-system-oep/
 
 .DS_Store
+
+.cache/
+**/test-results/
