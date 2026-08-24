@@ -145,6 +145,18 @@ import {
   type DependencyInvalidationTarget,
   type InvalidationReport,
 } from "./invalidation.js";
+import {
+  ManeuverManager,
+  type FiniteBurnManeuver,
+  type FiniteBurnManeuverInput,
+  type ImpulseManeuver,
+  type ImpulseManeuverInput,
+  type Maneuver,
+  type ManeuverQuery,
+  type ManeuverReplacement,
+  type ManeuverStatus,
+  type ManeuverId,
+} from "./maneuver.js";
 
 export * from "./time.js";
 export * from "./units.js";
@@ -169,6 +181,7 @@ export * from "./collision.js";
 export * from "./collision-detection.js";
 export * from "./collision-response.js";
 export * from "./collision-lifecycle.js";
+export * from "./maneuver.js";
 export { TWO_BODY_DEFAULT_ERROR_CONTRACT } from "./two-body.js";
 export type { TwoBodyAnalyticalModelConfiguration } from "./two-body.js";
 export {
@@ -237,6 +250,7 @@ export class OrbitEngine {
   readonly #collisionPolicyManager: CollisionPolicyManager;
   readonly #collisionSuppressionManager: CollisionContactSuppressionManager;
   readonly #collisionContactLifecycleManager: CollisionContactLifecycleManager;
+  readonly #maneuverManager: ManeuverManager;
 
   private constructor(backend: Backend, health: BackendHealth, scheduler?: ScheduledWorkQueueConfiguration) {
     this.backend = backend.kind;
@@ -247,6 +261,9 @@ export class OrbitEngine {
     this.#invalidationManager = new RevisionInvalidationManager(this.#scheduledWorkQueue);
     this.#collisionSuppressionManager = new CollisionContactSuppressionManager();
     this.#collisionContactLifecycleManager = new CollisionContactLifecycleManager({
+      currentTime: () => this.currentTime,
+    });
+    this.#maneuverManager = new ManeuverManager({
       currentTime: () => this.currentTime,
     });
     this.#encounterPolicyManager = new EncounterPolicyManager(undefined, (_previous, next) => {
@@ -544,6 +561,38 @@ export class OrbitEngine {
     dependencies?: readonly CollisionRemovalDependency[],
   ): CollisionRemovalDependencyCheck {
     return this.#collisionContactLifecycleManager.checkRemovalDependencies(objectId, dependencies);
+  }
+
+  scheduleImpulse(objectIdValue: ObjectId, definition: ImpulseManeuverInput): ImpulseManeuver {
+    return this.#maneuverManager.scheduleImpulse(objectIdValue, definition);
+  }
+
+  scheduleFiniteBurn(objectIdValue: ObjectId, definition: FiniteBurnManeuverInput): FiniteBurnManeuver {
+    return this.#maneuverManager.scheduleFiniteBurn(objectIdValue, definition);
+  }
+
+  updateManeuver(maneuverId: ManeuverId | string, replacement: ManeuverReplacement): Maneuver {
+    return this.#maneuverManager.updateManeuver(maneuverId, replacement);
+  }
+
+  cancelManeuver(maneuverId: ManeuverId | string): Maneuver {
+    return this.#maneuverManager.cancelManeuver(maneuverId);
+  }
+
+  getManeuver(maneuverId: ManeuverId | string): Maneuver | undefined {
+    return this.#maneuverManager.getManeuver(maneuverId);
+  }
+
+  listManeuvers(query: ManeuverQuery = {}): readonly Maneuver[] {
+    return this.#maneuverManager.listManeuvers(query);
+  }
+
+  getManeuverStatus(maneuverId: ManeuverId | string): ManeuverStatus | undefined {
+    return this.#maneuverManager.getManeuverStatus(maneuverId);
+  }
+
+  maneuvers(): ManeuverManager {
+    return this.#maneuverManager;
   }
 
   encounterDomains(): EncounterDomainRegistry {
