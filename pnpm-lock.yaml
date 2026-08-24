@@ -67,6 +67,9 @@ importers:
       orbit-engine:
         specifier: workspace:*
         version: link:../../packages/orbit-engine
+      orbit-engine-three:
+        specifier: workspace:*
+        version: link:../../packages/orbit-engine-three
       three:
         specifier: 0.185.1
         version: 0.185.1

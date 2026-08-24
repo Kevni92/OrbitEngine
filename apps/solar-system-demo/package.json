@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "orbit-engine": "workspace:*",
+    "orbit-engine-three": "workspace:*",
     "three": "0.185.1"
   },
   "devDependencies": {

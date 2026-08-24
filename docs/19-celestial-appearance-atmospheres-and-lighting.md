@@ -336,12 +336,12 @@ No emitter is chosen as a universal hard-coded "Sun". Binary/multiple systems th
 
 The CPU presentation layer constructs a per-body illumination set containing, for each emitter:
 
-- direction from body to star in the same presentation orientation used by the renderer;
+- direction from body to star in authoritative snapshot axes; the renderer adapter applies its explicit presentation-axis transform;
 - physical irradiance in W/m²;
 - derived linear-RGB chromaticity;
 - emitter `ObjectId` for diagnostics.
 
-The surface/atmosphere renderer consumes that set. Implementation may use a bounded GPU representation or multipass accumulation, but it must preserve additive semantics for all configured emitters. If a GPU limit requires approximation, that is a new explicit architecture/performance decision rather than silent truncation.
+The renderer-facing result retains all physical contributions and their additive linear-light total. For a bounded single-pass presentation, the semantic resolver deterministically selects at most four contributors by descending physical irradiance, breaking ties by numeric `ObjectId`; the default is configurable. Omitted contributors remain available in the complete contribution list and are reported in truncation diagnostics, so the cap is explicit and never changes physical irradiance or additive totals.
 
 ### Exposure and renderer units
 
