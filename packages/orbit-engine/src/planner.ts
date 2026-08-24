@@ -1,6 +1,9 @@
 import { objectId, type ObjectId } from "./objects.js";
+import type { FrameNode } from "./frame-registry.js";
 import { referenceFrameId, type ReferenceFrameId, type Vec3 } from "./frames.js";
+import type { Maneuver } from "./maneuver.js";
 import { revisionId, type RevisionId } from "./propagation.js";
+import type { ObjectRecord } from "./registry.js";
 import {
   compareDurations,
   compareSimulationInstants,
@@ -9,6 +12,7 @@ import {
   type Duration,
   type SimulationInstant,
 } from "./time.js";
+import type { PropagationState } from "./propagation.js";
 import { encodeLambertGeometryWire } from "./internal/planner-wire.js";
 
 export interface PlannerGeometryWire {
@@ -42,6 +46,7 @@ export const PlannerDependencyKind = Object.freeze({
   motion: "motion",
   property: "property",
   source: "source",
+  ephemeris: "ephemeris",
   frame: "frame",
   provider: "provider",
   maneuver: "maneuver",
@@ -298,9 +303,75 @@ export interface TrajectoryPlan {
   readonly quality: TrajectoryPlanQuality;
 }
 
+/** Read-only authoritative inputs used by engine-bound transfer planning. */
+export interface TrajectoryPlannerContext {
+  readonly objectAt: (id: ObjectId) => ObjectRecord;
+  readonly stateAt: (id: ObjectId, target: SimulationInstant, outputFrame: ReferenceFrameId) => PropagationState;
+  readonly frameAt: (id: ReferenceFrameId) => FrameNode;
+  readonly rootFrameId?: () => ReferenceFrameId;
+  readonly maneuversForObject?: (id: ObjectId) => readonly Maneuver[];
+}
+
+export const TrajectoryPlanningResultStatus = Object.freeze({
+  success: "success",
+  stateUnavailable: "stateUnavailable",
+  invalidPlanningFrame: "invalidPlanningFrame",
+  missingMu: "missingMu",
+  solverFailure: "solverFailure",
+  constraintRejected: "constraintRejected",
+} as const);
+export type TrajectoryPlanningResultStatus = (typeof TrajectoryPlanningResultStatus)[keyof typeof TrajectoryPlanningResultStatus];
+
+export interface TrajectoryPlanningSuccess {
+  readonly status: "success";
+  readonly plan: TrajectoryPlan;
+}
+
+export interface TrajectoryPlanningStateUnavailable {
+  readonly status: "stateUnavailable";
+  readonly request: NormalizedTrajectoryTransferRequest;
+  readonly reason: string;
+  readonly objectId?: ObjectId;
+}
+
+export interface TrajectoryPlanningInvalidFrame {
+  readonly status: "invalidPlanningFrame";
+  readonly request: NormalizedTrajectoryTransferRequest;
+  readonly reason: string;
+  readonly frameId: ReferenceFrameId;
+}
+
+export interface TrajectoryPlanningMissingMu {
+  readonly status: "missingMu";
+  readonly request: NormalizedTrajectoryTransferRequest;
+  readonly reason: string;
+  readonly centralBodyId: ObjectId;
+}
+
+export interface TrajectoryPlanningSolverFailure {
+  readonly status: "solverFailure";
+  readonly request: NormalizedTrajectoryTransferRequest;
+  readonly solver: LambertGeometryResult | PlannerUnsupportedResult<NormalizedLambertGeometryRequest>;
+}
+
+export interface TrajectoryPlanningConstraintRejected {
+  readonly status: "constraintRejected";
+  readonly request: NormalizedTrajectoryTransferRequest;
+  readonly plan: TrajectoryPlan;
+  readonly rejectedBy: readonly string[];
+}
+
+export type TrajectoryPlanningResult =
+  | TrajectoryPlanningSuccess
+  | TrajectoryPlanningStateUnavailable
+  | TrajectoryPlanningInvalidFrame
+  | TrajectoryPlanningMissingMu
+  | TrajectoryPlanningSolverFailure
+  | TrajectoryPlanningConstraintRejected;
+
 export interface PlannerUnsupportedResult<TRequest> {
   readonly status: "unsupported";
-  readonly reason: "lambertSolverNotImplemented";
+  readonly reason: "lambertSolverNotImplemented" | "plannerStateAccessUnavailable";
   readonly request: TRequest;
 }
 
@@ -584,6 +655,101 @@ function contentDigest(value: unknown): RevisionId {
   return revisionId(hash.toString());
 }
 
+const NEWTONIAN_GRAVITATIONAL_CONSTANT = 6.67430e-11;
+
+function vectorDifference(left: PlannerVector, right: PlannerVector): PlannerVector {
+  return Object.freeze({ x: left.x - right.x, y: left.y - right.y, z: left.z - right.z });
+}
+
+function vectorNegate(value: PlannerVector): PlannerVector {
+  return Object.freeze({ x: -value.x, y: -value.y, z: -value.z });
+}
+
+function vectorMagnitude(value: PlannerVector): number {
+  return Math.hypot(value.x, value.y, value.z);
+}
+
+function endpointFromState(value: PropagationState, expectedEpoch: SimulationInstant, expectedFrame: ReferenceFrameId, name: string): TrajectoryEndpointState {
+  if (compareSimulationInstants(value.epoch, expectedEpoch) !== 0) throw new RangeError(`${name} returned a different exact epoch`);
+  if (value.referenceFrame !== expectedFrame) throw new RangeError(`${name} returned a different reference frame`);
+  return Object.freeze({ epoch: value.epoch, position: Object.freeze({ ...value.position }), velocity: Object.freeze({ ...value.velocity }) });
+}
+
+function dependencyRevision(value: string | undefined): RevisionId {
+  return revisionId(value ?? "0");
+}
+
+function addDependency(
+  result: PlannerDependencyIdentity[],
+  keys: Set<string>,
+  value: PlannerDependencyIdentity,
+): void {
+  const key = `${value.kind}:${value.id}`;
+  if (keys.has(key)) return;
+  keys.add(key);
+  result.push(value);
+}
+
+function collectFrameDependencies(
+  context: TrajectoryPlannerContext,
+  frameId: ReferenceFrameId,
+): { readonly dependencies: readonly PlannerDependencyIdentity[]; readonly invalidReason?: string } {
+  const dependencies: PlannerDependencyIdentity[] = [];
+  const keys = new Set<string>();
+  const visited = new Set<ReferenceFrameId>();
+  let current = frameId;
+  while (true) {
+    if (visited.has(current)) return Object.freeze({ dependencies, invalidReason: "planning frame parent cycle" });
+    visited.add(current);
+    const node = context.frameAt(current);
+    if (node.provider.kind !== "staticRigid" && node.provider.kind !== "staticLocal") {
+      return Object.freeze({ dependencies, invalidReason: `planning frame provider ${node.provider.kind} is not inertial` });
+    }
+    const providerRevision = dependencyRevision(node.provider.revision);
+    addDependency(dependencies, keys, { kind: "frame", id: node.id, revision: providerRevision });
+    addDependency(dependencies, keys, { kind: "provider", id: `${node.id}:provider`, revision: providerRevision });
+    if (node.id === node.parent) break;
+    current = node.parent;
+  }
+  return Object.freeze({ dependencies: Object.freeze(dependencies) });
+}
+
+function collectObjectDependencies(
+  context: TrajectoryPlannerContext,
+  records: readonly ObjectRecord[],
+  sourceObjectId: ObjectId,
+): readonly PlannerDependencyIdentity[] {
+  const dependencies: PlannerDependencyIdentity[] = [];
+  const keys = new Set<string>();
+  for (const record of records) {
+    addDependency(dependencies, keys, { kind: "motion", id: record.id, revision: record.motion.motionRevision });
+    addDependency(dependencies, keys, { kind: "source", id: `${record.id}:state-source`, revision: record.motion.configurationRevision });
+    addDependency(dependencies, keys, { kind: "property", id: `${record.id}:properties`, revision: record.propertyRevision });
+    if (record.motion.modelKind === "referenceEphemeris") {
+      addDependency(dependencies, keys, { kind: "ephemeris", id: `${record.id}:ephemeris`, revision: record.motion.configurationRevision });
+    }
+  }
+  if (context.maneuversForObject !== undefined) {
+    for (const maneuver of context.maneuversForObject(sourceObjectId)) {
+      addDependency(dependencies, keys, { kind: "maneuver", id: maneuver.id, revision: maneuver.revision });
+    }
+  }
+  return Object.freeze(dependencies);
+}
+
+function resolveMu(record: ObjectRecord): { readonly value?: number; readonly source: "property" | "mass" | "missing" | "invalid" } {
+  if (record.properties.mu !== undefined) {
+    return record.properties.mu > 0 && Number.isFinite(record.properties.mu)
+      ? { value: record.properties.mu, source: "property" }
+      : { source: "invalid" };
+  }
+  if (record.properties.mass !== undefined && record.properties.mass > 0 && Number.isFinite(record.properties.mass)) {
+    const derived = record.properties.mass * NEWTONIAN_GRAVITATIONAL_CONSTANT;
+    return Number.isFinite(derived) && derived > 0 ? { value: derived, source: "mass" } : { source: "invalid" };
+  }
+  return { source: "missing" };
+}
+
 export function plannerContentDigest(value: unknown): RevisionId {
   return contentDigest(value);
 }
@@ -644,9 +810,11 @@ export function checkTrajectoryPlanStaleness(plan: TrajectoryPlan, currentDepend
 
 export class TrajectoryPlanner {
   readonly #backend: PlannerBackendCodec;
+  readonly #context?: TrajectoryPlannerContext;
 
-  constructor(backend: PlannerBackendCodec) {
+  constructor(backend: PlannerBackendCodec, context?: TrajectoryPlannerContext) {
     this.#backend = backend;
+    this.#context = context;
     Object.freeze(this);
   }
 
@@ -658,9 +826,194 @@ export class TrajectoryPlanner {
     return decodeLambertGeometryResult(request, crossed);
   }
 
-  planTransfer(input: TrajectoryTransferRequest): PlannerUnsupportedResult<NormalizedTrajectoryTransferRequest> {
+  planTransfer(input: TrajectoryTransferRequest): PlannerUnsupportedResult<NormalizedTrajectoryTransferRequest> | TrajectoryPlanningResult {
     const request = normalizeTrajectoryTransferRequest(input);
-    return Object.freeze({ status: "unsupported", reason: "lambertSolverNotImplemented", request });
+    const context = this.#context;
+    if (context === undefined) return Object.freeze({ status: "unsupported", reason: "plannerStateAccessUnavailable", request });
+
+    let sourceRecord: ObjectRecord;
+    let targetRecord: ObjectRecord;
+    let centralRecord: ObjectRecord;
+    let frameDependencies: ReturnType<typeof collectFrameDependencies>;
+    try {
+      sourceRecord = context.objectAt(request.sourceObjectId);
+      targetRecord = context.objectAt(request.targetObjectId);
+      centralRecord = context.objectAt(request.centralBodyId);
+      frameDependencies = collectFrameDependencies(context, request.planningFrameId);
+    } catch (error) {
+      return Object.freeze({
+        status: "stateUnavailable",
+        request,
+        reason: error instanceof Error ? error.message : "authoritative planning source is unavailable",
+      });
+    }
+    if (frameDependencies.invalidReason !== undefined) {
+      return Object.freeze({ status: "invalidPlanningFrame", request, frameId: request.planningFrameId, reason: frameDependencies.invalidReason });
+    }
+
+    const resolvedMu = resolveMu(centralRecord);
+    if (resolvedMu.value === undefined) {
+      return Object.freeze({
+        status: "missingMu",
+        request,
+        centralBodyId: request.centralBodyId,
+        reason: resolvedMu.source === "invalid"
+          ? "central body has no positive gravitational parameter"
+          : "central body has neither a positive gravitational parameter nor a positive mass",
+      });
+    }
+
+    let sourceDeparture: TrajectoryEndpointState;
+    let targetArrival: TrajectoryEndpointState;
+    let centralDeparture: TrajectoryEndpointState;
+    let centralArrival: TrajectoryEndpointState;
+    try {
+      sourceDeparture = endpointFromState(
+        context.stateAt(request.sourceObjectId, request.departure, request.planningFrameId),
+        request.departure,
+        request.planningFrameId,
+        "source state",
+      );
+      centralDeparture = endpointFromState(
+        context.stateAt(request.centralBodyId, request.departure, request.planningFrameId),
+        request.departure,
+        request.planningFrameId,
+        "central-body departure state",
+      );
+      targetArrival = endpointFromState(
+        context.stateAt(request.targetObjectId, request.arrival, request.planningFrameId),
+        request.arrival,
+        request.planningFrameId,
+        "target state",
+      );
+      centralArrival = endpointFromState(
+        context.stateAt(request.centralBodyId, request.arrival, request.planningFrameId),
+        request.arrival,
+        request.planningFrameId,
+        "central-body arrival state",
+      );
+    } catch (error) {
+      const objectIdValue = error instanceof Object && "objectId" in error
+        ? (error as { readonly objectId?: ObjectId }).objectId
+        : undefined;
+      return Object.freeze({
+        status: "stateUnavailable",
+        request,
+        ...(objectIdValue === undefined ? {} : { objectId: objectIdValue }),
+        reason: error instanceof Error ? error.message : "authoritative state query failed",
+      });
+    }
+
+    const dependencies = [
+      ...collectObjectDependencies(context, [sourceRecord, targetRecord, centralRecord], request.sourceObjectId),
+      ...frameDependencies.dependencies,
+      {
+        kind: "property" as const,
+        id: `${request.centralBodyId}:mu`,
+        revision: centralRecord.propertyRevision,
+      },
+      {
+        kind: "solver" as const,
+        id: "lambert-zero-revolution-v1",
+        revision: contentDigest({ algorithm: "lambert-zero-revolution-v1", solverConfiguration: request.solverConfiguration }),
+      },
+    ];
+    const dependencyKeys = new Set<string>();
+    const uniqueDependencies: PlannerDependencyIdentity[] = [];
+    for (const dependency of dependencies) addDependency(uniqueDependencies, dependencyKeys, dependency);
+    const dependencyDigest = plannerDependencyDigest(uniqueDependencies);
+
+    const departurePosition = vectorDifference(sourceDeparture.position, centralDeparture.position);
+    const departureVelocity = vectorDifference(sourceDeparture.velocity, centralDeparture.velocity);
+    const arrivalPosition = vectorDifference(targetArrival.position, centralArrival.position);
+    const arrivalVelocity = vectorDifference(targetArrival.velocity, centralArrival.velocity);
+    const geometry = this.solveLambertGeometry({
+      centralBodyId: request.centralBodyId,
+      planningFrameId: request.planningFrameId,
+      mu: resolvedMu.value,
+      departurePosition,
+      arrivalPosition,
+      timeOfFlight: request.timeOfFlight,
+      branch: request.branch,
+      solverConfiguration: request.solverConfiguration,
+      ...(dependencyDigest === undefined ? {} : { provenanceDigest: dependencyDigest }),
+    });
+    if (geometry.status !== "success") {
+      return Object.freeze({ status: "solverFailure", request, solver: geometry });
+    }
+
+    const departureDeltaVelocity = vectorDifference(geometry.solution.transferDepartureVelocity, departureVelocity);
+    const arrivalRelativeVelocity = vectorDifference(geometry.solution.transferArrivalVelocity, arrivalVelocity);
+    const arrivalDeltaVelocity = request.purpose === "rendezvous" ? vectorNegate(arrivalRelativeVelocity) : undefined;
+    const departureDeltaV = vectorMagnitude(departureDeltaVelocity);
+    const arrivalDeltaV = arrivalDeltaVelocity === undefined ? 0 : vectorMagnitude(arrivalDeltaVelocity);
+    const totalDeltaV = departureDeltaV + arrivalDeltaV;
+    const rejectedBy: string[] = [];
+    const constraints = request.constraints;
+    if (constraints.maximumDepartureDeltaV !== undefined && departureDeltaV > constraints.maximumDepartureDeltaV) {
+      rejectedBy.push("maximumDepartureDeltaV");
+    }
+    if (request.purpose === "rendezvous" && constraints.maximumArrivalDeltaV !== undefined && arrivalDeltaV > constraints.maximumArrivalDeltaV) {
+      rejectedBy.push("maximumArrivalDeltaV");
+    }
+    if (constraints.maximumTotalDeltaV !== undefined && totalDeltaV > constraints.maximumTotalDeltaV) {
+      rejectedBy.push("maximumTotalDeltaV");
+    }
+    if (constraints.minimumCentralBodyClearanceMeters !== undefined
+        && (geometry.solution.periapsisRadiusMeters === undefined
+          || geometry.solution.periapsisRadiusMeters < constraints.minimumCentralBodyClearanceMeters)) {
+      rejectedBy.push("minimumCentralBodyClearanceMeters");
+    }
+
+    const leg: ImpulsiveLambertLeg = {
+      kind: "impulsiveLambert",
+      departure: request.departure,
+      arrival: request.arrival,
+      centralBodyId: request.centralBodyId,
+      planningFrameId: request.planningFrameId,
+      muUsed: resolvedMu.value,
+      branch: request.branch,
+      revolutions: 0,
+      transferDepartureVelocity: geometry.solution.transferDepartureVelocity,
+      transferArrivalVelocity: geometry.solution.transferArrivalVelocity,
+      departureDeltaVelocity,
+      arrivalRelativeVelocity,
+      ...(arrivalDeltaVelocity === undefined ? {} : { arrivalDeltaVelocity }),
+      totalDeltaV,
+      ...(geometry.solution.periapsisRadiusMeters === undefined ? {} : { periapsisRadiusMeters: geometry.solution.periapsisRadiusMeters }),
+      solverResidual: geometry.solution.residual,
+      solverIterations: geometry.solution.iterations,
+    };
+    const plan = createTrajectoryPlan({
+      request,
+      legs: [leg],
+      dependencies: uniqueDependencies,
+      departureStateUsed: {
+        epoch: sourceDeparture.epoch,
+        position: departurePosition,
+        velocity: departureVelocity,
+      },
+      targetArrivalStateUsed: {
+        epoch: targetArrival.epoch,
+        position: arrivalPosition,
+        velocity: arrivalVelocity,
+      },
+      assumptions: [
+        "twoBodyCentralBody",
+        `centralBody:${request.centralBodyId}`,
+        `planningFrame:${request.planningFrameId}`,
+        "centralBodyRelativeEndpointStates",
+        `muSource:${resolvedMu.source}`,
+        `mu:${resolvedMu.value}`,
+        `purpose:${request.purpose}`,
+      ],
+      constraintsEvaluation: { feasible: rejectedBy.length === 0, ...(rejectedBy.length === 0 ? {} : { rejectedBy }) },
+      quality: { rankingMetric: TrajectoryRankingMetric.minimumTotalDeltaV, primaryScore: totalDeltaV },
+    });
+    if (rejectedBy.length > 0) {
+      return Object.freeze({ status: "constraintRejected", request, plan, rejectedBy: Object.freeze(rejectedBy) });
+    }
+    return Object.freeze({ status: "success", plan });
   }
 
   async searchTransfers(input: TrajectorySearchRequest, _options?: { readonly signal?: AbortSignal }): Promise<PlannerUnsupportedResult<NormalizedTrajectorySearchRequest>> {
