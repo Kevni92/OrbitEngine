@@ -1064,4 +1064,27 @@ EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_planner(
   return 1;
 }
 
+EMSCRIPTEN_KEEPALIVE int orbit_engine_round_trip_planner_batch(
+  const double* input,
+  std::uint32_t input_length,
+  double* output,
+  std::uint32_t output_length
+) {
+  if (input == nullptr || output == nullptr || input_length == 0
+      || input_length % orbit_engine::lambert::kInputWords != 0
+      || output_length != (input_length / orbit_engine::lambert::kInputWords) * orbit_engine::lambert::kOutputWords) return 0;
+  const auto count = input_length / orbit_engine::lambert::kInputWords;
+  for (std::uint32_t index = 0; index < count; index += 1) {
+    orbit_engine::lambert::GeometryWire wire;
+    const auto input_offset = index * orbit_engine::lambert::kInputWords;
+    if (!orbit_engine::lambert::decode_packet(
+          std::span<const double>(input + input_offset, orbit_engine::lambert::kInputWords), wire)) return 0;
+    const auto result = orbit_engine::lambert::evaluate(wire);
+    const auto output_offset = index * orbit_engine::lambert::kOutputWords;
+    if (!orbit_engine::lambert::encode_packet(
+          result, std::span<double>(output + output_offset, orbit_engine::lambert::kOutputWords))) return 0;
+  }
+  return 1;
+}
+
 }

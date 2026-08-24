@@ -9,6 +9,7 @@ set(ORBIT_ENGINE_WASM_EXPORTS
   _orbit_engine_round_trip_time_nanoseconds
   _orbit_engine_round_trip_double
   _orbit_engine_round_trip_planner
+  _orbit_engine_round_trip_planner_batch
   _orbit_engine_round_trip_frame_reference_frame_id_high
   _orbit_engine_round_trip_frame_reference_frame_id_low
   _orbit_engine_round_trip_frame_epoch_seconds_high

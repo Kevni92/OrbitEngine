@@ -5,9 +5,11 @@ import type { Maneuver } from "./maneuver.js";
 import { revisionId, type RevisionId } from "./propagation.js";
 import type { ObjectRecord } from "./registry.js";
 import {
+  addDurationToInstant,
   compareDurations,
   compareSimulationInstants,
   duration,
+  simulationInstant,
   subtractSimulationInstants,
   type Duration,
   type SimulationInstant,
@@ -203,8 +205,22 @@ export interface TrajectorySearchRequest {
   readonly branchSet: readonly LambertBranch[];
   readonly purpose: TrajectoryPurpose;
   readonly constraints?: TrajectoryConstraints;
+  readonly solverConfiguration?: Partial<LambertSolverConfiguration>;
   readonly rankingMetric?: TrajectoryRankingMetric;
   readonly searchBudget?: TrajectorySearchBudget;
+  readonly sampling?: TrajectorySearchSampling;
+}
+
+export interface TrajectorySearchSampling {
+  readonly departureSamples?: number;
+  readonly arrivalSamples?: number;
+  readonly timeOfFlightSamples?: number;
+}
+
+export interface NormalizedTrajectorySearchSampling {
+  readonly departureSamples: number;
+  readonly arrivalSamples: number;
+  readonly timeOfFlightSamples: number;
 }
 
 export interface TrajectoryDurationRange {
@@ -212,11 +228,60 @@ export interface TrajectoryDurationRange {
   readonly maximum: Duration;
 }
 
-export interface NormalizedTrajectorySearchRequest extends Omit<TrajectorySearchRequest, "constraints" | "rankingMetric" | "searchBudget" | "branchSet"> {
+export interface NormalizedTrajectorySearchRequest extends Omit<TrajectorySearchRequest, "constraints" | "solverConfiguration" | "rankingMetric" | "searchBudget" | "branchSet" | "sampling"> {
   readonly branchSet: readonly LambertBranch[];
   readonly constraints: NormalizedTrajectoryConstraints;
+  readonly solverConfiguration: LambertSolverConfiguration;
   readonly rankingMetric: TrajectoryRankingMetric;
   readonly searchBudget: NormalizedTrajectorySearchBudget;
+  readonly sampling: NormalizedTrajectorySearchSampling;
+}
+
+export interface TrajectorySearchOptions {
+  readonly signal?: AbortSignal;
+  readonly includeGrid?: boolean;
+}
+
+export const TrajectorySearchStatus = Object.freeze({
+  completed: "completed",
+  budgetExceeded: "budgetExceeded",
+  cancelled: "cancelled",
+} as const);
+export type TrajectorySearchStatus = (typeof TrajectorySearchStatus)[keyof typeof TrajectorySearchStatus];
+
+export const TrajectorySearchCellStatus = Object.freeze({
+  feasible: "feasible",
+  infeasible: "infeasible",
+  unavailable: "unavailable",
+  solverFailure: "solverFailure",
+} as const);
+export type TrajectorySearchCellStatus = (typeof TrajectorySearchCellStatus)[keyof typeof TrajectorySearchCellStatus];
+
+export interface TrajectorySearchGridSample {
+  readonly departure: SimulationInstant;
+  readonly arrival: SimulationInstant;
+  readonly branch: LambertBranch;
+  readonly status: TrajectorySearchCellStatus;
+  readonly totalDeltaV?: number;
+  readonly planDigest?: RevisionId;
+}
+
+export interface TrajectorySearchDiagnostics {
+  readonly status: TrajectorySearchStatus;
+  readonly lambertSolves: number;
+  readonly coarseCellsEvaluated: number;
+  readonly refinementSeeds: number;
+  readonly refinementIterations: number;
+  readonly returnedCandidates: number;
+  readonly partialCoverage: boolean;
+}
+
+export interface TrajectorySearchResult {
+  readonly status: TrajectorySearchStatus;
+  readonly request: NormalizedTrajectorySearchRequest;
+  readonly candidates: readonly TrajectoryPlan[];
+  readonly diagnostics: TrajectorySearchDiagnostics;
+  readonly grid?: readonly TrajectorySearchGridSample[];
 }
 
 export interface PlannerDependencyIdentity {
@@ -377,6 +442,7 @@ export interface PlannerUnsupportedResult<TRequest> {
 
 export interface PlannerBackendCodec {
   roundTripPlanner(value: PlannerGeometryWire): PlannerGeometryWire;
+  readonly roundTripPlannerBatch?: (values: readonly PlannerGeometryWire[]) => readonly PlannerGeometryWire[];
 }
 
 export interface PlannerValidationConfig {
@@ -586,6 +652,7 @@ export function normalizeTrajectoryTransferRequest(value: TrajectoryTransferRequ
 }
 
 const DEFAULT_SEARCH_BUDGET: NormalizedTrajectorySearchBudget = Object.freeze({ maxLambertSolves: 100_000, maxCoarseCells: 100_000, maxRefinementSeeds: 1024, maxRefinementIterationsPerSeed: 128, maxReturnedCandidates: 256 });
+const DEFAULT_SEARCH_SAMPLING: NormalizedTrajectorySearchSampling = Object.freeze({ departureSamples: 8, arrivalSamples: 8, timeOfFlightSamples: 8 });
 
 function searchBudget(value: TrajectorySearchBudget | undefined): NormalizedTrajectorySearchBudget {
   const candidate = value ?? {};
@@ -595,6 +662,15 @@ function searchBudget(value: TrajectorySearchBudget | undefined): NormalizedTraj
     maxRefinementSeeds: integer(candidate.maxRefinementSeeds ?? DEFAULT_SEARCH_BUDGET.maxRefinementSeeds, "maxRefinementSeeds", 1, 100_000),
     maxRefinementIterationsPerSeed: integer(candidate.maxRefinementIterationsPerSeed ?? DEFAULT_SEARCH_BUDGET.maxRefinementIterationsPerSeed, "maxRefinementIterationsPerSeed", 1, 4096),
     maxReturnedCandidates: integer(candidate.maxReturnedCandidates ?? DEFAULT_SEARCH_BUDGET.maxReturnedCandidates, "maxReturnedCandidates", 1, 256),
+  });
+}
+
+function searchSampling(value: TrajectorySearchSampling | undefined): NormalizedTrajectorySearchSampling {
+  const candidate = value ?? {};
+  return Object.freeze({
+    departureSamples: integer(candidate.departureSamples ?? DEFAULT_SEARCH_SAMPLING.departureSamples, "departureSamples", 1, 100_000),
+    arrivalSamples: integer(candidate.arrivalSamples ?? DEFAULT_SEARCH_SAMPLING.arrivalSamples, "arrivalSamples", 1, 100_000),
+    timeOfFlightSamples: integer(candidate.timeOfFlightSamples ?? DEFAULT_SEARCH_SAMPLING.timeOfFlightSamples, "timeOfFlightSamples", 1, 100_000),
   });
 }
 
@@ -620,7 +696,7 @@ export function normalizeTrajectorySearchRequest(value: TrajectorySearchRequest)
   if (constraints.allowedPlanningFrameIds.length > 0 && !constraints.allowedPlanningFrameIds.includes(planningFrameId)) throw new RangeError("planningFrameId is not allowed by constraints");
   const rankingMetric = candidate.rankingMetric ?? TrajectoryRankingMetric.minimumTotalDeltaV;
   if (!Object.values(TrajectoryRankingMetric).includes(rankingMetric)) throw new RangeError("rankingMetric is invalid");
-  return Object.freeze({ sourceObjectId, targetObjectId, centralBodyId, planningFrameId, departureWindow, ...(arrivalWindow === undefined ? {} : { arrivalWindow }), ...(timeOfFlightRange === undefined ? {} : { timeOfFlightRange }), branchSet: Object.freeze(branches), purpose: candidate.purpose, constraints, rankingMetric, searchBudget: searchBudget(candidate.searchBudget) });
+  return Object.freeze({ sourceObjectId, targetObjectId, centralBodyId, planningFrameId, departureWindow, ...(arrivalWindow === undefined ? {} : { arrivalWindow }), ...(timeOfFlightRange === undefined ? {} : { timeOfFlightRange }), branchSet: Object.freeze(branches), purpose: candidate.purpose, constraints, solverConfiguration: solverConfiguration(candidate.solverConfiguration), rankingMetric, searchBudget: searchBudget(candidate.searchBudget), sampling: searchSampling(candidate.sampling) });
 }
 
 function normalizeDependency(value: PlannerDependencyIdentity): PlannerDependencyIdentity {
@@ -808,6 +884,169 @@ export function checkTrajectoryPlanStaleness(plan: TrajectoryPlan, currentDepend
   return Object.freeze({ status: changedDependencies.length === 0 ? "current" : "stale", ...(actual.length === 0 ? {} : { dependencyDigest: plannerDependencyDigest(actual) }), changedDependencies: Object.freeze(changedDependencies) });
 }
 
+type SearchSecondCoordinate = SimulationInstant | Duration;
+
+interface SearchPoint {
+  readonly departure: SimulationInstant;
+  readonly arrival: SimulationInstant;
+}
+
+const NANOSECONDS_PER_SECOND = 1_000_000_000n;
+
+function timeValueNanoseconds(value: SimulationInstant | Duration): bigint {
+  return BigInt(value.seconds) * NANOSECONDS_PER_SECOND + BigInt(value.nanoseconds);
+}
+
+function timeValueFromNanoseconds(value: bigint, kind: "instant" | "duration"): SimulationInstant | Duration {
+  let seconds = value / NANOSECONDS_PER_SECOND;
+  let nanoseconds = value % NANOSECONDS_PER_SECOND;
+  if (nanoseconds < 0) {
+    seconds -= 1n;
+    nanoseconds += NANOSECONDS_PER_SECOND;
+  }
+  return kind === "instant"
+    ? simulationInstant(Number(seconds), Number(nanoseconds))
+    : duration(Number(seconds), Number(nanoseconds));
+}
+
+function interpolateTime<T extends "instant" | "duration">(
+  start: T extends "instant" ? SimulationInstant : Duration,
+  end: T extends "instant" ? SimulationInstant : Duration,
+  index: number,
+  count: number,
+  kind: T,
+): T extends "instant" ? SimulationInstant : Duration {
+  if (count <= 1 || index <= 0) return start as T extends "instant" ? SimulationInstant : Duration;
+  if (index >= count - 1) return end as T extends "instant" ? SimulationInstant : Duration;
+  const startNanoseconds = timeValueNanoseconds(start);
+  const span = timeValueNanoseconds(end) - startNanoseconds;
+  const value = startNanoseconds + (span * BigInt(index)) / BigInt(count - 1);
+  return timeValueFromNanoseconds(value, kind) as T extends "instant" ? SimulationInstant : Duration;
+}
+
+function shiftTime<T extends "instant" | "duration">(
+  value: T extends "instant" ? SimulationInstant : Duration,
+  deltaNanoseconds: bigint,
+  kind: T,
+): T extends "instant" ? SimulationInstant : Duration {
+  return timeValueFromNanoseconds(timeValueNanoseconds(value) + deltaNanoseconds, kind) as T extends "instant" ? SimulationInstant : Duration;
+}
+
+function searchPoint(request: NormalizedTrajectorySearchRequest, departure: SimulationInstant, second: SearchSecondCoordinate): SearchPoint {
+  return {
+    departure,
+    arrival: request.arrivalWindow === undefined
+      ? addDurationToInstant(departure, second as Duration)
+      : second as SimulationInstant,
+  };
+}
+
+function searchPointWithinDomain(request: NormalizedTrajectorySearchRequest, point: SearchPoint): boolean {
+  if (compareSimulationInstants(point.arrival, point.departure) <= 0) return false;
+  if (!contains(request.departureWindow, point.departure)) return false;
+  if (request.arrivalWindow !== undefined) return contains(request.arrivalWindow, point.arrival);
+  const timeOfFlight = subtractSimulationInstants(point.arrival, point.departure);
+  return request.timeOfFlightRange !== undefined
+    && compareDurations(timeOfFlight, request.timeOfFlightRange.minimum) >= 0
+    && compareDurations(timeOfFlight, request.timeOfFlightRange.maximum) <= 0;
+}
+
+function searchCandidateKey(branchValue: LambertBranch, point: SearchPoint): string {
+  return `${canonical(branchValue)}|${point.departure.seconds}:${point.departure.nanoseconds}|${point.arrival.seconds}:${point.arrival.nanoseconds}`;
+}
+
+function searchPlanMetric(plan: TrajectoryPlan, metric: TrajectoryRankingMetric): number {
+  const leg = plan.legs[0]!;
+  switch (metric) {
+    case TrajectoryRankingMetric.minimumDepartureDeltaV:
+      return vectorMagnitude(leg.departureDeltaVelocity);
+    case TrajectoryRankingMetric.minimumArrivalDeltaV:
+      return vectorMagnitude(leg.arrivalDeltaVelocity ?? leg.arrivalRelativeVelocity);
+    case TrajectoryRankingMetric.minimumTimeOfFlight:
+      return Number(timeValueNanoseconds(subtractSimulationInstants(plan.arrival, plan.departure)));
+    case TrajectoryRankingMetric.minimumTotalDeltaV:
+      return leg.totalDeltaV;
+  }
+}
+
+function compareSearchPlans(left: TrajectoryPlan, right: TrajectoryPlan, metric: TrajectoryRankingMetric): number {
+  const leftMetric = searchPlanMetric(left, metric);
+  const rightMetric = searchPlanMetric(right, metric);
+  if (leftMetric !== rightMetric) return leftMetric < rightMetric ? -1 : 1;
+  const departure = compareSimulationInstants(left.departure, right.departure);
+  if (departure !== 0) return departure;
+  const arrival = compareSimulationInstants(left.arrival, right.arrival);
+  if (arrival !== 0) return arrival;
+  const leftBranch = left.request.branch;
+  const rightBranch = right.request.branch;
+  const motionSense = compareText(leftBranch.motionSense, rightBranch.motionSense);
+  if (motionSense !== 0) return motionSense;
+  const path = compareText(leftBranch.path, rightBranch.path);
+  if (path !== 0) return path;
+  return compareText(left.digest, right.digest);
+}
+
+function rankedSearchPlan(plan: TrajectoryPlan, metric: TrajectoryRankingMetric): TrajectoryPlan {
+  return createTrajectoryPlan({
+    request: plan.request,
+    legs: plan.legs,
+    dependencies: plan.dependencies,
+    ...(plan.departureStateUsed === undefined ? {} : { departureStateUsed: plan.departureStateUsed }),
+    ...(plan.targetArrivalStateUsed === undefined ? {} : { targetArrivalStateUsed: plan.targetArrivalStateUsed }),
+    assumptions: plan.assumptions,
+    constraintsEvaluation: plan.constraintsEvaluation,
+    quality: { rankingMetric: metric, primaryScore: searchPlanMetric(plan, metric) },
+  });
+}
+
+function normalizedSearchResult(
+  request: NormalizedTrajectorySearchRequest,
+  status: TrajectorySearchStatus,
+  candidates: readonly TrajectoryPlan[],
+  diagnostics: Omit<TrajectorySearchDiagnostics, "status" | "returnedCandidates" | "partialCoverage">,
+  grid: readonly TrajectorySearchGridSample[],
+  includeGrid: boolean,
+): TrajectorySearchResult {
+  const limitedCandidates = Object.freeze([...candidates].slice(0, request.searchBudget.maxReturnedCandidates));
+  const normalizedDiagnostics = Object.freeze({
+    ...diagnostics,
+    status,
+    returnedCandidates: limitedCandidates.length,
+    partialCoverage: status !== TrajectorySearchStatus.completed,
+  });
+  return Object.freeze({
+    status,
+    request,
+    candidates: limitedCandidates,
+    diagnostics: normalizedDiagnostics,
+    ...(includeGrid ? { grid: Object.freeze([...grid]) } : {}),
+  });
+}
+
+interface PreparedTransfer {
+  readonly request: NormalizedTrajectoryTransferRequest;
+  readonly sourceDeparture: TrajectoryEndpointState;
+  readonly targetArrival: TrajectoryEndpointState;
+  readonly departurePosition: PlannerVector;
+  readonly departureVelocity: PlannerVector;
+  readonly arrivalPosition: PlannerVector;
+  readonly arrivalVelocity: PlannerVector;
+  readonly mu: number;
+  readonly muSource: "property" | "mass";
+  readonly dependencies: readonly PlannerDependencyIdentity[];
+  readonly dependencyDigest?: RevisionId;
+}
+
+type TransferPreparationResult = PreparedTransfer
+  | PlannerUnsupportedResult<NormalizedTrajectoryTransferRequest>
+  | TrajectoryPlanningStateUnavailable
+  | TrajectoryPlanningInvalidFrame
+  | TrajectoryPlanningMissingMu;
+
+function isPreparedTransfer(value: TransferPreparationResult): value is PreparedTransfer {
+  return !Object.prototype.hasOwnProperty.call(value, "status");
+}
+
 export class TrajectoryPlanner {
   readonly #backend: PlannerBackendCodec;
   readonly #context?: TrajectoryPlannerContext;
@@ -816,6 +1055,184 @@ export class TrajectoryPlanner {
     this.#backend = backend;
     this.#context = context;
     Object.freeze(this);
+  }
+
+  #prepareTransfer(input: TrajectoryTransferRequest): TransferPreparationResult {
+    const request = normalizeTrajectoryTransferRequest(input);
+    const context = this.#context;
+    if (context === undefined) return Object.freeze({ status: "unsupported", reason: "plannerStateAccessUnavailable", request });
+
+    let sourceRecord: ObjectRecord;
+    let targetRecord: ObjectRecord;
+    let centralRecord: ObjectRecord;
+    let frameDependencies: ReturnType<typeof collectFrameDependencies>;
+    try {
+      sourceRecord = context.objectAt(request.sourceObjectId);
+      targetRecord = context.objectAt(request.targetObjectId);
+      centralRecord = context.objectAt(request.centralBodyId);
+      frameDependencies = collectFrameDependencies(context, request.planningFrameId);
+    } catch (error) {
+      return Object.freeze({ status: "stateUnavailable", request, reason: error instanceof Error ? error.message : "authoritative planning source is unavailable" });
+    }
+    if (frameDependencies.invalidReason !== undefined) {
+      return Object.freeze({ status: "invalidPlanningFrame", request, frameId: request.planningFrameId, reason: frameDependencies.invalidReason });
+    }
+    const resolvedMu = resolveMu(centralRecord);
+    if (resolvedMu.value === undefined) {
+      return Object.freeze({
+        status: "missingMu",
+        request,
+        centralBodyId: request.centralBodyId,
+        reason: resolvedMu.source === "invalid"
+          ? "central body has no positive gravitational parameter"
+          : "central body has neither a positive gravitational parameter nor a positive mass",
+      });
+    }
+
+    let sourceDeparture: TrajectoryEndpointState;
+    let targetArrival: TrajectoryEndpointState;
+    let centralDeparture: TrajectoryEndpointState;
+    let centralArrival: TrajectoryEndpointState;
+    try {
+      sourceDeparture = endpointFromState(context.stateAt(request.sourceObjectId, request.departure, request.planningFrameId), request.departure, request.planningFrameId, "source state");
+      centralDeparture = endpointFromState(context.stateAt(request.centralBodyId, request.departure, request.planningFrameId), request.departure, request.planningFrameId, "central-body departure state");
+      targetArrival = endpointFromState(context.stateAt(request.targetObjectId, request.arrival, request.planningFrameId), request.arrival, request.planningFrameId, "target state");
+      centralArrival = endpointFromState(context.stateAt(request.centralBodyId, request.arrival, request.planningFrameId), request.arrival, request.planningFrameId, "central-body arrival state");
+    } catch (error) {
+      return Object.freeze({ status: "stateUnavailable", request, reason: error instanceof Error ? error.message : "authoritative state query failed" });
+    }
+
+    const dependencies = [
+      ...collectObjectDependencies(context, [sourceRecord, targetRecord, centralRecord], request.sourceObjectId),
+      ...frameDependencies.dependencies,
+      { kind: "property" as const, id: `${request.centralBodyId}:mu`, revision: centralRecord.propertyRevision },
+      { kind: "solver" as const, id: "lambert-zero-revolution-v1", revision: contentDigest({ algorithm: "lambert-zero-revolution-v1", solverConfiguration: request.solverConfiguration }) },
+    ];
+    const dependencyKeys = new Set<string>();
+    const uniqueDependencies: PlannerDependencyIdentity[] = [];
+    for (const dependency of dependencies) addDependency(uniqueDependencies, dependencyKeys, dependency);
+    const departurePosition = vectorDifference(sourceDeparture.position, centralDeparture.position);
+    const departureVelocity = vectorDifference(sourceDeparture.velocity, centralDeparture.velocity);
+    const arrivalPosition = vectorDifference(targetArrival.position, centralArrival.position);
+    const arrivalVelocity = vectorDifference(targetArrival.velocity, centralArrival.velocity);
+    return Object.freeze({
+      request,
+      sourceDeparture,
+      targetArrival,
+      departurePosition,
+      departureVelocity,
+      arrivalPosition,
+      arrivalVelocity,
+      mu: resolvedMu.value,
+      muSource: resolvedMu.source === "mass" ? "mass" : "property",
+      dependencies: Object.freeze(uniqueDependencies),
+      ...(plannerDependencyDigest(uniqueDependencies) === undefined ? {} : { dependencyDigest: plannerDependencyDigest(uniqueDependencies) }),
+    });
+  }
+
+  #geometryRequest(prepared: PreparedTransfer): NormalizedLambertGeometryRequest {
+    return normalizeLambertGeometryRequest({
+      centralBodyId: prepared.request.centralBodyId,
+      planningFrameId: prepared.request.planningFrameId,
+      mu: prepared.mu,
+      departurePosition: prepared.departurePosition,
+      arrivalPosition: prepared.arrivalPosition,
+      timeOfFlight: prepared.request.timeOfFlight,
+      branch: prepared.request.branch,
+      solverConfiguration: prepared.request.solverConfiguration,
+      ...(prepared.dependencyDigest === undefined ? {} : { provenanceDigest: prepared.dependencyDigest }),
+    });
+  }
+
+  #solvePrepared(prepared: PreparedTransfer): LambertGeometryResult | PlannerUnsupportedResult<NormalizedLambertGeometryRequest> {
+    const request = this.#geometryRequest(prepared);
+    const crossed = this.#backend.roundTripPlanner(encodeLambertGeometryWire(request));
+    if (crossed.resultWords === undefined) return Object.freeze({ status: "unsupported", reason: "lambertSolverNotImplemented", request });
+    return decodeLambertGeometryResult(request, crossed);
+  }
+
+  #solvePreparedBatch(prepared: readonly PreparedTransfer[]): readonly (LambertGeometryResult | PlannerUnsupportedResult<NormalizedLambertGeometryRequest>)[] {
+    if (prepared.length === 0) return Object.freeze([]);
+    const requests = prepared.map((value) => this.#geometryRequest(value));
+    const wires = requests.map((value) => encodeLambertGeometryWire(value));
+    const crossed = this.#backend.roundTripPlannerBatch === undefined
+      ? wires.map((value) => this.#backend.roundTripPlanner(value))
+      : this.#backend.roundTripPlannerBatch(wires);
+    if (crossed.length !== requests.length) throw new RangeError("planner batch codec returned the wrong number of packets");
+    return Object.freeze(crossed.map((value, index) => {
+      const request = requests[index]!;
+      if (value.resultWords === undefined) return Object.freeze({ status: "unsupported", reason: "lambertSolverNotImplemented", request });
+      return decodeLambertGeometryResult(request, value);
+    }));
+  }
+
+  #completeTransfer(prepared: PreparedTransfer, geometry: LambertGeometryResult | PlannerUnsupportedResult<NormalizedLambertGeometryRequest>): TrajectoryPlanningResult | PlannerUnsupportedResult<NormalizedTrajectoryTransferRequest> {
+    if (geometry.status !== "success") return Object.freeze({ status: "solverFailure", request: prepared.request, solver: geometry });
+    const departureDeltaVelocity = vectorDifference(geometry.solution.transferDepartureVelocity, prepared.departureVelocity);
+    const arrivalRelativeVelocity = vectorDifference(geometry.solution.transferArrivalVelocity, prepared.arrivalVelocity);
+    const arrivalDeltaVelocity = prepared.request.purpose === "rendezvous" ? vectorNegate(arrivalRelativeVelocity) : undefined;
+    const departureDeltaV = vectorMagnitude(departureDeltaVelocity);
+    const arrivalDeltaV = arrivalDeltaVelocity === undefined ? 0 : vectorMagnitude(arrivalDeltaVelocity);
+    const totalDeltaV = departureDeltaV + arrivalDeltaV;
+    const rejectedBy: string[] = [];
+    const constraints = prepared.request.constraints;
+    if (constraints.maximumDepartureDeltaV !== undefined && departureDeltaV > constraints.maximumDepartureDeltaV) rejectedBy.push("maximumDepartureDeltaV");
+    if (prepared.request.purpose === "rendezvous" && constraints.maximumArrivalDeltaV !== undefined && arrivalDeltaV > constraints.maximumArrivalDeltaV) rejectedBy.push("maximumArrivalDeltaV");
+    if (constraints.maximumTotalDeltaV !== undefined && totalDeltaV > constraints.maximumTotalDeltaV) rejectedBy.push("maximumTotalDeltaV");
+    if (constraints.minimumCentralBodyClearanceMeters !== undefined
+        && (geometry.solution.periapsisRadiusMeters === undefined || geometry.solution.periapsisRadiusMeters < constraints.minimumCentralBodyClearanceMeters)) rejectedBy.push("minimumCentralBodyClearanceMeters");
+    const plan = createTrajectoryPlan({
+      request: prepared.request,
+      legs: [{
+        kind: "impulsiveLambert",
+        departure: prepared.request.departure,
+        arrival: prepared.request.arrival,
+        centralBodyId: prepared.request.centralBodyId,
+        planningFrameId: prepared.request.planningFrameId,
+        muUsed: prepared.mu,
+        branch: prepared.request.branch,
+        revolutions: 0,
+        transferDepartureVelocity: geometry.solution.transferDepartureVelocity,
+        transferArrivalVelocity: geometry.solution.transferArrivalVelocity,
+        departureDeltaVelocity,
+        arrivalRelativeVelocity,
+        ...(arrivalDeltaVelocity === undefined ? {} : { arrivalDeltaVelocity }),
+        totalDeltaV,
+        ...(geometry.solution.periapsisRadiusMeters === undefined ? {} : { periapsisRadiusMeters: geometry.solution.periapsisRadiusMeters }),
+        solverResidual: geometry.solution.residual,
+        solverIterations: geometry.solution.iterations,
+      }],
+      dependencies: prepared.dependencies,
+      departureStateUsed: { epoch: prepared.sourceDeparture.epoch, position: prepared.departurePosition, velocity: prepared.departureVelocity },
+      targetArrivalStateUsed: { epoch: prepared.targetArrival.epoch, position: prepared.arrivalPosition, velocity: prepared.arrivalVelocity },
+      assumptions: [
+        "twoBodyCentralBody",
+        `centralBody:${prepared.request.centralBodyId}`,
+        `planningFrame:${prepared.request.planningFrameId}`,
+        "centralBodyRelativeEndpointStates",
+        `muSource:${prepared.muSource}`,
+        `mu:${prepared.mu}`,
+        `purpose:${prepared.request.purpose}`,
+      ],
+      constraintsEvaluation: { feasible: rejectedBy.length === 0, ...(rejectedBy.length === 0 ? {} : { rejectedBy }) },
+      quality: { rankingMetric: TrajectoryRankingMetric.minimumTotalDeltaV, primaryScore: totalDeltaV },
+    });
+    return rejectedBy.length > 0
+      ? Object.freeze({ status: "constraintRejected", request: prepared.request, plan, rejectedBy: Object.freeze(rejectedBy) })
+      : Object.freeze({ status: "success", plan });
+  }
+
+  #planTransferBatch(inputs: readonly TrajectoryTransferRequest[]): readonly (TrajectoryPlanningResult | PlannerUnsupportedResult<NormalizedTrajectoryTransferRequest>)[] {
+    const preparedResults = inputs.map((input) => this.#prepareTransfer(input));
+    const prepared = preparedResults.filter(isPreparedTransfer);
+    const geometries = this.#solvePreparedBatch(prepared);
+    let geometryIndex = 0;
+    return Object.freeze(preparedResults.map((result) => {
+      if (!isPreparedTransfer(result)) return result;
+      const geometry = geometries[geometryIndex++];
+      if (geometry === undefined) throw new RangeError("planner batch preparation and result counts differ");
+      return this.#completeTransfer(result, geometry);
+    }));
   }
 
   solveLambertGeometry(input: LambertGeometryRequest): LambertGeometryResult | PlannerUnsupportedResult<NormalizedLambertGeometryRequest> {
@@ -1016,9 +1433,175 @@ export class TrajectoryPlanner {
     return Object.freeze({ status: "success", plan });
   }
 
-  async searchTransfers(input: TrajectorySearchRequest, _options?: { readonly signal?: AbortSignal }): Promise<PlannerUnsupportedResult<NormalizedTrajectorySearchRequest>> {
+  async searchTransfers(input: TrajectorySearchRequest, options: TrajectorySearchOptions = {}): Promise<PlannerUnsupportedResult<NormalizedTrajectorySearchRequest> | TrajectorySearchResult> {
     const request = normalizeTrajectorySearchRequest(input);
-    return Object.freeze({ status: "unsupported", reason: "lambertSolverNotImplemented", request });
+    if (this.#context === undefined) return Object.freeze({ status: "unsupported", reason: "plannerStateAccessUnavailable", request });
+
+    const includeGrid = options.includeGrid === true;
+    const emptyDiagnostics = {
+      lambertSolves: 0,
+      coarseCellsEvaluated: 0,
+      refinementSeeds: 0,
+      refinementIterations: 0,
+    } as const;
+    if (options.signal?.aborted) {
+      return normalizedSearchResult(request, TrajectorySearchStatus.cancelled, [], emptyDiagnostics, [], includeGrid);
+    }
+
+    const candidates = new Map<string, TrajectoryPlan>();
+    const visited = new Set<string>();
+    const grid: TrajectorySearchGridSample[] = [];
+    let lambertSolves = 0;
+    let coarseCellsEvaluated = 0;
+    let refinementSeeds = 0;
+    let refinementIterations = 0;
+    let budgetExceeded = false;
+    let cancelled = false;
+    let evaluationsSinceYield = 0;
+
+    const yieldAtBatchBoundary = async (): Promise<void> => {
+      evaluationsSinceYield += 1;
+      if (evaluationsSinceYield % 32 === 0) await Promise.resolve();
+    };
+
+    const recordCell = (point: SearchPoint, branchValue: LambertBranch, result: TrajectoryPlanningResult | PlannerUnsupportedResult<NormalizedTrajectoryTransferRequest>): void => {
+      if (!includeGrid) return;
+      if (result.status === "success") {
+        grid.push(Object.freeze({ departure: point.departure, arrival: point.arrival, branch: branchValue, status: TrajectorySearchCellStatus.feasible, totalDeltaV: result.plan.legs[0]!.totalDeltaV, planDigest: result.plan.digest }));
+      } else if (result.status === "constraintRejected") {
+        grid.push(Object.freeze({ departure: point.departure, arrival: point.arrival, branch: branchValue, status: TrajectorySearchCellStatus.infeasible, totalDeltaV: result.plan.legs[0]!.totalDeltaV, planDigest: result.plan.digest }));
+      } else if (result.status === "solverFailure") {
+        grid.push(Object.freeze({ departure: point.departure, arrival: point.arrival, branch: branchValue, status: TrajectorySearchCellStatus.solverFailure }));
+      } else {
+        grid.push(Object.freeze({ departure: point.departure, arrival: point.arrival, branch: branchValue, status: TrajectorySearchCellStatus.unavailable }));
+      }
+    };
+
+    const evaluateBatch = async (entries: readonly { readonly point: SearchPoint; readonly coarse: boolean }[], branchValue: LambertBranch): Promise<boolean> => {
+      if (cancelled || budgetExceeded) return false;
+      if (options.signal?.aborted) {
+        cancelled = true;
+        return false;
+      }
+      const accepted: { readonly point: SearchPoint; readonly key: string; readonly coarse: boolean }[] = [];
+      for (const entry of entries) {
+        if (!searchPointWithinDomain(request, entry.point)) continue;
+        const key = searchCandidateKey(branchValue, entry.point);
+        if (visited.has(key)) continue;
+        if ((entry.coarse && coarseCellsEvaluated >= request.searchBudget.maxCoarseCells) || lambertSolves + accepted.length >= request.searchBudget.maxLambertSolves) {
+          budgetExceeded = true;
+          break;
+        }
+        visited.add(key);
+        accepted.push({ ...entry, key });
+        if (entry.coarse) coarseCellsEvaluated += 1;
+      }
+      if (accepted.length === 0) return false;
+      lambertSolves += accepted.length;
+      const results = this.#planTransferBatch(accepted.map(({ point }) => ({
+        sourceObjectId: request.sourceObjectId,
+        targetObjectId: request.targetObjectId,
+        centralBodyId: request.centralBodyId,
+        planningFrameId: request.planningFrameId,
+        departure: point.departure,
+        arrival: point.arrival,
+        branch: branchValue,
+        purpose: request.purpose,
+        constraints: request.constraints,
+        solverConfiguration: request.solverConfiguration,
+      })));
+      results.forEach((result, index) => {
+        const entry = accepted[index]!;
+        recordCell(entry.point, branchValue, result);
+        if (result.status === "success") candidates.set(entry.key, rankedSearchPlan(result.plan, request.rankingMetric));
+        else if (result.status === "constraintRejected") candidates.delete(entry.key);
+      });
+      await yieldAtBatchBoundary();
+      return true;
+    };
+
+    let departureSamples = request.sampling.departureSamples;
+    let secondSamples = request.arrivalWindow === undefined
+      ? request.sampling.timeOfFlightSamples
+      : request.sampling.arrivalSamples;
+    const branchCount = request.branchSet.length;
+    while (departureSamples * secondSamples * branchCount > request.searchBudget.maxCoarseCells
+      && (departureSamples > 1 || secondSamples > 1)) {
+      if (secondSamples >= departureSamples && secondSamples > 1) secondSamples -= 1;
+      else if (departureSamples > 1) departureSamples -= 1;
+      else secondSamples -= 1;
+    }
+
+    for (const branchValue of request.branchSet) {
+      for (let departureIndex = 0; departureIndex < departureSamples; departureIndex += 1) {
+        const departure = interpolateTime(request.departureWindow.start, request.departureWindow.end, departureIndex, departureSamples, "instant");
+        const entries = Array.from({ length: secondSamples }, (_, secondIndex) => {
+          const second = request.arrivalWindow === undefined
+            ? interpolateTime(request.timeOfFlightRange!.minimum, request.timeOfFlightRange!.maximum, secondIndex, secondSamples, "duration")
+            : interpolateTime(request.arrivalWindow.start, request.arrivalWindow.end, secondIndex, secondSamples, "instant");
+          return { point: searchPoint(request, departure, second), coarse: true };
+        });
+        await evaluateBatch(entries, branchValue);
+        if (cancelled || budgetExceeded) break;
+      }
+      if (cancelled || budgetExceeded) break;
+    }
+
+    const seedPlans = [...candidates.values()]
+      .sort((left, right) => compareSearchPlans(left, right, request.rankingMetric))
+      .slice(0, request.searchBudget.maxRefinementSeeds);
+    refinementSeeds = seedPlans.length;
+    const departureSpan = timeValueNanoseconds(subtractSimulationInstants(request.departureWindow.end, request.departureWindow.start));
+    const secondSpan = request.arrivalWindow === undefined
+      ? timeValueNanoseconds(request.timeOfFlightRange!.maximum) - timeValueNanoseconds(request.timeOfFlightRange!.minimum)
+      : timeValueNanoseconds(subtractSimulationInstants(request.arrivalWindow.end, request.arrivalWindow.start));
+
+    for (const seed of seedPlans) {
+      let current = seed;
+      for (let iteration = 0; iteration < request.searchBudget.maxRefinementIterationsPerSeed; iteration += 1) {
+        if (cancelled || budgetExceeded) break;
+        if (options.signal?.aborted) {
+          cancelled = true;
+          break;
+        }
+        const departureStep = departureSpan / (2n ** BigInt(iteration + 1));
+        const secondStep = secondSpan / (2n ** BigInt(iteration + 1));
+        if (departureStep === 0n && secondStep === 0n) break;
+        refinementIterations += 1;
+        let best = current;
+        const currentTimeOfFlight = subtractSimulationInstants(current.arrival, current.departure);
+        const neighbors: readonly SearchPoint[] = [
+          { departure: shiftTime(current.departure, -departureStep, "instant"), arrival: current.arrival },
+          { departure: shiftTime(current.departure, departureStep, "instant"), arrival: current.arrival },
+          request.arrivalWindow === undefined
+            ? searchPoint(request, current.departure, shiftTime(currentTimeOfFlight, -secondStep, "duration"))
+            : { departure: current.departure, arrival: shiftTime(current.arrival, -secondStep, "instant") },
+          request.arrivalWindow === undefined
+            ? searchPoint(request, current.departure, shiftTime(currentTimeOfFlight, secondStep, "duration"))
+            : { departure: current.departure, arrival: shiftTime(current.arrival, secondStep, "instant") },
+        ];
+        await evaluateBatch(neighbors.map((point) => ({ point, coarse: false })), current.request.branch);
+        for (const neighbor of neighbors) {
+          const neighborPlan = candidates.get(searchCandidateKey(current.request.branch, neighbor));
+          if (neighborPlan !== undefined && compareSearchPlans(neighborPlan, best, request.rankingMetric) < 0) best = neighborPlan;
+        }
+        current = best;
+      }
+      if (cancelled || budgetExceeded) break;
+    }
+
+    const status = cancelled
+      ? TrajectorySearchStatus.cancelled
+      : budgetExceeded
+        ? TrajectorySearchStatus.budgetExceeded
+        : TrajectorySearchStatus.completed;
+    const sortedCandidates = [...candidates.values()].sort((left, right) => compareSearchPlans(left, right, request.rankingMetric));
+    return normalizedSearchResult(request, status, sortedCandidates, {
+      lambertSolves,
+      coarseCellsEvaluated,
+      refinementSeeds,
+      refinementIterations,
+    }, grid, includeGrid);
   }
 
   checkPlanStaleness(plan: TrajectoryPlan, currentDependencies?: readonly PlannerDependencyIdentity[]): PlannerStalenessResult {

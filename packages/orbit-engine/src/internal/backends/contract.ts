@@ -35,6 +35,7 @@ export interface Backend {
   roundTripCoupled(value: CoupledWire): CoupledWire;
   roundTripScheduler(value: SchedulerWire): SchedulerWire;
   roundTripPlanner(value: PlannerGeometryWire): PlannerGeometryWire;
+  readonly roundTripPlannerBatch?: (values: readonly PlannerGeometryWire[]) => readonly PlannerGeometryWire[];
 }
 
 export interface RawBackendBinding {
@@ -52,6 +53,7 @@ export interface RawBackendBinding {
   roundTripCoupled(value: unknown): unknown;
   roundTripScheduler(value: unknown): unknown;
   readonly roundTripPlanner?: (value: unknown) => unknown;
+  readonly roundTripPlannerBatch?: (value: unknown) => unknown;
 }
 
 export interface RawInitializationResult {
