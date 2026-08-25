@@ -577,7 +577,7 @@ async function bootstrap(): Promise<void> {
     guides?.updateForCamera(camera);
     scene?.updatePresentation(camera, canvas.clientHeight || window.innerHeight);
     updateDisplayExposure();
-    renderShell!.renderer.render(renderShell!.scene, camera);
+    renderShell!.render();
   };
 
   let pointerDown: (PointerCoordinates & { readonly pointerId: number }) | undefined;
@@ -628,7 +628,7 @@ async function bootstrap(): Promise<void> {
       updateSelectedPanel(latest.value);
     }
     updateDisplayExposure();
-    renderShell!.renderer.render(renderShell!.scene, renderShell!.camera);
+    renderShell!.render();
     if (renderedFrameCount === 0) startup.mark("first-rendered-frame");
     lastFrameDurationMs = Math.max(0, performance.now() - frameStartedAt);
     totalFrameDurationMs += lastFrameDurationMs;

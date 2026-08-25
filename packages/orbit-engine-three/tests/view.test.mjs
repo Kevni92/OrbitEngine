@@ -138,6 +138,10 @@ test("view creates composed star, planet, moon, and bounded atmosphere resources
   assert.ok(earthAnchor);
   assert.equal(earthAnchor.children.length, 2);
   assert.equal(earthAnchor.children[1].name, `Atmosphere shell ${EARTH_ID}`);
+  const surfaceShader = earthAnchor.children[0].material.fragmentShader;
+  assert.match(surfaceShader, /uSurfaceRadianceDisplayGain/);
+  assert.doesNotMatch(surfaceShader, /uDisplayExposure/);
+  assert.match(surfaceShader, /#include <tonemapping_fragment>/);
   const atmosphereShader = earthAnchor.children[1].material.fragmentShader;
   assert.match(atmosphereShader, /const int VIEW_SAMPLES = 8/);
   assert.match(atmosphereShader, /const int LIGHT_SAMPLES = 2/);
@@ -149,8 +153,11 @@ test("view creates composed star, planet, moon, and bounded atmosphere resources
   assert.match(atmosphereShader, /bodyIntersectsView = true/);
   assert.match(atmosphereShader, /float displayGain = bodyIntersectsView/);
   assert.doesNotMatch(atmosphereShader, /bodyIntersectsView\s*\?\s*0\.0/);
-  assert.match(atmosphereShader, /radiance \* alpha \* uDisplayExposure/);
-  assert.ok(earthAnchor.children[1].material.uniforms.uDisplayExposure.value > 0);
+  assert.match(atmosphereShader, /gl_FragColor = vec4\(radiance \* alpha, alpha\)/);
+  assert.match(atmosphereShader, /#include <tonemapping_fragment>/);
+  assert.doesNotMatch(atmosphereShader, /uDisplayExposure/);
+  assert.equal(earthAnchor.children[1].material.blending, THREE.AdditiveBlending);
+  assert.equal(earthAnchor.children[1].userData.atmosphereBloomSource, true);
   assert.equal((atmosphereShader.match(/lightSampleIndex = 0; lightSampleIndex < LIGHT_SAMPLES/g) ?? []).length, 1);
   assert.equal(earthAnchor.position.x, 149.5978707);
   assert.equal(view.update(renderSnapshot).committed, true);

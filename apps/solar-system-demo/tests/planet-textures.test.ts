@@ -19,6 +19,7 @@ import {
   planetTextureSetFor,
 } from "../src/scenario/planet-texture-registry.js";
 import {
+  createPlanetCloudMaterial,
   PlanetTextureResourceManager,
   type PlanetTextureLoader,
 } from "../src/rendering/planet-textures.js";
@@ -48,6 +49,18 @@ test("the SSS registry covers the eight major planets with bounded local assets"
   assert.equal(planetTextureSetFor(EARTH_ID)!.clouds?.purpose, "cloudOverlay");
   assert.equal(planetTextureSetFor(EARTH_ID)!.nightLights?.purpose, "nightLights");
   assert.equal(planetTextureAssets(planetTextureSetFor(EARTH_ID)!).length, 3);
+});
+
+test("planet cloud presentation preserves texture alpha and uses direct stellar lighting", () => {
+  const material = createPlanetCloudMaterial();
+  assert.equal(material.uniforms.uRadianceDisplayGain?.value, 2.4);
+  assert.match(material.fragmentShader, /uLightDirections/);
+  assert.match(material.fragmentShader, /directVisibility/);
+  assert.match(material.fragmentShader, /mapSample\.a/);
+  assert.match(material.fragmentShader, /uRadianceDisplayGain/);
+  assert.match(material.fragmentShader, /#include <tonemapping_fragment>/);
+  assert.equal(material.blending, THREE.NormalBlending);
+  material.dispose();
 });
 
 class DeferredTextureLoader implements PlanetTextureLoader {

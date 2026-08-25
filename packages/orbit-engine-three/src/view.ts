@@ -3,7 +3,6 @@ import type { ObjectId } from "orbit-engine";
 import {
   blackbodyTemperatureToLinearRgb,
   deriveSurfaceReflectance,
-  displayExposureDiagnostics,
   resolveAtmosphereOptics,
   resolveStellarIllumination,
   inspectionFillContribution,
@@ -27,8 +26,16 @@ const MAX_LIGHTS = 4;
 const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
 const ATMOSPHERE_RIM_THICKNESS_PIXELS = 4;
 const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
-const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 25;
-const ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN = 6;
+// These are presentation gains for the shared renderer's linear pre-display
+// radiance. They stay deliberately below the former un-tonemapped values so
+// ACESFilmic can preserve wavelength contrast instead of clipping the shell.
+const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 1.1;
+const ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN = 1.1;
+// A bounded presentation calibration keeps low-albedo texture maps readable
+// in the shared renderer without changing the single renderer exposure or
+// the physical stellar irradiance supplied to the material.
+const SURFACE_RADIANCE_DISPLAY_GAIN = 2.4;
+const CLOUD_DECK_RADIANCE_DISPLAY_GAIN = 240.0;
 const ATMOSPHERE_VIEW_SAMPLES = 8;
 const ATMOSPHERE_LIGHT_SAMPLES = 2;
 const SURFACE_VERTEX_SHADER = `
@@ -45,7 +52,7 @@ uniform vec3 uBaseColor;
 uniform vec3 uEmissionColor;
 uniform float uEmissionStrength;
 uniform float uInspectionFill;
-uniform float uDisplayExposure;
+uniform float uSurfaceRadianceDisplayGain;
 uniform bool uUseTexture;
 uniform sampler2D uSurfaceMap;
 uniform int uLightCount;
@@ -67,8 +74,10 @@ void main() {
   // Enhanced inspection light is an emissive presentation assist. Keep it
   // independent of a dark planet texture so a low-albedo map cannot cancel
   // the bounded readability contribution.
-  vec3 radiance = base * incident + vec3(uInspectionFill);
-  gl_FragColor = vec4(radiance * uDisplayExposure + uEmissionColor * uEmissionStrength, 1.0);
+  vec3 radiance = (base * incident + vec3(uInspectionFill)) * uSurfaceRadianceDisplayGain;
+  gl_FragColor = vec4(radiance + uEmissionColor * uEmissionStrength, 1.0);
+#include <tonemapping_fragment>
+#include <colorspace_fragment>
 }`;
 
 const ATMOSPHERE_VERTEX_SHADER = `
@@ -90,7 +99,6 @@ uniform vec3 uMieScattering;
 uniform vec3 uAbsorption;
 uniform float uReferenceVerticalOpticalDepth;
 uniform float uMieAnisotropy;
-uniform float uDisplayExposure;
 uniform int uLightCount;
 uniform vec3 uLightDirections[${MAX_LIGHTS}];
 uniform vec3 uLightColors[${MAX_LIGHTS}];
@@ -102,6 +110,8 @@ const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
 const float LIMB_DISPLAY_GAIN = 1.7;
+const float RAYLEIGH_DISPLAY_BOOST = 6.0;
+const float MIE_DISPLAY_SCALE = 0.2;
 
 float rayleighPhase(float cosine) {
   return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
@@ -219,8 +229,8 @@ void main() {
       vec3 lightDirection = normalize(uLightDirections[lightIndex]);
       vec3 lightTransmittance = integrateLightTransmittance(samplePosition, lightDirection);
       float phaseCosine = dot(viewDirection, lightDirection);
-      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
-        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
+      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine) * RAYLEIGH_DISPLAY_BOOST
+        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy) * MIE_DISPLAY_SCALE;
       integratedScattering += scatteringSource
         * uLightColors[lightIndex]
         * uLightIntensity[lightIndex]
@@ -241,7 +251,9 @@ void main() {
   // visible without washing out the surface presentation.
   float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;
   vec3 radiance = integratedScattering * displayGain * limbGain;
-  gl_FragColor = vec4(radiance * alpha * uDisplayExposure, alpha);
+  gl_FragColor = vec4(radiance * alpha, alpha);
+#include <tonemapping_fragment>
+#include <colorspace_fragment>
 }`;
 
 export interface SurfaceTextureResource {
@@ -475,6 +487,9 @@ function createSurfaceMaterial(body: CelestialBodyRenderState, texture: SurfaceT
     ? emission
     : deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).linearReflectance;
   const baseColor = texture === undefined ? reflectance : { r: 1, g: 1, b: 1 };
+  const surfaceRadianceDisplayGain = body.appearance?.visibleLayer?.kind === "cloudDeck"
+    ? CLOUD_DECK_RADIANCE_DISPLAY_GAIN
+    : SURFACE_RADIANCE_DISPLAY_GAIN;
   const uniforms = createLightUniforms();
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -483,7 +498,7 @@ function createSurfaceMaterial(body: CelestialBodyRenderState, texture: SurfaceT
       uEmissionColor: { value: new THREE.Color(emission.r, emission.g, emission.b) },
       uEmissionStrength: { value: isEmitter ? 1 : 0 },
       uInspectionFill: { value: 0 },
-      uDisplayExposure: { value: 1 },
+      uSurfaceRadianceDisplayGain: { value: surfaceRadianceDisplayGain },
       uUseTexture: { value: texture !== undefined },
       uSurfaceMap: { value: texture?.texture ?? null },
     },
@@ -508,12 +523,6 @@ function updateSurfaceMaterialAppearance(material: THREE.ShaderMaterial, body: C
   baseColor.setRGB(emissionGlow ? 0 : visibleColor.r, emissionGlow ? 0 : visibleColor.g, emissionGlow ? 0 : visibleColor.b);
   emissionColor.setRGB(emission.r, emission.g, emission.b);
   material.uniforms.uEmissionStrength!.value = emissionGlow ? 0.22 : isEmitter ? 1 : 0;
-}
-
-function surfaceDisplayExposure(illumination: StellarIllumination): number {
-  return displayExposureDiagnostics(
-    illumination.contributions.length === 0 ? undefined : illumination.totalIrradianceWattsPerSquareMeter,
-  ).displayExposure;
 }
 
 function atmosphereShellRadius(
@@ -560,14 +569,16 @@ function createAtmosphereMaterial(
       uAbsorption: { value: new THREE.Vector3(transport.absorption.r, transport.absorption.g, transport.absorption.b) },
       uReferenceVerticalOpticalDepth: { value: optics.referenceVerticalOpticalDepth },
       uMieAnisotropy: { value: optics.mieAnisotropy },
-      uDisplayExposure: { value: 1 },
     },
     vertexShader: ATMOSPHERE_VERTEX_SHADER,
     fragmentShader: ATMOSPHERE_FRAGMENT_SHADER,
     transparent: true,
     depthWrite: false,
     side: THREE.FrontSide,
-    blending: THREE.NormalBlending,
+    // Scattering is an emitted radiance contribution. Additive compositing
+    // keeps a dark front-side shell from attenuating an already-lit surface
+    // (especially the bounded Enhanced inspection fill).
+    blending: THREE.AdditiveBlending,
     lights: false,
     toneMapped: true,
     premultipliedAlpha: true,
@@ -939,6 +950,11 @@ export class CelestialSystemView {
           atmosphere = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), createAtmosphereMaterial(optics, radius, shellRadius, center, camera));
           atmosphere.name = `Atmosphere shell ${body.objectId}`;
           atmosphere.userData.objectId = body.objectId;
+          // The demo's selective post-process may use this actual shell
+          // radiance as its only bloom source. Keep the marker presentation
+          // local to the mesh so consumer-side guides and surfaces cannot
+          // accidentally enter the glow pass.
+          atmosphere.userData.atmosphereBloomSource = true;
           atmosphere.scale.setScalar(shellRadius);
           atmosphere.renderOrder = 2;
           anchor.add(atmosphere);
@@ -1005,7 +1021,6 @@ export class CelestialSystemView {
         updateSurfaceMaterialAppearance(resource.surface.material, body);
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.surface.material, illumination, this.#renderSpace);
-        resource.surface.material.uniforms.uDisplayExposure!.value = surfaceDisplayExposure(illumination);
         resource.surface.material.uniforms.uInspectionFill!.value = context.lightingMode === undefined
           ? 0
           : inspectionFillContribution(context.lightingMode) * (
@@ -1023,7 +1038,6 @@ export class CelestialSystemView {
         const transport = normalizeAtmosphereOpticsForTransport(optics);
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.atmosphere.material, illumination, this.#renderSpace);
-        resource.atmosphere.material.uniforms.uDisplayExposure!.value = surfaceDisplayExposure(illumination);
         const presentedRadius = decision.sizing.presentedRadiusSceneUnits || sceneRadius(body, this.#renderSpace);
         const shellRadius = atmosphereShellRadius(body, this.#renderSpace, presentedRadius, decision.sizing.presentedRadiusPixels);
         resource.atmosphere.scale.setScalar(shellRadius);

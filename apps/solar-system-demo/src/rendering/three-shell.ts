@@ -1,5 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import {
   MAX_DISPLAY_EXPOSURE,
   MIN_DISPLAY_EXPOSURE,
@@ -8,6 +12,10 @@ import {
 const DEFAULT_DISPLAY_EXPOSURE = 1;
 const DISPLAY_TONE_MAPPING_MODE = "ACESFilmic" as const;
 const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
+const BLOOM_COMPOSER_PIXEL_RATIO = 0.5;
+const BLOOM_STRENGTH = 0.16;
+const BLOOM_RADIUS = 0.75;
+const BLOOM_THRESHOLD = 0.72;
 
 export class WebGL2UnavailableError extends Error {
   constructor() {
@@ -22,6 +30,7 @@ export interface RenderShell {
   readonly renderer: THREE.WebGLRenderer;
   readonly controls: OrbitControls;
   readonly toneMappingMode: typeof DISPLAY_TONE_MAPPING_MODE;
+  render(): void;
   setDisplayExposure(exposure: number): void;
   centerOn(
     target: THREE.Vector3,
@@ -98,15 +107,90 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   controls.update();
   updateCameraClipPlanes(camera, controls.target);
 
+  // Atmosphere shells are marked by orbit-engine-three at their source. The
+  // bloom composer temporarily hides every other renderable, so guides,
+  // selection rings, cloud overlays and body surfaces can never contribute to
+  // the halo. The bloom composer renders at half resolution and UnrealBloom's
+  // fixed mip chain supplies the bounded low-frequency falloff.
+  const bloomComposer = new EffectComposer(renderer);
+  bloomComposer.setPixelRatio(BLOOM_COMPOSER_PIXEL_RATIO);
+  bloomComposer.renderToScreen = false;
+  bloomComposer.addPass(new RenderPass(scene, camera));
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(512, 512), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD);
+  bloomComposer.addPass(bloomPass);
+
+  const finalComposer = new EffectComposer(renderer);
+  const finalScenePass = new RenderPass(scene, camera);
+  finalComposer.addPass(finalScenePass);
+  const finalPass = new ShaderPass(new THREE.ShaderMaterial({
+    uniforms: {
+      tBase: { value: null },
+      tBloom: { value: bloomComposer.renderTarget2.texture },
+    },
+    vertexShader: `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`,
+    fragmentShader: `
+uniform sampler2D tBase;
+uniform sampler2D tBloom;
+varying vec2 vUv;
+void main() {
+  gl_FragColor = texture2D(tBase, vUv) + texture2D(tBloom, vUv);
+}
+`,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  }), "tBase");
+  finalComposer.addPass(finalPass);
+
+  function isRenderable(object: THREE.Object3D): boolean {
+    const candidate = object as THREE.Object3D & {
+      readonly isMesh?: boolean;
+      readonly isLine?: boolean;
+      readonly isPoints?: boolean;
+      readonly isSprite?: boolean;
+    };
+    return candidate.isMesh === true || candidate.isLine === true || candidate.isPoints === true || candidate.isSprite === true;
+  }
+
+  function render(): void {
+    const hidden = new Map<THREE.Object3D, boolean>();
+    scene.traverse((object) => {
+      if (!isRenderable(object) || object.userData.atmosphereBloomSource === true) return;
+      hidden.set(object, object.visible);
+      object.visible = false;
+    });
+    const previousBackground = scene.background;
+    scene.background = null;
+    try {
+      bloomComposer.render();
+    } finally {
+      scene.background = previousBackground;
+      for (const [object, visible] of hidden) object.visible = visible;
+    }
+    finalComposer.render();
+  }
+
   function resize(width: number, height: number): void {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height, false);
+    bloomComposer.setSize(width, height);
+    finalComposer.setSize(width, height);
   }
 
   function dispose(): void {
     controls.dispose();
+    bloomPass.dispose();
+    bloomComposer.dispose();
+    finalPass.dispose();
+    finalComposer.dispose();
     renderer.dispose();
     scene.clear();
   }
@@ -150,6 +234,7 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
     renderer,
     controls,
     toneMappingMode: DISPLAY_TONE_MAPPING_MODE,
+    render,
     setDisplayExposure,
     centerOn,
     resize,

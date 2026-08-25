@@ -187,3 +187,74 @@ void main() {
     toneMapped: true,
   });
 }
+
+const PLANET_CLOUD_LIGHT_COUNT = 4;
+const PLANET_LAYER_RADIANCE_DISPLAY_GAIN = 2.4;
+
+/**
+ * Render a texture-backed cloud shell from the same direct stellar lighting
+ * contract as the companion surface material. The source JPEG is a coverage
+ * map, so its luminance becomes both cloud coverage and cloud radiance while
+ * the texture alpha remains part of the final opacity calculation.
+ */
+export function createPlanetCloudMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uMap: { value: null },
+      uOpacity: { value: 0.88 },
+      uRadianceDisplayGain: { value: PLANET_LAYER_RADIANCE_DISPLAY_GAIN },
+      uLightCount: { value: 0 },
+      uLightDirections: { value: Array.from({ length: PLANET_CLOUD_LIGHT_COUNT }, () => new THREE.Vector3(0, 1, 0)) },
+      uLightColors: { value: Array.from({ length: PLANET_CLOUD_LIGHT_COUNT }, () => new THREE.Color(0, 0, 0)) },
+      uLightIntensity: { value: Array.from({ length: PLANET_CLOUD_LIGHT_COUNT }, () => 0) },
+    },
+    vertexShader: `
+varying vec2 vUv;
+varying vec3 vWorldNormal;
+
+void main() {
+  vUv = uv;
+  vWorldNormal = normalize(mat3(modelMatrix) * normal);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`,
+    fragmentShader: `
+uniform sampler2D uMap;
+uniform float uOpacity;
+uniform float uRadianceDisplayGain;
+uniform int uLightCount;
+uniform vec3 uLightDirections[${PLANET_CLOUD_LIGHT_COUNT}];
+uniform vec3 uLightColors[${PLANET_CLOUD_LIGHT_COUNT}];
+uniform float uLightIntensity[${PLANET_CLOUD_LIGHT_COUNT}];
+varying vec2 vUv;
+varying vec3 vWorldNormal;
+
+void main() {
+  vec4 mapSample = texture2D(uMap, vUv);
+  float mapLuminance = dot(mapSample.rgb, vec3(0.299, 0.587, 0.114));
+  float coverage = smoothstep(0.06, 0.28, mapLuminance);
+  vec3 normal = normalize(vWorldNormal);
+  vec3 incident = vec3(0.0);
+  float directVisibility = 0.0;
+  for (int index = 0; index < ${PLANET_CLOUD_LIGHT_COUNT}; index += 1) {
+    if (index >= uLightCount) break;
+    float visibility = max(dot(normal, normalize(uLightDirections[index])), 0.0);
+    directVisibility = max(directVisibility, visibility);
+    incident += uLightColors[index] * uLightIntensity[index] * visibility;
+  }
+  float alpha = mapSample.a * coverage * uOpacity * directVisibility;
+  if (alpha <= 0.001) discard;
+  vec3 radiance = vec3(mapLuminance) * incident * alpha * uRadianceDisplayGain;
+  gl_FragColor = vec4(radiance, alpha);
+#include <tonemapping_fragment>
+#include <colorspace_fragment>
+}
+`,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.NormalBlending,
+    toneMapped: true,
+    premultipliedAlpha: true,
+  });
+}

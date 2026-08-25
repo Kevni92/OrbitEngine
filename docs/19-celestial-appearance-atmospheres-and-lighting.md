@@ -354,7 +354,7 @@ W/m² is not passed off as a literal display luminance. The renderer uses one do
 
 A useful reference normalization may map the solar constant at 1 AU to a named unit exposure, but the normalization is presentation policy only. Tone mapping/exposure must not feed back into physical irradiance calculations.
 
-The demo's photographic display policy uses one shared `ACESFilmic` renderer tone map for celestial surfaces and atmosphere shells. The active exposure is selected from the focused body's total physical stellar irradiance: `clamp(1361 / irradiance, 0.18, 512)`, with the default exposure of `1` when the focus has no contributing emitter. This is a bounded camera/display multiplier applied after physical lighting derivation; it does not alter the stored W/m² value, inverse-square ratios, or Enhanced inspection-fill semantics. Diagnostics expose the pre-exposure mapped irradiance, active exposure, and tone-mapping mode.
+The demo's photographic display policy uses one shared `ACESFilmic` renderer tone map for celestial surfaces and atmosphere shells. The active exposure is selected from the focused body's total physical stellar irradiance: `clamp(1361 / irradiance, 0.18, 512)`, with the default exposure of `1` when the focus has no contributing emitter. This is the only exposure multiplier and is applied once at the shared renderer output; it does not alter the stored W/m² value, inverse-square ratios, or Enhanced inspection-fill semantics. Low-albedo texture layers may use a bounded material/layer pre-display radiance calibration to remain readable in a wide scene. That calibration is not per-body exposure and not incident-light or simulation data; cloud-deck maps may use a stronger fixed calibration than solid-surface maps because their source maps are low-contrast disk-albedo records. Diagnostics expose the pre-exposure mapped irradiance, active exposure, and tone-mapping mode.
 
 ## Surface lighting model
 
@@ -386,10 +386,12 @@ The UI exposes exactly two canonical lighting modes.
 
 Rules:
 
-- no artificial ambient or camera fill is applied to non-emissive celestial surfaces;
+- no artificial ambient or camera fill is applied to non-emissive celestial surfaces in `physical` mode;
 - inverse-square stellar irradiance and stellar chromaticity remain visible;
 - night sides may be black except for atmosphere scattering and contributions from additional stars;
 - exposure/tone mapping is allowed because it is a camera/display operation, not fake incident light.
+
+Texture-backed cloud shells use the same direct stellar direction, chromaticity, and exposure-mapped irradiance contract as their companion surface. Their coverage alpha is preserved, and their night-side visibility falls to zero rather than being rendered as an unlit `MeshBasicMaterial` overlay.
 
 The mode is the reference for physically motivated illumination semantics, not a claim of full photometric realism because BRDFs, eclipses and spectral radiative transfer are simplified.
 
@@ -442,7 +444,9 @@ The default WebGL 2 path uses a bounded fixed-cost single-scattering approximati
 4. approximate optical depth toward each light analytically from local altitude, scale height, and light zenith angle instead of nesting a second full raymarch;
 5. apply Rayleigh phase and Henyey-Greenstein-like Mie phase functions;
 6. accumulate stellar contributions in linear RGB;
-7. output premultiplied/transparent HDR scattering and extinction compatible with normal scene depth; final exposure/tone mapping is applied once by the shared renderer output. Where the ray intersects the opaque body, the shell yields to the body disk and remains visible on the projected limb, so dense atmospheres cannot repaint an opaque surface white.
+7. output premultiplied/transparent scattering and extinction compatible with normal scene depth; final exposure/tone mapping is applied once by the shared renderer output. Where the ray intersects the opaque body, the shell yields to the body disk and remains visible on the projected limb, so dense atmospheres cannot repaint an opaque surface white.
+
+The demo may add a selective atmosphere-only bloom after the normal scene render. It renders only meshes explicitly marked as atmosphere bloom sources into a fixed half-resolution `UnrealBloomPass` and composites the result additively. Body surfaces, cloud layers, orbit guides, axes, grids, and selection indicators are excluded. Airless bodies therefore produce no atmospheric halo, and the bloom is a presentation effect that never changes physical radiance or simulation state.
 
 The initial target is 6–8 fixed view samples per atmosphere fragment. The exact selected value is a presentation constant validated by the shader implementation tests and browser profiling; adaptive/unbounded sample counts are forbidden in the default path.
 

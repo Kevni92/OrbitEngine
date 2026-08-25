@@ -21,6 +21,10 @@ interface BodyDiagnostics {
   readonly representation: string;
   readonly submitted: boolean;
   readonly surfaceReflectanceSource?: string;
+  readonly planetTextureLayers?: readonly Readonly<{
+    readonly purpose: string;
+    readonly loaded: boolean;
+  }>[];
   readonly physicalIrradianceWattsPerSquareMeter?: number;
   readonly preExposureMappedIrradiance?: number;
   readonly displayExposure: number;
@@ -90,6 +94,12 @@ async function hideOverlays(page: Page): Promise<void> {
     document.querySelector<HTMLElement>("#demo-panel")?.style.setProperty("display", "none");
     document.querySelector<HTMLElement>("#celestial-browser")?.style.setProperty("display", "none");
   });
+}
+
+async function waitForTexture(page: Page, objectId: string, purpose: string): Promise<void> {
+  await expect.poll(async () => (await readDiagnostics(page))?.bodies
+    .find((body) => body.objectId === objectId)
+    ?.planetTextureLayers?.some((layer) => layer.purpose === purpose && layer.loaded) ?? false).toBe(true);
 }
 
 async function faceFocusedBodyTowardSun(page: Page, body: BodyDiagnostics): Promise<BodyDiagnostics> {
@@ -264,21 +274,28 @@ test("Physical focus exposure keeps inner and outer planets readable without cha
   await hideOverlays(page);
 
   const earth = await focusBody(page, "1003");
+  await waitForTexture(page, earth.objectId, "surface");
   const earthFacingSun = await faceFocusedBodyTowardSun(page, earth);
-  const earthRing = await regionMetrics(page, earthFacingSun, true);
+  // Compare the surface disks here. The atmosphere-only post-process is
+  // intentionally blue and belongs to the separate limb/bloom assertions;
+  // including it would make Earth's exterior halo part of the Mars albedo
+  // comparison.
+  const earthSurface = await regionMetrics(page, earthFacingSun, false);
   const earthIrradiance = earth.physicalIrradianceWattsPerSquareMeter!;
   expect(earth.toneMappingMode).toBe("ACESFilmic");
   expect(earth.displayExposure).toBeGreaterThan(0);
   expect(earth.preExposureMappedIrradiance).toBeGreaterThan(0);
 
   const mars = await focusBody(page, "1005");
+  await waitForTexture(page, mars.objectId, "surface");
   const marsFacingSun = await faceFocusedBodyTowardSun(page, mars);
-  const marsRing = await regionMetrics(page, marsFacingSun, true);
+  const marsSurface = await regionMetrics(page, marsFacingSun, false);
   expect(mars.atmosphere.resolvedOptics!.mieScattering.r).toBeGreaterThan(mars.atmosphere.resolvedOptics!.mieScattering.b);
-  expect(marsRing.meanRed / Math.max(marsRing.meanBlue, 1))
-    .toBeGreaterThan(earthRing.meanRed / Math.max(earthRing.meanBlue, 1) + 0.02);
+  expect(marsSurface.meanRed / Math.max(marsSurface.meanBlue, 1))
+    .toBeGreaterThan(earthSurface.meanRed / Math.max(earthSurface.meanBlue, 1) + 0.02);
 
   const mercury = await focusBody(page, "1001");
+  await waitForTexture(page, mercury.objectId, "surface");
   const mercuryFacingSun = await faceFocusedBodyTowardSun(page, mercury);
   const mercurySurface = await regionMetrics(page, mercuryFacingSun, false);
   expect(mercury.physicalIrradianceWattsPerSquareMeter!).toBeGreaterThan(earthIrradiance);
@@ -287,6 +304,7 @@ test("Physical focus exposure keeps inner and outer planets readable without cha
   expect(mercurySurface.luminanceRange).toBeGreaterThan(2);
 
   const uranus = await focusBody(page, "1008");
+  await waitForTexture(page, uranus.objectId, "cloudDeck");
   const uranusFacingSun = await faceFocusedBodyTowardSun(page, uranus);
   const uranusSurface = await regionMetrics(page, uranusFacingSun, false);
   expect(uranus.physicalIrradianceWattsPerSquareMeter!).toBeLessThan(earthIrradiance / 100);
@@ -295,6 +313,7 @@ test("Physical focus exposure keeps inner and outer planets readable without cha
   expect(uranusSurface.meanBlue).toBeGreaterThan(uranusSurface.meanRed);
 
   const neptune = await focusBody(page, "1009");
+  await waitForTexture(page, neptune.objectId, "cloudDeck");
   const neptuneFacingSun = await faceFocusedBodyTowardSun(page, neptune);
   const neptuneSurface = await regionMetrics(page, neptuneFacingSun, false);
   expect(neptune.physicalIrradianceWattsPerSquareMeter!).toBeLessThan(earthIrradiance / 300);

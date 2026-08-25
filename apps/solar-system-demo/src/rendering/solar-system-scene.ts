@@ -47,6 +47,7 @@ import {
 } from "../scenario/planet-texture-registry.js";
 import {
   createEarthNightLightsMaterial,
+  createPlanetCloudMaterial,
   PlanetTextureResourceManager,
   type PlanetTextureLease,
   type PlanetTextureResourceDiagnostics,
@@ -155,7 +156,7 @@ export interface LodDiagnostics {
 }
 
 interface PlanetLayerMeshes {
-  readonly clouds?: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
+  readonly clouds?: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   readonly nightLights?: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
 }
 
@@ -413,7 +414,9 @@ export class SolarSystemScene {
     if (cameraChanged) this.#rerender();
     for (const entry of this.#currentEntries.values()) this.#updatePlanetTexturePresentation(entry);
     this.#updatePlanetLayerTransforms();
+    this.#updatePlanetCloudLighting();
     this.#updateEarthNightLights();
+    this.#applyInspectionFillToSurfaces();
   }
 
   pick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera): ObjectId | undefined {
@@ -470,7 +473,9 @@ export class SolarSystemScene {
     }));
     const textureSet = planetTextureSetFor(objectId);
     const textureState = this.#planetTextureStates.get(objectId);
-    const fillApplied = this.#inspectionTargets().includes(objectId);
+    const fillApplied = this.#lightingMode === "enhanced"
+      && representation === "sphere"
+      && (objectId === this.#selected || objectId === this.#focusId);
     const fill = inspectionFillContribution(this.#lightingMode);
     return Object.freeze({
       objectId,
@@ -672,6 +677,7 @@ export class SolarSystemScene {
     };
     const result = this.#view.update(this.#snapshot, context);
     if (!result.committed) throw new Error(result.diagnostics.lastFailure?.message ?? "orbit-engine-three view update failed");
+    this.#applyInspectionFillToSurfaces();
     this.#representations.clear();
     for (const entry of this.#currentEntries.values()) {
       const representation = this.#view.representationFor(entry.definition.id);
@@ -756,7 +762,7 @@ export class SolarSystemScene {
     if (this.#planetLayerMeshes.has(objectId)) return;
     let clouds: PlanetLayerMeshes["clouds"];
     if (textureSet.clouds !== undefined) {
-      clouds = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.88, depthWrite: false }));
+      clouds = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), createPlanetCloudMaterial());
       clouds.name = `Cloud layer ${objectId}`;
       clouds.userData.objectId = objectId;
       applyTexturedBodyPoleAlignment(clouds);
@@ -789,7 +795,7 @@ export class SolarSystemScene {
     loaded.set(asset.key, texture);
     const layers = this.#planetLayerMeshes.get(objectId);
     if (asset === state.set.clouds && layers?.clouds !== undefined) {
-      layers.clouds.material.map = texture;
+      layers.clouds.material.uniforms.uMap!.value = texture;
       layers.clouds.material.needsUpdate = true;
       layers.clouds.visible = true;
     }
@@ -850,11 +856,57 @@ export class SolarSystemScene {
     }
   }
 
+  #updatePlanetCloudLighting(): void {
+    for (const [objectId, layers] of this.#planetLayerMeshes) {
+      const material = layers.clouds?.material;
+      if (material === undefined) continue;
+      const contributions = this.#illuminationByBody.get(objectId)?.contributions ?? [];
+      const directions = material.uniforms.uLightDirections!.value as THREE.Vector3[];
+      const colors = material.uniforms.uLightColors!.value as THREE.Color[];
+      const intensities = material.uniforms.uLightIntensity!.value as number[];
+      const count = Math.min(directions.length, contributions.length);
+      material.uniforms.uLightCount!.value = count;
+      for (let index = 0; index < directions.length; index += 1) {
+        const contribution = contributions[index];
+        if (contribution === undefined) {
+          directions[index]!.set(0, 1, 0);
+          colors[index]!.setRGB(0, 0, 0);
+          intensities[index] = 0;
+          continue;
+        }
+        const direction = transformSnapshotDirectionToRenderSpace(contribution.directionToEmitter, this.#renderSpace);
+        directions[index]!.set(direction.x, direction.y, direction.z).normalize();
+        colors[index]!.setRGB(contribution.linearChromaticity.r, contribution.linearChromaticity.g, contribution.linearChromaticity.b);
+        intensities[index] = contribution.exposureMappedIrradiance;
+      }
+    }
+  }
+
   #inspectionTargets(): ObjectId[] {
     if (this.#lightingMode !== "enhanced") return [];
     return [this.#selected, this.#focusId]
       .filter((objectId): objectId is ObjectId => objectId !== undefined && this.#representations.get(objectId) === "sphere")
       .filter((objectId, index, values) => values.indexOf(objectId) === index);
+  }
+
+  #applyInspectionFillToSurfaces(): void {
+    const fill = inspectionFillContribution(this.#lightingMode);
+    // Apply the presentation assist from the authoritative focus/selection
+    // ids. LOD bookkeeping may be one update behind while a focused body is
+    // promoted, but the companion view has already committed the sphere.
+    const targets = this.#lightingMode !== "enhanced"
+      ? new Set<ObjectId>()
+      : new Set([this.#selected, this.#focusId].filter((objectId): objectId is ObjectId => objectId !== undefined));
+    for (const objectId of this.#currentEntries.keys()) {
+      const anchor = this.#view.bodyAnchor(objectId);
+      if (anchor === undefined) continue;
+      for (const child of anchor.children) {
+        if (!(child instanceof THREE.Mesh)) continue;
+        const material = child.material as THREE.ShaderMaterial;
+        if (material.uniforms?.uInspectionFill === undefined) continue;
+        material.uniforms.uInspectionFill.value = targets.has(objectId) ? fill : 0;
+      }
+    }
   }
 
   #markerObjectIds(): readonly ObjectId[] {
