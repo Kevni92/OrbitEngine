@@ -198,6 +198,7 @@ jobs:
       - run: pnpm --filter orbit-engine-three-browser-smoke build
       - run: pnpm --filter orbit-engine-three-browser-smoke exec playwright install --with-deps chromium
       - run: pnpm --filter orbit-engine-three-browser-smoke smoke
+      - run: pnpm three:browser:packaged
 
   parity:
     name: Backend parity (Node ${{ matrix.node }})

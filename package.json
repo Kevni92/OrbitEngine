@@ -23,6 +23,7 @@
     "test:oep-importer:runtime:wasm": "node tools/oep-importer/tests/runtime-compat.mjs wasm",
     "package:smoke": "node scripts/package-smoke.mjs",
     "package:three-smoke": "node scripts/three-package-smoke.mjs",
+    "three:browser:packaged": "node scripts/three-packaged-browser-smoke.mjs",
     "browser:build": "pnpm --filter orbit-engine build && pnpm --filter orbit-engine-browser-smoke typecheck && pnpm --filter orbit-engine-browser-smoke build",
     "browser:smoke": "pnpm --filter orbit-engine-browser-smoke smoke",
     "demo": "pnpm --filter orbit-engine-solar-system-demo dev",
