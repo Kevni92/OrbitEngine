@@ -104,6 +104,41 @@ test("scene keys meshes by stable ObjectId and consumes returned positions", () 
   assert.equal(visual.meshFor(SUN_ID), undefined);
 });
 
+test("Earth texture layers share the +Z pole alignment without moving the body", () => {
+  const root = new THREE.Scene();
+  const visual = new SolarSystemScene(root, scenario());
+  const states = SCENARIO_BODIES.map((body) => body.anchor);
+  const earth = SCENARIO_BODIES.find((body) => body.id === EARTH_ID)!;
+  const expectedPosition = positionToSceneUnits(earth.anchor.position);
+  visual.update(states);
+  visual.setFocusId(EARTH_ID);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.0001, 10_000);
+  camera.position.set(expectedPosition.x, expectedPosition.y - 1.5, expectedPosition.z + 0.9);
+  camera.lookAt(expectedPosition.x, expectedPosition.y, expectedPosition.z);
+  visual.updatePresentation(camera, 900);
+
+  const surface = visual.meshFor(EARTH_ID);
+  const clouds = root.getObjectByName(`Cloud layer ${EARTH_ID}`);
+  const nightLights = root.getObjectByName(`Night lights layer ${EARTH_ID}`);
+  assert.ok(surface instanceof THREE.Mesh);
+  assert.ok(clouds instanceof THREE.Mesh);
+  assert.ok(nightLights instanceof THREE.Mesh);
+  root.updateMatrixWorld(true);
+  for (const layer of [surface, clouds, nightLights]) {
+    const pole = new THREE.Vector3(0, 1, 0)
+      .applyQuaternion(layer.getWorldQuaternion(new THREE.Quaternion()))
+      .normalize();
+    assert.ok(Math.abs(pole.x) < 1e-12);
+    assert.ok(Math.abs(pole.y) < 1e-12);
+    assert.ok(Math.abs(pole.z - 1) < 1e-12);
+  }
+  const atmosphere = root.getObjectByName(`Atmosphere shell ${EARTH_ID}`);
+  assert.ok(atmosphere instanceof THREE.Mesh);
+  assert.equal(atmosphere.rotation.x, 0);
+  assert.ok(visual.positionFor(EARTH_ID)!.distanceTo(new THREE.Vector3(expectedPosition.x, expectedPosition.y, expectedPosition.z)) < 1e-12);
+  visual.dispose();
+});
+
 test("scene accepts paths in arbitrary declared output frames", () => {
   const root = new THREE.Scene();
   const visual = new SolarSystemScene(root, scenario());

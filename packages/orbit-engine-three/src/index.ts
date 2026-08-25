@@ -13,3 +13,4 @@ export * from "./orbit.js";
 export * from "./orbit-renderer.js";
 export * from "./selection.js";
 export * from "./snapshot-source.js";
+export * from "./texture-orientation.js";

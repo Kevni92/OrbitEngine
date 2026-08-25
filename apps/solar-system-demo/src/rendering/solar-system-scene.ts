@@ -3,6 +3,7 @@ import {
   createCelestialRenderSnapshot,
   CelestialSystemView,
   createRenderSpaceConfig,
+  applyTexturedBodyPoleAlignment,
   transformSnapshotDirectionToRenderSpace,
   transformSnapshotPositionToSceneUnits,
   type BodyRepresentation,
@@ -730,6 +731,7 @@ export class SolarSystemScene {
       clouds = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.88, depthWrite: false }));
       clouds.name = `Cloud layer ${objectId}`;
       clouds.userData.objectId = objectId;
+      applyTexturedBodyPoleAlignment(clouds);
       clouds.visible = false;
       clouds.renderOrder = 1;
       this.#scene.add(clouds);
@@ -739,6 +741,7 @@ export class SolarSystemScene {
       nightLights = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), createEarthNightLightsMaterial());
       nightLights.name = `Night lights layer ${objectId}`;
       nightLights.userData.objectId = objectId;
+      applyTexturedBodyPoleAlignment(nightLights);
       nightLights.visible = false;
       nightLights.renderOrder = 3;
       this.#scene.add(nightLights);

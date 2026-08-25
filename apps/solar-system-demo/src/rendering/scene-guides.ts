@@ -6,7 +6,7 @@ export interface SceneGuideSettings {
 }
 export const DEFAULT_SCENE_GUIDE_SETTINGS: SceneGuideSettings = Object.freeze({
   axesVisible: false,
-  gridVisible: true,
+  gridVisible: false,
 });
 
 export const GRID_MAJOR_RINGS = 8;
