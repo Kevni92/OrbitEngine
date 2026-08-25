@@ -19,16 +19,13 @@ import {
 test("render space uses a reversible J2000-ecliptic presentation transform", () => {
   assert.deepEqual(SCENE_UP_VECTOR, { x: 0, y: 0, z: 1 });
   assert.ok(J2000_ECLIPTIC_OBLIQUITY_RADIANS > 0);
-
   const ecliptic = vec3(12, -34, 56);
   const icrs = j2000EclipticToIcrs(ecliptic);
   const restored = icrsToJ2000Ecliptic(icrs);
   assert.ok(Math.abs(restored.x - ecliptic.x) < 1e-12);
   assert.ok(Math.abs(restored.y - ecliptic.y) < 1e-12);
   assert.ok(Math.abs(restored.z - ecliptic.z) < 1e-12);
-
-  const onEclipticPlane = j2000EclipticToIcrs(vec3(0, ASTRONOMICAL_UNIT_METERS, 0));
-  const scene = positionToSceneUnits(onEclipticPlane);
+  const scene = positionToSceneUnits(j2000EclipticToIcrs(vec3(0, ASTRONOMICAL_UNIT_METERS, 0)));
   assert.ok(Math.abs(scene.z) < 1e-12);
   assert.ok(Math.abs(scene.y - 100) < 1e-12);
 });
@@ -36,8 +33,7 @@ test("render space uses a reversible J2000-ecliptic presentation transform", () 
 test("presentation obliquity matches the committed primary-planet normalization", () => {
   const mercury = SCENARIO_BODIES.find((body) => body.id === MERCURY_ID)!;
   assert.ok(Math.abs(mercury.anchor.position.z) > 1e9);
-  const scene = positionToSceneUnits(mercury.anchor.position);
-  assert.ok(Math.abs(scene.z) < 1e-12);
+  assert.ok(Math.abs(positionToSceneUnits(mercury.anchor.position).z) < 1e-12);
 });
 
 test("render space preserves focus-relative SI conversion before presentation rotation", () => {
@@ -56,7 +52,6 @@ test("render-space stellar directions use one rotation without translation or sc
   assert.ok(Math.abs(renderDirection.z - expected.z / expectedLength) < 1e-12);
   assert.ok(Math.abs(Math.hypot(renderDirection.x, renderDirection.y, renderDirection.z) - 1) < 1e-12);
   assert.throws(() => icrsDirectionToRenderSpace({ x: 0, y: 0, z: 0 }), /non-zero/);
-
   const translated = icrsDirectionToRenderSpace({ x: 0, y: 10, z: 0 });
   assert.ok(Math.abs(translated.x - renderDirection.x) < 1e-12);
   assert.ok(Math.abs(translated.y - renderDirection.y) < 1e-12);

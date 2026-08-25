@@ -163,7 +163,11 @@ export function resolveBodySizing(input: BodySizingInput): BodySizingResult {
     ?? (input.physicalRadiusMeters === undefined ? 0 : input.physicalRadiusMeters / input.metersPerSceneUnit);
   nonNegative("physicalRadiusSceneUnits", radiusSceneUnits);
   const hasPhysicalRadius = radiusSceneUnits > 0;
-  const physicalRadiusPixels = projection.projectable && hasPhysicalRadius && projection.cameraDepthSceneUnits > 0
+  // Keep physical marker sizing stable even when a body is outside the
+  // camera frustum (or temporarily behind the camera). The consumer may
+  // still submit that body as a marker for navigation/context, and the
+  // projected size is defined by camera distance rather than visibility.
+  const physicalRadiusPixels = hasPhysicalRadius && projection.cameraDepthSceneUnits > 0
     ? projectedRadiusPixels(radiusSceneUnits, projection.cameraDepthSceneUnits, projection.verticalFieldOfViewRadians, projection.viewportHeightCssPixels)
     : 0;
   const adaptiveRadius = projection.projectable ? adaptiveRadiusPixels(physicalRadiusPixels, config) : 0;

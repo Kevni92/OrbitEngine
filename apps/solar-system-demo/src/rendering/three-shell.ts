@@ -1,12 +1,13 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
-  DEFAULT_DISPLAY_EXPOSURE,
-  DISPLAY_TONE_MAPPING_MODE,
   MAX_DISPLAY_EXPOSURE,
   MIN_DISPLAY_EXPOSURE,
-} from "./celestial-appearance-rendering.js";
-import { SCENE_UP_VECTOR } from "./render-space.js";
+} from "orbit-engine-three/presentation";
+
+const DEFAULT_DISPLAY_EXPOSURE = 1;
+const DISPLAY_TONE_MAPPING_MODE = "ACESFilmic" as const;
+const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
 
 export class WebGL2UnavailableError extends Error {
   constructor() {

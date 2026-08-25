@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { meters } from "orbit-engine";
-import { projectedRadiusPixels } from "../src/rendering/adaptive-sizing.js";
-import { radiusToSceneUnits } from "../src/rendering/render-space.js";
-import { MARKER_PIXEL_SIZE } from "../src/rendering/runtime-asteroid-markers.js";
-import { SolarSystemScene } from "../src/rendering/solar-system-scene.js";
+import { projectedRadiusPixels } from "orbit-engine-three";
+import { MARKER_PIXEL_SIZE, SolarSystemScene } from "../src/rendering/solar-system-scene.js";
 import type { SolarSystemScenario } from "../src/scenario/load-solar-system.js";
 import {
   EARTH_ID,
@@ -42,11 +40,10 @@ function expectedPhysicalDiameterPixels(
 ): number {
   const definition = SCENARIO_BODIES.find((body) => body.id === objectId)!;
   const position = visual.positionFor(objectId)!;
-  const physicalRadius = radiusToSceneUnits({
-    mode: "physical",
-    physicalRadiusMeters: meters(definition.properties.physicalRadius ?? 0),
-  });
-  const distance = Math.max(camera.position.distanceTo(position), physicalRadius * 2, Number.EPSILON);
+  const physicalRadius = meters(definition.properties.physicalRadius ?? 0) / (149_597_870_700 / 100);
+  camera.updateMatrixWorld(true);
+  const cameraDepth = -position.clone().applyMatrix4(camera.matrixWorldInverse).z;
+  const distance = Math.max(cameraDepth, physicalRadius * 2, Number.EPSILON);
   return projectedRadiusPixels(
     physicalRadius,
     distance,
@@ -90,11 +87,8 @@ test("radius mode applies globally to distant marker planets and focused spheres
   assert.ok(physicalEarthMarker < MARKER_PIXEL_SIZE, "physical mode must not clamp distant Earth back to adaptive marker size");
 
   const uranusDefinition = SCENARIO_BODIES.find((body) => body.id === URANUS_ID)!;
-  const expectedUranusRadius = radiusToSceneUnits({
-    mode: "physical",
-    physicalRadiusMeters: meters(uranusDefinition.properties.physicalRadius ?? 0),
-  });
-  assert.equal(visual.meshFor(URANUS_ID)?.scale.x, expectedUranusRadius);
+  const expectedUranusRadius = meters(uranusDefinition.properties.physicalRadius ?? 0) / (149_597_870_700 / 100);
+  assert.ok(Math.abs((visual.meshFor(URANUS_ID)?.scale.x ?? Number.NaN) - expectedUranusRadius) < 1e-12);
 
   visual.updatePresentation(camera, 450);
   earthDiagnostics = visual.renderDiagnosticsFor(EARTH_ID, camera);

@@ -3,10 +3,13 @@ import type { ObjectId } from "orbit-engine";
 import {
   blackbodyTemperatureToLinearRgb,
   deriveSurfaceReflectance,
+  displayExposureDiagnostics,
   resolveAtmosphereOptics,
   resolveStellarIllumination,
+  inspectionFillContribution,
   validateCelestialAppearance,
   type AtmosphereOptics,
+  type LightingMode,
   type StellarEmitter,
   type StellarIllumination,
 } from "./presentation.js";
@@ -19,6 +22,10 @@ import { OrbitPathRenderer, type OrbitPathRendererOptions, type OrbitPathStyle }
 import { SelectionIndicator, type SelectionIndicatorOptions } from "./selection.js";
 
 const MAX_LIGHTS = 4;
+const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
+const ATMOSPHERE_RIM_THICKNESS_PIXELS = 4;
+const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
+const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 25;
 const SURFACE_VERTEX_SHADER = `
 varying vec3 vWorldNormal;
 varying vec2 vUv;
@@ -32,6 +39,8 @@ const SURFACE_FRAGMENT_SHADER = `
 uniform vec3 uBaseColor;
 uniform vec3 uEmissionColor;
 uniform float uEmissionStrength;
+uniform float uInspectionFill;
+uniform float uDisplayExposure;
 uniform bool uUseTexture;
 uniform sampler2D uSurfaceMap;
 uniform int uLightCount;
@@ -50,16 +59,18 @@ void main() {
     incident += uLightColors[index] * uLightIntensity[index]
       * max(dot(normal, normalize(uLightDirections[index])), 0.0);
   }
-  gl_FragColor = vec4(base * incident + uEmissionColor * uEmissionStrength, 1.0);
+  // Enhanced inspection light is an emissive presentation assist. Keep it
+  // independent of a dark planet texture so a low-albedo map cannot cancel
+  // the bounded readability contribution.
+  vec3 radiance = base * incident + vec3(uInspectionFill);
+  gl_FragColor = vec4(radiance * uDisplayExposure + uEmissionColor * uEmissionStrength, 1.0);
 }`;
 
 const ATMOSPHERE_VERTEX_SHADER = `
 varying vec3 vWorldPosition;
-varying vec3 vWorldNormal;
 void main() {
   vec4 worldPosition = modelMatrix * vec4(position, 1.0);
   vWorldPosition = worldPosition.xyz;
-  vWorldNormal = normalize(mat3(modelMatrix) * normal);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
@@ -68,6 +79,7 @@ uniform vec3 uBodyCenter;
 uniform vec3 uCameraPosition;
 uniform float uBodyRadius;
 uniform float uShellRadius;
+uniform float uPhysicalExtentScaleHeights;
 uniform vec3 uRayleighScattering;
 uniform vec3 uMieScattering;
 uniform vec3 uAbsorption;
@@ -78,36 +90,108 @@ uniform vec3 uLightDirections[${MAX_LIGHTS}];
 uniform vec3 uLightColors[${MAX_LIGHTS}];
 uniform float uLightIntensity[${MAX_LIGHTS}];
 varying vec3 vWorldPosition;
-varying vec3 vWorldNormal;
+const int VIEW_SAMPLES = 8;
+const float PI = 3.14159265359;
+const float EPSILON = 0.000001;
+const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
+const float LIMB_DISPLAY_GAIN = 1.7;
+
+float rayleighPhase(float cosine) {
+  return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
+}
+
+float miePhase(float cosine, float anisotropy) {
+  float g2 = anisotropy * anisotropy;
+  float denominator = max(0.0001, pow(1.0 + g2 - 2.0 * anisotropy * cosine, 1.5));
+  return (1.0 - g2) / (4.0 * PI * denominator);
+}
+
+vec2 raySphereInterval(vec3 rayOrigin, vec3 rayDirection, float sphereRadius) {
+  vec3 offset = rayOrigin - uBodyCenter;
+  float b = dot(offset, rayDirection);
+  float c = dot(offset, offset) - sphereRadius * sphereRadius;
+  float discriminant = b * b - c;
+  if (discriminant < 0.0) return vec2(1.0, -1.0);
+  float root = sqrt(discriminant);
+  return vec2(-b - root, -b + root);
+}
+
 void main() {
-  float shellThickness = max(uShellRadius - uBodyRadius, 0.000001);
-  float radialDistance = distance(vWorldPosition, uBodyCenter);
-  if (radialDistance < uBodyRadius) discard;
-  float altitude = clamp((radialDistance - uBodyRadius) / shellThickness, 0.0, 1.0);
-  float viewDensity = 0.0;
-  vec3 source = vec3(0.0);
-  vec3 normal = normalize(vWorldNormal);
-  vec3 viewDirection = normalize(uCameraPosition - vWorldPosition);
-  float viewCosine = dot(normal, viewDirection);
-  float rayleighPhase = 0.75 * (1.0 + viewCosine * viewCosine);
-  float denominator = max(1.0 + uMieAnisotropy * uMieAnisotropy - 2.0 * uMieAnisotropy * viewCosine, 0.0001);
-  float miePhase = (1.0 - uMieAnisotropy * uMieAnisotropy) / (4.0 * 3.14159265 * pow(denominator, 1.5));
-  for (int sampleIndex = 0; sampleIndex < 8; sampleIndex += 1) {
-    float sampleAltitude = clamp(altitude + (float(sampleIndex) - 3.5) * 0.08, 0.0, 1.0);
-    float density = exp(-4.0 * sampleAltitude) * (1.0 - sampleAltitude);
-    viewDensity += density * 0.125;
-    for (int lightIndex = 0; lightIndex < ${MAX_LIGHTS}; lightIndex += 1) {
+  // Three supplies cameraPosition in world space for ShaderMaterial. Using
+  // the renderer-owned value keeps camera fixtures and shell sampling in the
+  // same space even when the view is nested below a consumer scene root.
+  vec3 rayOrigin = cameraPosition;
+  vec3 rayDirection = normalize(vWorldPosition - rayOrigin);
+  vec2 atmosphereInterval = raySphereInterval(rayOrigin, rayDirection, uShellRadius);
+  float segmentStart = max(0.0, atmosphereInterval.x);
+  float segmentEnd = atmosphereInterval.y;
+  if (segmentEnd <= segmentStart) discard;
+
+  vec2 bodyInterval = raySphereInterval(rayOrigin, rayDirection, uBodyRadius);
+  bool bodyOccludesShell = false;
+  if (bodyInterval.y >= bodyInterval.x && bodyInterval.x > segmentStart) {
+    segmentEnd = min(segmentEnd, bodyInterval.x);
+    bodyOccludesShell = true;
+  }
+  if (segmentEnd <= segmentStart) discard;
+
+  float presentationThickness = max(uShellRadius - uBodyRadius, EPSILON);
+  float segmentLength = segmentEnd - segmentStart;
+  float sampleLength = segmentLength / float(VIEW_SAMPLES);
+  float sampleLengthScaleHeights = sampleLength / presentationThickness * uPhysicalExtentScaleHeights;
+  float verticalIntegral = max(1.0 - exp(-uPhysicalExtentScaleHeights), EPSILON);
+  float integratedDensityScaleHeights = 0.0;
+  vec3 integratedScattering = vec3(0.0);
+  vec3 viewDirection = -rayDirection;
+
+  for (int sampleIndex = 0; sampleIndex < VIEW_SAMPLES; sampleIndex++) {
+    float sampleFraction = (float(sampleIndex) + 0.5) / float(VIEW_SAMPLES);
+    float distanceAlongRay = segmentStart + segmentLength * sampleFraction;
+    vec3 samplePosition = rayOrigin + rayDirection * distanceAlongRay;
+    vec3 fromCenter = samplePosition - uBodyCenter;
+    float radialDistance = length(fromCenter);
+    vec3 localNormal = normalize(fromCenter);
+    float altitudeFraction = clamp((radialDistance - uBodyRadius) / presentationThickness, 0.0, 1.0);
+    float altitudeScaleHeights = altitudeFraction * uPhysicalExtentScaleHeights;
+    float density = exp(-altitudeScaleHeights);
+    float sampleColumn = density * sampleLengthScaleHeights;
+    integratedDensityScaleHeights += sampleColumn;
+
+    for (int lightIndex = 0; lightIndex < ${MAX_LIGHTS}; lightIndex++) {
       if (lightIndex >= uLightCount) break;
-      float lightCosine = max(dot(normal, normalize(uLightDirections[lightIndex])), 0.0);
-      vec3 scattering = uRayleighScattering * rayleighPhase + uMieScattering * miePhase;
-      source += scattering * uLightColors[lightIndex] * uLightIntensity[lightIndex] * lightCosine * density * 0.125;
+      vec3 lightDirection = normalize(uLightDirections[lightIndex]);
+      // A shell whose star is directly behind the body is not illuminated
+      // toward this camera. Suppress that far-side lobe so the projected rim
+      // remains rotationally symmetric instead of producing a false camera
+      // up/down bias in backlit views.
+      if (dot(lightDirection, rayDirection) > 0.75) continue;
+      float lightZenithCosine = dot(localNormal, lightDirection);
+      float dayFactor = smoothstep(-0.18, 0.08, lightZenithCosine);
+      if (dayFactor <= 0.0001) continue;
+      float lightPathFactor = 1.0 / max(0.12, lightZenithCosine + 0.20);
+      float verticalDepthAboveSample = uReferenceVerticalOpticalDepth * exp(-altitudeScaleHeights);
+      float absorptionMean = (uAbsorption.r + uAbsorption.g + uAbsorption.b) / 3.0;
+      float transmittance = exp(-absorptionMean * verticalDepthAboveSample * lightPathFactor);
+      float phaseCosine = dot(viewDirection, lightDirection);
+      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
+        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
+      integratedScattering += scatteringSource
+        * uLightColors[lightIndex]
+        * uLightIntensity[lightIndex]
+        * transmittance
+        * dayFactor
+        * sampleColumn / verticalIntegral;
     }
   }
-  float opticalDepth = max(uReferenceVerticalOpticalDepth, 0.0) * viewDensity;
-  vec3 transmitted = exp(-uAbsorption * opticalDepth);
-  vec3 color = source * transmitted;
-  float alpha = clamp(max(max(color.r, color.g), color.b) + opticalDepth * 0.08, 0.0, 0.9);
-  gl_FragColor = vec4(color, alpha);
+
+  float densityPath = integratedDensityScaleHeights / verticalIntegral;
+  float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
+  float alpha = bodyOccludesShell
+    ? 0.0
+    : clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
+  float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
+  vec3 radiance = integratedScattering * DISPLAY_GAIN * limbGain;
+  gl_FragColor = vec4(radiance * alpha, alpha);
 }`;
 
 export interface SurfaceTextureResource {
@@ -141,6 +225,8 @@ export interface CelestialSystemViewContext {
   readonly radiusMode?: RadiusMode;
   readonly orbitVisible?: boolean;
   readonly orbitStyle?: OrbitPathStyle;
+  readonly orbitStyleByObjectId?: ReadonlyMap<ObjectId, OrbitPathStyle>;
+  readonly lightingMode?: LightingMode;
 }
 
 export interface CelestialSystemViewOptions {
@@ -221,15 +307,20 @@ function cameraProjectionMetrics(position: RenderVector3, camera: THREE.Camera, 
   const cameraSpace = worldPosition.clone().applyMatrix4(camera.matrixWorldInverse);
   const perspective = camera instanceof THREE.PerspectiveCamera;
   const insideBody = physicalRadiusSceneUnits > 0 && cameraWorldPosition.distanceTo(worldPosition) <= physicalRadiusSceneUnits;
-  const depth = perspective ? (insideBody ? Math.max(physicalRadiusSceneUnits, Number.EPSILON) : -cameraSpace.z) : 1;
+  const distance = cameraWorldPosition.distanceTo(worldPosition);
+  const cameraDepth = perspective ? (insideBody ? physicalRadiusSceneUnits : -cameraSpace.z) : 1;
+  // Physical marker sizing remains useful for bodies behind the camera, but
+  // keeps the true view-space depth whenever the body is in front of it.
+  const depth = perspective
+    ? Math.max(insideBody || cameraDepth <= 0 ? (insideBody ? physicalRadiusSceneUnits : distance) : cameraDepth, Number.EPSILON)
+    : 1;
   const projectionScaleY = Math.abs(camera.projectionMatrix.elements[5] ?? 0);
   const verticalFieldOfViewRadians = perspective
     ? THREE.MathUtils.degToRad(camera.fov)
     : projectionScaleY > 0 ? 2 * Math.atan(1 / projectionScaleY) : 1;
   const ndc = worldPosition.clone().project(camera);
   const projectable = insideBody || (Number.isFinite(depth) && depth > 0
-    && Number.isFinite(ndc.x) && Number.isFinite(ndc.y) && Number.isFinite(ndc.z)
-    && ndc.x >= -1 && ndc.x <= 1 && ndc.y >= -1 && ndc.y <= 1 && ndc.z >= -1 && ndc.z <= 1);
+    && Number.isFinite(ndc.x) && Number.isFinite(ndc.y) && Number.isFinite(ndc.z));
   const centerScreenPixels = insideBody
     ? { x: viewportWidthCssPixels / 2, y: viewportHeightCssPixels / 2 }
     : { x: (ndc.x * 0.5 + 0.5) * viewportWidthCssPixels, y: (-ndc.y * 0.5 + 0.5) * viewportHeightCssPixels };
@@ -332,13 +423,16 @@ function createSurfaceMaterial(body: CelestialBodyRenderState, texture: SurfaceT
   const reflectance = isEmitter
     ? emission
     : deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).linearReflectance;
+  const baseColor = texture === undefined ? reflectance : { r: 1, g: 1, b: 1 };
   const uniforms = createLightUniforms();
   return new THREE.ShaderMaterial({
     uniforms: {
       ...uniforms,
-      uBaseColor: { value: new THREE.Color(reflectance.r, reflectance.g, reflectance.b) },
+      uBaseColor: { value: new THREE.Color(baseColor.r, baseColor.g, baseColor.b) },
       uEmissionColor: { value: new THREE.Color(emission.r, emission.g, emission.b) },
       uEmissionStrength: { value: isEmitter ? 1 : 0 },
+      uInspectionFill: { value: 0 },
+      uDisplayExposure: { value: 1 },
       uUseTexture: { value: texture !== undefined },
       uSurfaceMap: { value: texture?.texture ?? null },
     },
@@ -358,15 +452,39 @@ function updateSurfaceMaterialAppearance(material: THREE.ShaderMaterial, body: C
     : deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).linearReflectance;
   const baseColor = material.uniforms.uBaseColor!.value as THREE.Color;
   const emissionColor = material.uniforms.uEmissionColor!.value as THREE.Color;
-  baseColor.setRGB(emissionGlow ? 0 : reflectance.r, emissionGlow ? 0 : reflectance.g, emissionGlow ? 0 : reflectance.b);
+  const textured = material.uniforms.uUseTexture?.value === true;
+  const visibleColor = textured ? { r: 1, g: 1, b: 1 } : reflectance;
+  baseColor.setRGB(emissionGlow ? 0 : visibleColor.r, emissionGlow ? 0 : visibleColor.g, emissionGlow ? 0 : visibleColor.b);
   emissionColor.setRGB(emission.r, emission.g, emission.b);
   material.uniforms.uEmissionStrength!.value = emissionGlow ? 0.22 : isEmitter ? 1 : 0;
 }
 
-function atmosphereShellRadius(body: CelestialBodyRenderState, renderSpace: RenderSpaceConfig, presentedRadius = sceneRadius(body, renderSpace)): number {
+function surfaceDisplayExposure(illumination: StellarIllumination): number {
+  return displayExposureDiagnostics(
+    illumination.contributions.length === 0 ? undefined : illumination.totalIrradianceWattsPerSquareMeter,
+  ).displayExposure;
+}
+
+function atmosphereShellRadius(
+  body: CelestialBodyRenderState,
+  renderSpace: RenderSpaceConfig,
+  presentedRadius = sceneRadius(body, renderSpace),
+  projectedRadiusPixels = 0,
+): number {
   const radius = presentedRadius;
   const scaleHeight = body.appearance?.atmosphere?.scaleHeightMeters ?? 0;
-  return radius + Math.max(scaleHeight * 4 / renderSpace.metersPerSceneUnit, radius * 0.01);
+  const physicalRadius = sceneRadius(body, renderSpace);
+  const physicalThickness = radius * (scaleHeight * ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS / renderSpace.metersPerSceneUnit) / physicalRadius;
+  if (projectedRadiusPixels > 0 && radius > 0) {
+    const pixelsPerSceneUnit = projectedRadiusPixels / radius;
+    const minimumReadableThickness = ATMOSPHERE_RIM_THICKNESS_PIXELS / Math.max(pixelsPerSceneUnit, Number.EPSILON);
+    const maximumPresentationThickness = radius * ATMOSPHERE_MAX_RIM_FRACTION;
+    return radius + Math.min(
+      maximumPresentationThickness,
+      Math.max(physicalThickness, minimumReadableThickness),
+    );
+  }
+  return radius + Math.max(physicalThickness, radius * 0.01);
 }
 
 function createAtmosphereMaterial(
@@ -384,6 +502,7 @@ function createAtmosphereMaterial(
       uCameraPosition: { value: new THREE.Vector3(cameraPosition.x, cameraPosition.y, cameraPosition.z) },
       uBodyRadius: { value: bodyRadiusSceneUnits },
       uShellRadius: { value: shellRadiusSceneUnits },
+      uPhysicalExtentScaleHeights: { value: 4 },
       uRayleighScattering: { value: new THREE.Vector3(optics.rayleighScattering.r, optics.rayleighScattering.g, optics.rayleighScattering.b) },
       uMieScattering: { value: new THREE.Vector3(optics.mieScattering.r, optics.mieScattering.g, optics.mieScattering.b) },
       uAbsorption: { value: new THREE.Vector3(optics.absorption.r, optics.absorption.g, optics.absorption.b) },
@@ -398,14 +517,20 @@ function createAtmosphereMaterial(
     blending: THREE.NormalBlending,
     lights: false,
     toneMapped: true,
+    premultipliedAlpha: true,
   });
 }
 
-function isSameResourceShape(resource: BodyResources | undefined, body: CelestialBodyRenderState): boolean {
+function isSameResourceShape(
+  resource: BodyResources | undefined,
+  body: CelestialBodyRenderState,
+  surfaceTexture: SurfaceTextureResource | undefined,
+): boolean {
   return resource !== undefined
     && resource.representation === (body.representation ?? "sphere")
     && resource.hasAtmosphere === (resource.representation === "sphere" && resolveAtmosphereOptics(body.appearance) !== undefined)
-    && resource.hasStellarEmission === (body.appearance?.stellarEmission !== undefined);
+    && resource.hasStellarEmission === (body.appearance?.stellarEmission !== undefined)
+    && resource.surfaceTexture?.texture === surfaceTexture?.texture;
 }
 
 function disposeMaterial(material: THREE.Material): void {
@@ -498,6 +623,10 @@ export class CelestialSystemView {
 
   bodyAnchor(objectId: ObjectId): THREE.Group | undefined {
     return this.#resources.get(objectId)?.anchor;
+  }
+
+  representationFor(objectId: ObjectId): BodyRepresentation | undefined {
+    return this.#representations.get(objectId);
   }
 
   pick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera, viewportWidthCssPixels?: number, viewportHeightCssPixels?: number): CelestialPickResult | undefined {
@@ -688,8 +817,11 @@ export class CelestialSystemView {
           const position = transformSnapshotPositionToSceneUnits(body.positionRelativeToOriginMeters, this.#renderSpace);
           markerEntries.push({ objectId: body.objectId, positionSceneUnits: position, sizePixels: decision.sizing.markerSizePixels, color: body.accentColor ?? this.#fallbackAccentColor });
         }
+        const surfaceTexture = decision.representation === "sphere"
+          ? this.#surfaceTextureProvider?.(body)
+          : undefined;
         const existing = this.#resources.get(body.objectId);
-        if (isSameResourceShape(existing, body)) {
+        if (isSameResourceShape(existing, body, surfaceTexture)) {
           next.set(body.objectId, existing!);
           continue;
         }
@@ -822,6 +954,12 @@ export class CelestialSystemView {
         updateSurfaceMaterialAppearance(resource.surface.material, body);
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.surface.material, illumination, this.#renderSpace);
+        resource.surface.material.uniforms.uDisplayExposure!.value = surfaceDisplayExposure(illumination);
+        resource.surface.material.uniforms.uInspectionFill!.value = context.lightingMode === undefined
+          ? 0
+          : inspectionFillContribution(context.lightingMode) * (
+            context.selectedObjectId === body.objectId || context.focusedObjectId === body.objectId ? 1 : 0
+          );
       }
       if (resource.emission !== undefined) {
         const presentedRadius = decision.sizing.presentedRadiusSceneUnits || sceneRadius(body, this.#renderSpace);
@@ -834,7 +972,7 @@ export class CelestialSystemView {
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.atmosphere.material, illumination, this.#renderSpace);
         const presentedRadius = decision.sizing.presentedRadiusSceneUnits || sceneRadius(body, this.#renderSpace);
-        const shellRadius = atmosphereShellRadius(body, this.#renderSpace, presentedRadius);
+        const shellRadius = atmosphereShellRadius(body, this.#renderSpace, presentedRadius, decision.sizing.presentedRadiusPixels);
         resource.atmosphere.scale.setScalar(shellRadius);
         const center = resource.anchor.position;
         const cameraPosition = context.cameraPositionSceneUnits ?? { x: center.x, y: center.y, z: center.z + 1 };
@@ -862,7 +1000,8 @@ export class CelestialSystemView {
       }
       if (this.#orbitRenderer !== undefined) {
         if (prepared.snapshot.orbitPaths !== undefined) {
-          if (context.orbitStyle === undefined) this.#orbitRenderer.setPaths(prepared.snapshot.orbitPaths);
+          if (context.orbitStyle === undefined && context.orbitStyleByObjectId === undefined) this.#orbitRenderer.setPaths(prepared.snapshot.orbitPaths);
+          else if (context.orbitStyleByObjectId !== undefined) this.#orbitRenderer.setPaths(prepared.snapshot.orbitPaths, context.orbitStyleByObjectId);
           else {
             this.#orbitRenderer.clearPaths();
             for (const path of prepared.snapshot.orbitPaths) this.#orbitRenderer.setPath(path, context.orbitStyle);

@@ -7,17 +7,15 @@ import {
   type RenderShell,
 } from "./rendering/three-shell.js";
 import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
-import { SolarSystemScene, type StellarDirectionDiagnostics } from "./rendering/solar-system-scene.js";
-import type { AtmosphereDiagnostics } from "./rendering/atmosphere-rendering.js";
-import type { DisplayExposureDiagnostics } from "./rendering/celestial-appearance-rendering.js";
-import { lightingModeDiagnostics, type LightingMode } from "./rendering/lighting-mode.js";
+import { SolarSystemScene, type AtmosphereDiagnostics, type StellarDirectionDiagnostics } from "./rendering/solar-system-scene.js";
+import type { DisplayExposureDiagnostics, LightingMode } from "orbit-engine-three/presentation";
+import { lightingModeDiagnostics } from "orbit-engine-three/presentation";
+import { createOrbitEngineSnapshotSource, type OrbitEngineSnapshotSource } from "orbit-engine-three";
 import { loadSolarSystemScenario, type SolarSystemScenario } from "./scenario/load-solar-system.js";
 import { loadSolarSystemReferenceDataset } from "./scenario/load-reference-dataset.js";
 import { RuntimeAsteroidOverlay } from "./scenario/runtime-asteroid-overlay.js";
 import { SolarSystemStateSource, type ScenarioStateFrame } from "./scenario/state-source.js";
 import { EARTH_ID, EUROPA_ID, MOON_ID, SCENARIO_ROOT_FRAME, SUN_ID } from "./scenario/scenario-data.js";
-import { PathCache } from "./simulation/path-sampling.js";
-import { createOrbitPath, ORBIT_CACHE_ENTRIES } from "./simulation/orbit-visualization.js";
 import { SimulationClock } from "./simulation/simulation-clock.js";
 import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
 import { StartupInstrumentation, type StartupDiagnostics } from "./simulation/startup-instrumentation.js";
@@ -65,7 +63,7 @@ interface BrowserRenderBodyDiagnostics {
   readonly physicalIrradianceWattsPerSquareMeter?: number;
   readonly preExposureMappedIrradiance?: number;
   readonly displayExposure: number;
-  readonly toneMappingMode: DisplayExposureDiagnostics["toneMappingMode"];
+  readonly toneMappingMode: "ACESFilmic";
   readonly atmosphere: Pick<AtmosphereDiagnostics, "resourcesAllocated" | "visible" | "projectedDiameterPixels" | "viewSampleCount" | "opticalSource" | "resolvedOptics">;
   readonly stellarDirections: readonly StellarDirectionDiagnostics[];
   readonly lightingMode: LightingMode;
@@ -82,11 +80,13 @@ interface BrowserOrbitDiagnostics {
   readonly anchorPosition: { readonly x: number; readonly y: number; readonly z: number };
 }
 
+type DemoDisplayExposureDiagnostics = DisplayExposureDiagnostics & { readonly toneMappingMode: "ACESFilmic" };
+
 interface BrowserRenderDiagnostics {
   readonly focusId: string;
   readonly selectedId: string;
   readonly lighting: ReturnType<typeof lightingModeDiagnostics>;
-  readonly displayExposure: DisplayExposureDiagnostics;
+  readonly displayExposure: DemoDisplayExposureDiagnostics;
   readonly atmosphereResourceCount: number;
   readonly planetTextureResources: ReturnType<SolarSystemScene["planetTextureResourceDiagnostics"]>;
   readonly performance: {
@@ -141,6 +141,26 @@ function stateVector(state: ReturnType<OrbitEngine["stateAt"]>): readonly number
     state.velocity.y,
     state.velocity.z,
   ];
+}
+
+function referenceOrbitInterval(
+  scenario: SolarSystemScenario,
+  entry: SolarSystemScenario["bodies"][number],
+  anchor: ReturnType<typeof simulationInstant>,
+): { readonly start: ReturnType<typeof simulationInstant>; readonly end: ReturnType<typeof simulationInstant>; readonly sampleCount: number; readonly closedReferenceOrbit: boolean } {
+  const definition = entry.definition.propagation.orbitVisualization ?? {
+    sampleSpanSeconds: 31_557_600,
+    sampleCount: 128,
+    closedReferenceOrbit: false,
+  };
+  const validityEnd = scenario.validity.end;
+  if (validityEnd === undefined || compareSimulationInstants(anchor, scenario.validity.start) < 0 || compareSimulationInstants(anchor, validityEnd) >= 0) {
+    throw new RangeError("Orbit visualization anchor is outside the supported scenario interval");
+  }
+  const candidateEnd = simulationInstant(anchor.seconds + definition.sampleSpanSeconds, anchor.nanoseconds);
+  const end = compareSimulationInstants(candidateEnd, validityEnd) < 0 ? candidateEnd : validityEnd;
+  if (compareSimulationInstants(anchor, end) >= 0) throw new RangeError("Orbit visualization interval is empty");
+  return Object.freeze({ start: anchor, end, sampleCount: definition.sampleCount, closedReferenceOrbit: definition.closedReferenceOrbit });
 }
 
 function validateEclipseRegression(engine: OrbitEngine, scenario: SolarSystemScenario): EclipseRegressionDiagnostics {
@@ -221,7 +241,7 @@ async function bootstrap(): Promise<void> {
   let totalFrameDurationMs = 0;
   let lastFrameDurationMs = 0;
   let eclipseRegression: EclipseRegressionDiagnostics | undefined;
-  const pathCache = new PathCache(ORBIT_CACHE_ENTRIES);
+  let snapshotSource: OrbitEngineSnapshotSource | undefined;
 
   function centerCameraOnFocus(): void {
     const currentScene = scene;
@@ -335,17 +355,19 @@ async function bootstrap(): Promise<void> {
   }
 
   function sampleReferenceOrbit(entry: SolarSystemScenario["bodies"][number]): boolean {
-    if (stateSource === undefined || scene === undefined) return false;
+    if (snapshotSource === undefined || scene === undefined || scenario === undefined) return false;
     try {
-      const path = createOrbitPath({
-        scenario: scenario!,
-        body: entry,
-        cache: pathCache,
-        stateAt: (objectIdValue, centralBodyId, target, outputFrame) =>
-          stateSource!.relativeStateAt(objectIdValue, centralBodyId, target, outputFrame),
-        anchorInstant: clock.currentInstant(),
+      const parentId = entry.definition.centralBody;
+      if (parentId === undefined) return false;
+      const interval = referenceOrbitInterval(scenario, entry, clock.currentInstant());
+      const path = snapshotSource.sampleOrbitPath({
+        objectId: entry.definition.id,
+        parentId,
+        frame: scenario.rootFrame,
+        interval,
+        sampleCount: interval.sampleCount,
+        closedReferenceOrbit: interval.closedReferenceOrbit,
       });
-      if (path === undefined) return false;
       scene.setPath(path);
       return true;
     } catch {
@@ -682,6 +704,19 @@ async function bootstrap(): Promise<void> {
     });
     runtimeOverlay = new RuntimeAsteroidOverlay(engine, scenario);
     stateSource = new SolarSystemStateSource(engine, scenario, runtimeOverlay);
+    snapshotSource = createOrbitEngineSnapshotSource(engine, (objectIdValue, record) => {
+      const entry = scenario!.bodyById.get(objectIdValue);
+      if (entry === undefined) return { objectType: record.type, parentId: record.structuralParent };
+      return {
+        parentId: entry.definition.centralBody,
+        objectType: entry.definition.type,
+        physicalRadiusMeters: entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius,
+        appearance: entry.definition.appearance,
+        accentColor: entry.definition.display.accentColor,
+        propertyRevision: entry.record.propertyRevision,
+        stateRevision: entry.record.motion.motionRevision,
+      };
+    });
     panel.populateBodies(stateSource.currentBodies());
     panel.setFocusId(focusId);
     updateSceneContext();

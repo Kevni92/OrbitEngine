@@ -1,58 +1,42 @@
 import * as THREE from "three";
 import {
+  createCelestialRenderSnapshot,
+  CelestialSystemView,
+  createRenderSpaceConfig,
+  transformSnapshotDirectionToRenderSpace,
+  transformSnapshotPositionToSceneUnits,
+  type BodyRepresentation,
+  type CelestialBodyRenderState,
+  type CelestialRenderSnapshot,
+  type CelestialRenderSnapshotInput,
+  type OrbitPathSnapshot,
+  type OrbitPathSnapshotInput,
+  type OrbitPathStyle,
+  type RenderSpaceConfig,
+} from "orbit-engine-three";
+import {
+  deriveSurfaceReflectance,
+  displayExposureDiagnostics as resolveDisplayExposureDiagnostics,
+  inspectionFillContribution,
+  lightingModeDiagnostics,
+  resolveAtmosphereOptics,
+  resolveStellarIllumination,
+  type DisplayExposureDiagnostics as PresentationDisplayExposureDiagnostics,
+  type LightingMode,
+  type StellarIllumination,
+} from "orbit-engine-three/presentation";
+import {
+  compareSimulationInstants,
   meters,
   ObjectType,
+  simulationInstant,
   type Meters,
   type ObjectId,
   type PropagationState,
 } from "orbit-engine";
-import {
-  blackbodyTemperatureToLinearRgb,
-  displayExposureDiagnostics as resolveDisplayExposureDiagnostics,
-  deriveSurfaceReflectance,
-  LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION,
-  mapIrradianceToSceneIntensity,
-  mapSceneDiffuseContributionToLambertLightIntensity,
-  REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER,
-  resolveStellarIllumination,
-  type DisplayExposureDiagnostics,
-  type StellarEmitter,
-  type StellarIlluminationSet,
-} from "./celestial-appearance-rendering.js";
-import type { CartesianPosition } from "./celestial-appearance-rendering.js";
 import type { RegisteredScenarioBody, SolarSystemScenario } from "../scenario/load-solar-system.js";
 import type { RuntimeAsteroidBody } from "../scenario/runtime-asteroid-overlay.js";
 import type { OrbitPath } from "../simulation/path-sampling.js";
-import { OrbitRenderer } from "./orbit-renderer.js";
-import type { OrbitGuideDiagnostics } from "./orbit-renderer.js";
-import {
-  adaptiveRadiusPixels,
-  cappedAdaptiveRadiusSceneUnits,
-  projectedPixelsToSceneRadius,
-  projectedRadiusPixels,
-} from "./adaptive-sizing.js";
-import {
-  Representation,
-  transitionRepresentation,
-  type LodDiagnostics,
-  type RepresentationLevel,
-} from "./representation-lod.js";
-import { METERS_PER_SCENE_UNIT, positionToSceneUnits, radiusToSceneUnits, type RadiusMode } from "./render-space.js";
-import { MARKER_PIXEL_SIZE, BatchedMarkerLayer } from "./runtime-asteroid-markers.js";
-import { SelectionHalo } from "./selection-halo.js";
-import { AtmosphereShellManager, type AtmosphereDiagnostics } from "./atmosphere-rendering.js";
-import {
-  inspectionFillContribution,
-  lightingModeDiagnostics,
-  parseLightingMode,
-  type LightingMode,
-  type LightingModeDiagnostics,
-} from "./lighting-mode.js";
-import {
-  createProceduralSurfaceTexture,
-  generateProceduralSurfaceData,
-  type ProceduralSurfaceDiagnostics,
-} from "./procedural-surface.js";
 import {
   planetTextureAssets,
   planetTextureSetFor,
@@ -66,39 +50,49 @@ import {
   type PlanetTextureLease,
   type PlanetTextureResourceDiagnostics,
 } from "./planet-textures.js";
+import {
+  createProceduralSurfaceTexture,
+  generateProceduralSurfaceData,
+  type ProceduralSurfaceDiagnostics,
+} from "./procedural-surface.js";
+import { J2000_ECLIPTIC_OBLIQUITY_RADIANS } from "../coordinate-conventions.js";
 
 export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 0.000001;
 export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
 export const FOCUS_DISTANCE_RADIUS_MULTIPLIER = 24;
 export const MAX_PROMOTED_RUNTIME_SPHERES = 128;
 export const INSPECTION_FILL_LAYER = 1;
+export const MARKER_PIXEL_SIZE = 7;
 
-interface SceneBody {
-  readonly objectId: ObjectId;
-  readonly physicalRadiusMeters: Meters;
-  readonly parentId?: ObjectId;
-  readonly type: RegisteredScenarioBody["definition"]["type"];
-  readonly mesh: THREE.Mesh;
-}
+const DISPLAY_TONE_MAPPING_MODE = "ACESFilmic" as const;
+const ATMOSPHERE_VIEW_SAMPLES = 8;
+const ORBIT_BACKGROUND_OPACITY = 0.11;
+const ORBIT_LOCAL_SYSTEM_OPACITY = 0.27;
+const ORBIT_SELECTED_OPACITY = 0.34;
+const CHILD_ORBIT_OPACITY = 0.3;
+const CHILD_ORBIT_SELECTED_OPACITY = 1;
 
-interface PlanetLayerMeshes {
-  readonly clouds?: THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial>;
-  readonly nightLights?: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
-}
-
-interface PlanetTextureState {
-  readonly set: PlanetTextureSet;
-  leases: readonly PlanetTextureLease[];
-  readonly loadedKeys: Set<string>;
-}
+const PRESENTATION_AXIS_TRANSFORM = Object.freeze([
+  1, 0, 0,
+  0, Math.cos(J2000_ECLIPTIC_OBLIQUITY_RADIANS), Math.sin(J2000_ECLIPTIC_OBLIQUITY_RADIANS),
+  0, -Math.sin(J2000_ECLIPTIC_OBLIQUITY_RADIANS), Math.cos(J2000_ECLIPTIC_OBLIQUITY_RADIANS),
+] as const);
 
 export interface SolarSystemSceneOptions {
   readonly onSelect?: (objectId: ObjectId) => void;
 }
 
+export interface StellarDirectionDiagnostics {
+  readonly emitterId: ObjectId;
+  readonly physicalDirectionToEmitter: Readonly<{ x: number; y: number; z: number }>;
+  readonly renderDirectionToEmitter: Readonly<{ x: number; y: number; z: number }>;
+  readonly shaderDirectionToEmitter: Readonly<{ x: number; y: number; z: number }>;
+  readonly projectedDirection?: Readonly<{ x: number; y: number }>;
+}
+
 export interface BodyRenderDiagnostics {
   readonly objectId: ObjectId;
-  readonly representation: RepresentationLevel;
+  readonly representation: BodyRepresentation;
   readonly submitted: boolean;
   readonly orbitVisible: boolean;
   readonly inFront: boolean;
@@ -106,7 +100,7 @@ export interface BodyRenderDiagnostics {
   readonly ndcX: number;
   readonly ndcY: number;
   readonly ndcZ: number;
-  readonly renderWorldPosition: CartesianPosition;
+  readonly renderWorldPosition: Readonly<{ x: number; y: number; z: number }>;
   readonly markerSizePixels?: number;
   readonly positionErrorSceneUnits?: number;
   readonly surfaceReflectanceSource?: string;
@@ -121,7 +115,7 @@ export interface BodyRenderDiagnostics {
   readonly physicalIrradianceWattsPerSquareMeter?: number;
   readonly preExposureMappedIrradiance?: number;
   readonly displayExposure: number;
-  readonly toneMappingMode: DisplayExposureDiagnostics["toneMappingMode"];
+  readonly toneMappingMode: typeof DISPLAY_TONE_MAPPING_MODE;
   readonly lightingMode: LightingMode;
   readonly inspectionFillApplied: boolean;
   readonly inspectionFillContribution: number;
@@ -129,613 +123,482 @@ export interface BodyRenderDiagnostics {
   readonly stellarDirections: readonly StellarDirectionDiagnostics[];
 }
 
-export interface StellarDirectionDiagnostics {
-  readonly emitterId: ObjectId;
-  /** Body-to-emitter direction from the authoritative state positions. */
-  readonly physicalDirectionToEmitter: CartesianPosition;
-  /** Same direction after the single ICRS -> render-world rotation. */
-  readonly renderDirectionToEmitter: CartesianPosition;
-  /** Alias for the vector passed to the atmosphere shader's world-space uniform. */
-  readonly shaderDirectionToEmitter: CartesianPosition;
-  /** Normalized direction from the body center to the projected emitter in NDC. */
-  readonly projectedDirection?: Readonly<{ x: number; y: number }>;
+export interface AtmosphereDiagnostics {
+  readonly resourcesAllocated: boolean;
+  readonly visible: boolean;
+  readonly projectedDiameterPixels: number;
+  readonly viewSampleCount: number;
+  readonly opticalSource?: NonNullable<ReturnType<typeof resolveAtmosphereOptics>>["source"];
+  readonly resolvedOptics?: ReturnType<typeof resolveAtmosphereOptics>;
+}
+
+export type OrbitGuideRole = "background" | "local-system" | "selected";
+export type OrbitGuideKind = "primary" | "child";
+
+export interface OrbitGuideDiagnostics {
+  readonly objectId: ObjectId;
+  readonly kind: OrbitGuideKind;
+  readonly role: OrbitGuideRole;
+  readonly opacity: number;
+  readonly visible: boolean;
+  readonly anchorPosition?: Readonly<{ x: number; y: number; z: number }>;
+}
+
+export interface LodDiagnostics {
+  readonly registeredCount: number;
+  readonly queriedCount: number;
+  readonly hiddenCount: number;
+  readonly markerCount: number;
+  readonly sphereCount: number;
+  readonly promotedRuntimeSphereCount: number;
+}
+
+interface PlanetLayerMeshes {
+  readonly clouds?: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
+  readonly nightLights?: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+}
+
+interface PlanetTextureState {
+  readonly set: PlanetTextureSet;
+  leases: readonly PlanetTextureLease[];
+  readonly loadedKeys: Set<string>;
 }
 
 function isGlobalContextEntry(entry: RegisteredScenarioBody): boolean {
   return entry.definition.type === ObjectType.star || entry.definition.type === ObjectType.planet;
 }
 
-/**
- * Presentation-only scene graph. Body positions are always copied from the
- * public engine state snapshots supplied to update(); this class never steps
- * or derives orbital motion.
- */
+function physicalRadiusMeters(entry: RegisteredScenarioBody): Meters {
+  const radius = entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius;
+  if (radius === undefined) throw new TypeError(`Scenario body ${entry.definition.id} has no physical radius`);
+  return meters(radius);
+}
+
+function orbitSnapshotFromPath(path: OrbitPath | OrbitPathSnapshotInput): OrbitPathSnapshotInput {
+  if ("focusId" in path) {
+    const lastSample = path.samples[path.samples.length - 1]?.instant;
+    const end = lastSample !== undefined && compareSimulationInstants(lastSample, path.interval.end) >= 0
+      ? nextInstant(lastSample)
+      : path.interval.end;
+    return {
+      objectId: path.objectId,
+      parentId: path.focusId,
+      origin: { kind: "object", objectId: path.focusId, frameId: path.outputFrame },
+      frameId: path.outputFrame,
+      interval: { start: path.interval.start, end },
+      samples: path.samples.map((sample) => ({
+        instant: sample.instant,
+        positionRelativeToOriginMeters: sample.state.position,
+      })),
+      closedReferenceOrbit: path.closedReferenceOrbit,
+      motionRevision: path.motionRevision,
+      sourceRevision: path.configurationRevision,
+    };
+  }
+  return path;
+}
+
+function nextInstant(value: { readonly seconds: number; readonly nanoseconds: number }): ReturnType<typeof simulationInstant> {
+  return value.nanoseconds < 999_999_999
+    ? simulationInstant(value.seconds, value.nanoseconds + 1)
+    : simulationInstant(value.seconds + 1);
+}
+
+function orbitStyleFor(kind: OrbitGuideKind): OrbitPathStyle {
+  return Object.freeze({
+    color: 0x9aa7b5,
+    opacity: kind === "child" ? CHILD_ORBIT_OPACITY : ORBIT_BACKGROUND_OPACITY,
+    selectedOpacity: kind === "child" ? CHILD_ORBIT_SELECTED_OPACITY : ORBIT_SELECTED_OPACITY,
+    depthTest: true,
+    depthWrite: false,
+    direction: {
+      enabled: true,
+      headFraction: 0.08,
+      tailFraction: 0.34,
+      headOpacity: 1,
+      tailOpacity: 0.78,
+    },
+  });
+}
+
 export class SolarSystemScene {
   readonly #scene: THREE.Scene;
-  readonly #bodies = new Map<ObjectId, SceneBody>();
+  readonly #view: CelestialSystemView;
+  readonly #renderSpace: RenderSpaceConfig;
   readonly #committedEntries = new Map<ObjectId, RegisteredScenarioBody>();
   readonly #currentEntries = new Map<ObjectId, RegisteredScenarioBody>();
   readonly #runtimeIds = new Set<ObjectId>();
-  readonly #runtimeSphereMeshes = new Map<ObjectId, THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial>>();
-  readonly #runtimeSphereGeometry: THREE.SphereGeometry;
-  readonly #runtimeSphereMaterial: THREE.MeshLambertMaterial;
+  readonly #states = new Map<ObjectId, PropagationState>();
+  readonly #positions = new Map<ObjectId, THREE.Vector3>();
+  readonly #representations = new Map<ObjectId, BodyRepresentation>();
+  readonly #illuminationByBody = new Map<ObjectId, StellarIllumination>();
+  readonly #paths = new Map<ObjectId, OrbitPathSnapshot>();
+  readonly #orbitStyles = new Map<ObjectId, OrbitPathStyle>();
   readonly #surfaceTextures = new Map<ObjectId, THREE.DataTexture>();
   readonly #surfaceDiagnostics = new Map<ObjectId, ProceduralSurfaceDiagnostics>();
   readonly #planetTextureResources = new PlanetTextureResourceManager();
   readonly #planetTextureStates = new Map<ObjectId, PlanetTextureState>();
+  readonly #loadedPlanetTextures = new Map<ObjectId, Map<string, THREE.Texture>>();
   readonly #planetLayerMeshes = new Map<ObjectId, PlanetLayerMeshes>();
-  readonly #planetFallbackColors = new Map<ObjectId, THREE.Color>();
-  readonly #stellarLights = new Map<ObjectId, THREE.PointLight>();
-  readonly #illuminationByBody = new Map<ObjectId, StellarIlluminationSet>();
-  readonly #representations = new Map<ObjectId, RepresentationLevel>();
-  readonly #orbitRenderer: OrbitRenderer;
-  readonly #markerLayer: BatchedMarkerLayer;
-  readonly #states = new Map<ObjectId, PropagationState>();
-  readonly #positions = new Map<ObjectId, THREE.Vector3>();
+  readonly #inspectionFillIndicator = new THREE.Object3D();
   readonly #onSelect?: (objectId: ObjectId) => void;
-  readonly #selectionHalo: SelectionHalo;
-  readonly #atmosphereShells: AtmosphereShellManager;
-  readonly #inspectionFillLight: THREE.PointLight;
-  readonly #inspectionFillTargets = new Set<ObjectId>();
-  #radiusMode: RadiusMode = "adaptive";
+  #snapshot?: CelestialRenderSnapshot;
+  #lastCamera?: THREE.Camera;
+  #lastViewportHeight = 1_000;
+  #radiusMode: "physical" | "adaptive" = "adaptive";
   #lightingMode: LightingMode = "physical";
   #selected?: ObjectId;
   #focusId?: ObjectId;
+  #orbitsVisible = true;
   #queriedCount = 0;
-  #markerMembershipKey = "";
   #promotedRuntimeSphereCount = 0;
 
   constructor(scene: THREE.Scene, scenario: SolarSystemScenario, options: SolarSystemSceneOptions = {}) {
     this.#scene = scene;
     this.#onSelect = options.onSelect;
-    this.#orbitRenderer = new OrbitRenderer(scene);
-    this.#markerLayer = new BatchedMarkerLayer(scene);
-    this.#runtimeSphereGeometry = new THREE.SphereGeometry(1, 20, 12);
-    this.#runtimeSphereMaterial = new THREE.MeshLambertMaterial({ color: new THREE.Color(0.32, 0.32, 0.32) });
-    this.#selectionHalo = new SelectionHalo(scene);
-    this.#atmosphereShells = new AtmosphereShellManager(scene);
-    this.#inspectionFillLight = new THREE.PointLight(new THREE.Color(1, 1, 1), 0, 0, 0);
-    this.#inspectionFillLight.name = "Enhanced inspection fill (presentation-only)";
-    this.#inspectionFillLight.layers.set(INSPECTION_FILL_LAYER);
-    this.#inspectionFillLight.visible = false;
-    this.#scene.add(this.#inspectionFillLight);
-
+    this.#renderSpace = createRenderSpaceConfig({
+      metersPerSceneUnit: 149_597_870_700 / 100,
+      presentationAxisTransform: PRESENTATION_AXIS_TRANSFORM,
+    });
+    this.#view = new CelestialSystemView({
+      configuration: {
+        renderSpace: this.#renderSpace,
+        fallbackAccentColor: 0x808080,
+        radiusMode: "adaptive",
+        orbitPaths: { renderSpace: this.#renderSpace },
+        // Preserve the demo's established neutral white selection ring while
+        // delegating sizing and allocation to the public companion API.
+        selectionIndicator: { color: 0xffffff },
+      },
+      surfaceTextureProvider: (body) => this.#surfaceTextureFor(body),
+    });
+    this.#scene.add(this.#view.root);
+    this.#inspectionFillIndicator.name = "Enhanced inspection fill (presentation-only)";
+    this.#inspectionFillIndicator.visible = false;
+    this.#scene.add(this.#inspectionFillIndicator);
     for (const entry of scenario.bodies) {
       this.#committedEntries.set(entry.definition.id, entry);
       this.#currentEntries.set(entry.definition.id, entry);
-      this.#addBody(entry);
-      this.#representations.set(entry.definition.id, Representation.sphere);
+      this.#representations.set(entry.definition.id, "sphere");
     }
   }
 
-  setRadiusMode(mode: RadiusMode): void {
+  setRadiusMode(mode: "physical" | "adaptive"): void {
     if (mode !== "physical" && mode !== "adaptive") throw new RangeError(`Unknown radius mode: ${String(mode)}`);
     this.#radiusMode = mode;
+    this.#rerender();
   }
 
-  radiusMode(): RadiusMode {
-    return this.#radiusMode;
-  }
+  radiusMode(): "physical" | "adaptive" { return this.#radiusMode; }
 
   setLightingMode(mode: LightingMode): void {
-    this.#lightingMode = parseLightingMode(mode);
-    this.#inspectionFillLight.visible = false;
-    this.#inspectionFillLight.intensity = mapSceneDiffuseContributionToLambertLightIntensity(
-      inspectionFillContribution(this.#lightingMode),
-    );
+    this.#lightingMode = mode;
+    this.#rerender();
   }
 
-  lightingMode(): LightingMode {
-    return this.#lightingMode;
-  }
+  lightingMode(): LightingMode { return this.#lightingMode; }
 
   setFocusId(objectId: ObjectId | undefined): void {
-    if (objectId !== undefined && !this.#currentEntries.has(objectId)) {
-      throw new RangeError(`Unknown scenario body: ${objectId}`);
-    }
+    if (objectId !== undefined && !this.#currentEntries.has(objectId)) throw new RangeError(`Unknown scenario body: ${objectId}`);
     this.#focusId = objectId;
-    this.#updateLocalSystemRoot();
+    this.#rerender();
   }
 
-  /** Updates the combined committed-plus-runtime membership without changing engine state. */
   setCurrentBodies(entries: readonly RegisteredScenarioBody[]): void {
     const nextIds = new Set(entries.map((entry) => entry.definition.id));
-    const nextRuntimeIds = new Set(entries
-      .filter((entry) => !this.#committedEntries.has(entry.definition.id))
-      .map((entry) => entry.definition.id));
+    const nextRuntimeIds = new Set(entries.filter((entry) => !this.#committedEntries.has(entry.definition.id)).map((entry) => entry.definition.id));
     for (const objectId of [...this.#currentEntries.keys()]) {
       if (nextIds.has(objectId)) continue;
       this.#currentEntries.delete(objectId);
-      this.#representations.delete(objectId);
       this.#states.delete(objectId);
       this.#positions.delete(objectId);
-      this.#orbitRenderer.clearPath(objectId);
-      this.#removeRuntimeSphere(objectId);
+      this.#representations.delete(objectId);
+      this.#paths.delete(objectId);
+      this.#orbitStyles.delete(objectId);
       this.#releasePlanetTextures(objectId);
-      this.#atmosphereShells.remove(objectId);
+      this.#surfaceTextures.get(objectId)?.dispose();
+      this.#surfaceTextures.delete(objectId);
+      this.#surfaceDiagnostics.delete(objectId);
+      this.#removePlanetLayers(objectId);
     }
     for (const entry of entries) {
-      const objectId = entry.definition.id;
-      this.#currentEntries.set(objectId, entry);
-      if (!this.#representations.has(objectId)) {
-        this.#representations.set(objectId, nextRuntimeIds.has(objectId) ? Representation.marker : Representation.sphere);
-      }
+      this.#currentEntries.set(entry.definition.id, entry);
+      if (!this.#representations.has(entry.definition.id)) this.#representations.set(entry.definition.id, nextRuntimeIds.has(entry.definition.id) ? "marker" : "sphere");
     }
     this.#runtimeIds.clear();
-    for (const objectId of nextRuntimeIds) this.#runtimeIds.add(objectId);
-    this.#markerMembershipKey = "";
+    nextRuntimeIds.forEach((objectId) => this.#runtimeIds.add(objectId));
+    this.#refreshSnapshotPaths();
+    this.#rerender();
   }
 
-  /** Stage-A compatibility wrapper; Stage B uses setCurrentBodies for the unified layer. */
   setRuntimeAsteroids(bodies: readonly RuntimeAsteroidBody[]): void {
     this.setCurrentBodies([...this.#committedEntries.values(), ...bodies]);
   }
 
   setSelected(objectId: ObjectId | undefined): void {
-    if (objectId !== undefined && !this.#currentEntries.has(objectId)) {
-      throw new RangeError(`Unknown scenario body: ${objectId}`);
-    }
+    if (objectId !== undefined && !this.#currentEntries.has(objectId)) throw new RangeError(`Unknown scenario body: ${objectId}`);
     this.#selected = objectId;
-    this.#orbitRenderer.setSelected(objectId);
-    this.#updateLocalSystemRoot();
-    this.#updateSelectionHalo(undefined);
+    this.#rerender();
   }
 
-  update(states: readonly PropagationState[], objectIds: readonly ObjectId[] = [...this.#bodies.keys()]): void {
-    if (states.length !== objectIds.length) {
-      throw new RangeError(`Expected ${objectIds.length} scene states, received ${states.length}`);
-    }
+  update(states: readonly PropagationState[], objectIds: readonly ObjectId[] = [...this.#currentEntries.keys()]): void {
+    if (states.length !== objectIds.length) throw new RangeError(`Expected ${objectIds.length} scene states, received ${states.length}`);
     this.#queriedCount = objectIds.length;
-    const stateById = new Map(objectIds.map((objectId, index) => [objectId, states[index]!]));
-    for (const [objectId] of this.#currentEntries) {
-      const state = stateById.get(objectId);
-      if (state === undefined) continue;
-      const position = positionToSceneUnits(state.position);
-      const staticBody = this.#bodies.get(objectId);
-      if (staticBody !== undefined) staticBody.mesh.position.set(position.x, position.y, position.z);
-      const runtimeMesh = this.#runtimeSphereMeshes.get(objectId);
-      if (runtimeMesh !== undefined) runtimeMesh.position.set(position.x, position.y, position.z);
-      const planetLayers = this.#planetLayerMeshes.get(objectId);
-      planetLayers?.clouds?.position.set(position.x, position.y, position.z);
-      planetLayers?.nightLights?.position.set(position.x, position.y, position.z);
-      this.#positions.set(objectId, new THREE.Vector3(position.x, position.y, position.z));
+    this.#states.clear();
+    this.#positions.clear();
+    const stateById = new Map(objectIds.map((objectId, index) => [objectId, states[index]!])) as Map<ObjectId, PropagationState>;
+    for (const [objectId, state] of stateById) {
       this.#states.set(objectId, state);
+      const position = transformSnapshotPositionToSceneUnits(state.position, this.#renderSpace);
+      this.#positions.set(objectId, new THREE.Vector3(position.x, position.y, position.z));
     }
-    this.#markerLayer.update(objectIds, states);
-    this.#updateStellarLighting(stateById);
-    this.#orbitRenderer.updateBodyPositions(new Map(
-      [...this.#positions].map(([objectId, position]) => [objectId, position.clone()]),
-    ));
-    this.#updateSelectionHalo(undefined);
+    const firstState = states[0];
+    if (firstState === undefined) return;
+    const bodies: CelestialBodyRenderState[] = [];
+    for (const entry of this.#currentEntries.values()) {
+      const state = stateById.get(entry.definition.id);
+      if (state === undefined) continue;
+      bodies.push({
+        objectId: entry.definition.id,
+        objectType: entry.definition.type,
+        ...(entry.definition.centralBody === undefined ? {} : { parentId: entry.definition.centralBody }),
+        positionRelativeToOriginMeters: state.position,
+        velocityRelativeToOriginMetersPerSecond: state.velocity,
+        physicalRadiusMeters: physicalRadiusMeters(entry),
+        stateRevision: `${state.epoch.seconds}:${state.epoch.nanoseconds}`,
+        propertyRevision: entry.record.propertyRevision,
+        ...(entry.definition.appearance === undefined ? {} : { appearance: entry.definition.appearance }),
+        accentColor: entry.definition.display.accentColor,
+      });
+    }
+    const origin = this.#focusId === undefined
+      ? { kind: "frame" as const, frameId: firstState.referenceFrame }
+      : { kind: "object" as const, frameId: firstState.referenceFrame, objectId: this.#focusId };
+    const input: CelestialRenderSnapshotInput = {
+      instant: firstState.epoch,
+      origin,
+      bodies,
+      ...(this.#paths.size === 0 ? {} : { orbitPaths: [...this.#paths.values()] }),
+      revision: `${firstState.epoch.seconds}:${firstState.epoch.nanoseconds}`,
+    };
+    this.#snapshot = createCelestialRenderSnapshot(input);
+    this.#resolveIllumination(bodies);
+    this.#rerender();
   }
 
-  /** Re-evaluates persistent LOD state for camera, hierarchy, focus, selection and viewport changes. */
   updatePresentation(camera: THREE.Camera, viewportHeightPixels: number): void {
-    camera.layers.enable(INSPECTION_FILL_LAYER);
-    const perspective = camera instanceof THREE.PerspectiveCamera ? camera : undefined;
-    const orderedEntries = [...this.#currentEntries.values()].sort((left, right) => this.#depth(left) - this.#depth(right));
-    const forcedAncestors = this.#ancestorIds(new Set([this.#selected, this.#focusId].filter((id): id is ObjectId => id !== undefined)));
-    const next = new Map<ObjectId, RepresentationLevel>();
-    const physicalDiameterPixelsById = new Map<ObjectId, number>();
-
-    for (const entry of orderedEntries) {
-      const objectId = entry.definition.id;
-      const previous = this.#representations.get(objectId);
-      const position = this.#positions.get(objectId);
-      if (perspective === undefined || position === undefined) {
-        const fallback = this.#runtimeIds.has(objectId) ? Representation.marker : (previous ?? Representation.hidden);
-        next.set(objectId, isGlobalContextEntry(entry) && fallback === Representation.hidden ? Representation.marker : fallback);
-        continue;
-      }
-      const physicalRadius = radiusToSceneUnits({
-        mode: "physical",
-        physicalRadiusMeters: meters(entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius ?? 0),
-      });
-      const distance = Math.max(camera.position.distanceTo(position), physicalRadius * 2, Number.EPSILON);
-      const fieldOfView = perspective.fov * Math.PI / 180;
-      const physicalRadiusPixels = projectedRadiusPixels(physicalRadius, distance, fieldOfView, viewportHeightPixels);
-      const physicalDiameterPixels = physicalRadiusPixels * 2;
-      physicalDiameterPixelsById.set(objectId, physicalDiameterPixels);
-      const parentId = entry.definition.centralBody;
-      const isMoon = entry.definition.type === ObjectType.moon && parentId !== undefined;
-      const parentRepresentation = parentId === undefined ? undefined : next.get(parentId);
-      const hierarchyEligible = !isMoon
-        || parentRepresentation === Representation.sphere
-        || parentId === this.#focusId
-        || forcedAncestors.has(parentId!);
-      const prominencePixels = isMoon && hierarchyEligible
-        ? adaptiveRadiusPixels(physicalRadiusPixels) * 2
-        : physicalDiameterPixels;
-      next.set(objectId, transitionRepresentation(previous, {
-        physicalDiameterPixels: prominencePixels,
-        hierarchyEligible,
-        selected: objectId === this.#selected || forcedAncestors.has(objectId),
-        focused: objectId === this.#focusId,
-        minimumRepresentation: isGlobalContextEntry(entry) ? Representation.marker : undefined,
-      }));
-    }
-
-    const runtimeSphereCandidates = orderedEntries
-      .filter((entry) => this.#runtimeIds.has(entry.definition.id) && next.get(entry.definition.id) === Representation.sphere)
-      .sort((left, right) => {
-        const leftPriority = left.definition.id === this.#selected || left.definition.id === this.#focusId ? 0 : 1;
-        const rightPriority = right.definition.id === this.#selected || right.definition.id === this.#focusId ? 0 : 1;
-        if (leftPriority !== rightPriority) return leftPriority - rightPriority;
-        return BigInt(left.definition.id) < BigInt(right.definition.id) ? -1 : 1;
-      });
-    const allowedRuntimeSpheres = new Set(runtimeSphereCandidates.slice(0, MAX_PROMOTED_RUNTIME_SPHERES).map((entry) => entry.definition.id));
-    for (const entry of orderedEntries) {
-      const objectId = entry.definition.id;
-      if (this.#runtimeIds.has(objectId) && next.get(objectId) === Representation.sphere && !allowedRuntimeSpheres.has(objectId)) {
-        next.set(objectId, Representation.marker);
-      }
-    }
-    this.#representations.clear();
-    for (const [objectId, representation] of next) this.#representations.set(objectId, representation);
-
-    const markerEntries = orderedEntries.filter((entry) =>
-      this.#representations.get(entry.definition.id) === Representation.marker
-      && this.#positions.has(entry.definition.id));
-    const markerKey = markerEntries.map((entry) => entry.definition.id).join(",");
-    if (markerKey !== this.#markerMembershipKey) {
-      this.#markerLayer.setBodies(markerEntries, this.#positions);
-      this.#markerMembershipKey = markerKey;
-    }
-    const markerSizes = new Map<ObjectId, number>();
-    for (const entry of markerEntries) {
-      markerSizes.set(
-        entry.definition.id,
-        this.#radiusMode === "physical"
-          ? (physicalDiameterPixelsById.get(entry.definition.id) ?? 0)
-          : MARKER_PIXEL_SIZE,
-      );
-    }
-    this.#markerLayer.updateSizes(markerSizes);
-
-    this.#promotedRuntimeSphereCount = 0;
-    const presentedRadii = new Map<ObjectId, number>();
-    for (const entry of orderedEntries) {
-      const objectId = entry.definition.id;
-      const representation = this.#representations.get(objectId) ?? Representation.hidden;
-      const staticBody = this.#bodies.get(objectId);
-      if (staticBody !== undefined) {
-        staticBody.mesh.visible = representation === Representation.sphere;
-        if (staticBody.mesh.visible && perspective !== undefined) {
-          this.#applySphereScale(staticBody.mesh, entry, camera, perspective, viewportHeightPixels);
-          presentedRadii.set(objectId, staticBody.mesh.scale.x);
-        }
-        this.#updatePlanetTexturePresentation(entry, representation, staticBody);
-      }
-      if (this.#runtimeIds.has(objectId)) {
-        if (representation === Representation.sphere) {
-          const mesh = this.#ensureRuntimeSphere(objectId);
-          mesh.visible = true;
-          if (perspective !== undefined) {
-            this.#applySphereScale(mesh, entry, camera, perspective, viewportHeightPixels);
-            presentedRadii.set(objectId, mesh.scale.x);
-          }
-          this.#promotedRuntimeSphereCount += 1;
-        } else {
-          this.#removeRuntimeSphere(objectId);
-        }
-      }
-      const pathVisible = entry.definition.type === ObjectType.planet
-        || representation === Representation.sphere
-        || objectId === this.#selected
-        || objectId === this.#focusId;
-      this.#orbitRenderer.setBodyRepresentation(objectId, pathVisible);
-    }
-    this.#atmosphereShells.update(
-      orderedEntries,
-      this.#representations,
-      this.#positions,
-      presentedRadii,
-      perspective,
-      viewportHeightPixels,
-      new Set([this.#selected, this.#focusId].filter((id): id is ObjectId => id !== undefined)),
-      this.#illuminationByBody,
-    );
-    this.#updateInspectionFill(camera);
-    this.#updateSelectionHalo(camera, viewportHeightPixels);
+    this.#lastCamera = camera;
+    this.#lastViewportHeight = viewportHeightPixels;
+    this.#rerender();
+    for (const entry of this.#currentEntries.values()) this.#updatePlanetTexturePresentation(entry);
+    this.#updatePlanetLayerTransforms();
+    this.#updateEarthNightLights();
   }
 
   pick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera): ObjectId | undefined {
-    const markerHit = this.#markerLayer.pick(normalizedDeviceX, normalizedDeviceY, camera);
-    if (markerHit !== undefined) return markerHit;
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(new THREE.Vector2(normalizedDeviceX, normalizedDeviceY), camera);
-    const meshes = [
-      ...[...this.#bodies.values()].filter((body) => body.mesh.visible).map((body) => body.mesh),
-      ...[...this.#runtimeSphereMeshes.values()].filter((mesh) => mesh.visible),
-    ];
-    const hit = raycaster.intersectObjects(meshes, false)[0];
-    const objectId = hit?.object.userData.objectId;
-    return typeof objectId === "string" && this.#currentEntries.has(objectId as ObjectId) ? objectId as ObjectId : undefined;
+    // A centered, rendered sphere is the most specific hit target. Resolve
+    // it before the companion's marker affordance so a nearby moon marker
+    // cannot steal a click from the planet surface underneath it.
+    const sphereHit = this.#spherePick(normalizedDeviceX, normalizedDeviceY, camera);
+    if (sphereHit !== undefined) return sphereHit;
+    const result = this.#view.pick(normalizedDeviceX, normalizedDeviceY, camera, this.#lastViewportHeight * (camera instanceof THREE.PerspectiveCamera ? camera.aspect : 1), this.#lastViewportHeight);
+    return result?.objectId;
   }
 
-  stateFor(objectId: ObjectId): PropagationState | undefined {
-    return this.#states.get(objectId);
-  }
-
-  illuminationFor(objectId: ObjectId): StellarIlluminationSet | undefined {
-    return this.#illuminationByBody.get(objectId);
-  }
+  stateFor(objectId: ObjectId): PropagationState | undefined { return this.#states.get(objectId); }
+  illuminationFor(objectId: ObjectId): StellarIllumination | undefined { return this.#illuminationByBody.get(objectId); }
 
   displayExposureDiagnostics(): DisplayExposureDiagnostics {
-    const illumination = this.#focusId === undefined
-      ? undefined
-      : this.#illuminationByBody.get(this.#focusId);
-    // A stellar body has no self-illumination contribution. Keep the default
-    // exposure for that camera focus instead of treating the absent set as a
-    // pathological zero-irradiance photograph.
-    const physicalIrradiance = illumination?.contributions.length === 0
-      ? undefined
-      : illumination?.totalIrradianceWattsPerSquareMeter;
-    return resolveDisplayExposureDiagnostics(physicalIrradiance);
+    const physical = this.#focusId === undefined ? undefined : this.#illuminationByBody.get(this.#focusId);
+    const diagnostics = resolveDisplayExposureDiagnostics(physical?.contributions.length === 0 ? undefined : physical?.totalIrradianceWattsPerSquareMeter);
+    return Object.freeze({ ...diagnostics, toneMappingMode: DISPLAY_TONE_MAPPING_MODE });
   }
 
-  lightingDiagnostics(): LightingModeDiagnostics {
-    return lightingModeDiagnostics(this.#lightingMode, this.#inspectionFillTargets);
-  }
-
-  representationFor(objectId: ObjectId): RepresentationLevel | undefined {
-    return this.#representations.get(objectId);
-  }
+  lightingDiagnostics(): ReturnType<typeof lightingModeDiagnostics> { return lightingModeDiagnostics(this.#lightingMode, this.#inspectionTargets()); }
+  representationFor(objectId: ObjectId): BodyRepresentation | undefined { return this.#representations.get(objectId); }
 
   renderDiagnosticsFor(objectId: ObjectId, camera: THREE.Camera): BodyRenderDiagnostics | undefined {
+    const body = this.#snapshot?.bodies.find((candidate) => candidate.objectId === objectId);
     const representation = this.#representations.get(objectId);
     const position = this.#positions.get(objectId);
-    if (representation === undefined || position === undefined) return undefined;
-
+    if (body === undefined || representation === undefined || position === undefined) return undefined;
     camera.updateMatrixWorld(true);
     const cameraSpace = position.clone().applyMatrix4(camera.matrixWorldInverse);
     const ndc = position.clone().project(camera);
-    const inFront = cameraSpace.z < 0;
-    const inViewport = inFront
-      && ndc.x >= -1 && ndc.x <= 1
-      && ndc.y >= -1 && ndc.y <= 1
-      && ndc.z >= -1 && ndc.z <= 1;
-
-    let submitted = false;
-    let markerSizePixels: number | undefined;
-    let renderPosition: THREE.Vector3 | undefined;
-    if (representation === Representation.marker) {
-      submitted = this.#markerLayer.contains(objectId);
-      markerSizePixels = this.#markerLayer.sizeFor(objectId);
-      renderPosition = this.#markerLayer.positionFor(objectId);
-    } else if (representation === Representation.sphere) {
-      const mesh = this.meshFor(objectId);
-      submitted = mesh?.visible === true;
-      renderPosition = mesh?.position.clone();
-    }
-
-    const surface = this.#surfaceDiagnostics.get(objectId);
-    const textureSet = planetTextureSetFor(objectId);
-    const textureState = this.#planetTextureStates.get(objectId);
-    const activeDisplayExposure = this.displayExposureDiagnostics();
-    const physicalIrradiance = this.#illuminationByBody.get(objectId)?.totalIrradianceWattsPerSquareMeter;
-    const fillContribution = this.#inspectionFillTargets.has(objectId)
-      ? inspectionFillContribution(this.#lightingMode)
-      : 0;
-    return Object.freeze({
-      objectId,
-      representation,
-      submitted,
-      orbitVisible: this.#orbitRenderer.isPathVisible(objectId),
-      inFront,
-      inViewport,
-      ndcX: ndc.x,
-      ndcY: ndc.y,
-      ndcZ: ndc.z,
-      renderWorldPosition: Object.freeze({ x: position.x, y: position.y, z: position.z }),
-      markerSizePixels,
-      positionErrorSceneUnits: renderPosition?.distanceTo(position),
-      surfaceReflectanceSource: (() => {
-        const entry = this.#currentEntries.get(objectId);
-        return entry === undefined
-          ? undefined
-          : deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor).source;
-      })(),
-      surfaceTextureKind: surface?.kind,
-      surfaceTextureLuminanceRange: surface === undefined ? undefined : surface.maxLuminance - surface.minLuminance,
-      planetTextureSetId: textureSet === undefined ? undefined : objectId,
-      planetTextureLayers: textureSet === undefined
-        ? undefined
-        : Object.freeze(planetTextureAssets(textureSet).map((asset) => Object.freeze({
-          purpose: asset.purpose,
-          assetKey: asset.key,
-          loaded: textureState?.loadedKeys.has(asset.key) ?? false,
-        }))),
-      physicalIrradianceWattsPerSquareMeter: physicalIrradiance,
-      preExposureMappedIrradiance: physicalIrradiance === undefined
-        ? undefined
-        : mapIrradianceToSceneIntensity(physicalIrradiance),
-      displayExposure: activeDisplayExposure.displayExposure,
-      toneMappingMode: activeDisplayExposure.toneMappingMode,
-      lightingMode: this.#lightingMode,
-      inspectionFillApplied: this.#inspectionFillTargets.has(objectId),
-      inspectionFillContribution: fillContribution,
-      rendererInspectionFillIntensity: mapSceneDiffuseContributionToLambertLightIntensity(fillContribution),
-      stellarDirections: this.#stellarDirectionDiagnostics(objectId, camera),
-    });
-  }
-
-  #stellarDirectionDiagnostics(objectId: ObjectId, camera: THREE.Camera): readonly StellarDirectionDiagnostics[] {
+    const marker = this.#markerFor(objectId);
+    const mesh = this.meshFor(objectId);
     const illumination = this.#illuminationByBody.get(objectId);
-    const bodyPosition = this.#positions.get(objectId);
-    if (illumination === undefined || bodyPosition === undefined) return Object.freeze([]);
-    const bodyNdc = bodyPosition.clone().project(camera);
-    return Object.freeze(illumination.contributions.map((contribution) => {
+    const bodyNdc = position.clone().project(camera);
+    const stellarDirections = Object.freeze((illumination?.contributions ?? []).map((contribution) => {
+      const renderDirection = transformSnapshotDirectionToRenderSpace(contribution.directionToEmitter, this.#renderSpace);
       const emitterPosition = this.#positions.get(contribution.emitterId);
-      let projectedDirection: Readonly<{ x: number; y: number }> | undefined;
-      if (emitterPosition !== undefined) {
+      const projectedDirection = emitterPosition === undefined ? undefined : (() => {
         const emitterNdc = emitterPosition.clone().project(camera);
         const x = emitterNdc.x - bodyNdc.x;
         const y = emitterNdc.y - bodyNdc.y;
         const length = Math.hypot(x, y);
-        if (Number.isFinite(length) && length > Number.EPSILON) {
-          projectedDirection = Object.freeze({ x: x / length, y: y / length });
-        } else {
-          projectedDirection = Object.freeze({ x: 0, y: 0 });
-        }
-      }
+        return Object.freeze({ x: length > Number.EPSILON ? x / length : 0, y: length > Number.EPSILON ? y / length : 0 });
+      })();
       return Object.freeze({
         emitterId: contribution.emitterId,
         physicalDirectionToEmitter: Object.freeze({ ...contribution.directionToEmitter }),
-        renderDirectionToEmitter: Object.freeze({ ...contribution.renderDirectionToEmitter }),
-        shaderDirectionToEmitter: Object.freeze({ ...contribution.renderDirectionToEmitter }),
+        renderDirectionToEmitter: renderDirection,
+        shaderDirectionToEmitter: renderDirection,
         ...(projectedDirection === undefined ? {} : { projectedDirection }),
+      });
+    }));
+    const textureSet = planetTextureSetFor(objectId);
+    const textureState = this.#planetTextureStates.get(objectId);
+    const fillApplied = this.#inspectionTargets().includes(objectId);
+    const fill = inspectionFillContribution(this.#lightingMode);
+    return Object.freeze({
+      objectId,
+      representation,
+      submitted: representation === "marker" ? marker !== undefined : mesh?.visible === true,
+      orbitVisible: this.isPathVisible(objectId),
+      inFront: cameraSpace.z < 0,
+      inViewport: cameraSpace.z < 0 && ndc.x >= -1 && ndc.x <= 1 && ndc.y >= -1 && ndc.y <= 1 && ndc.z >= -1 && ndc.z <= 1,
+      ndcX: ndc.x,
+      ndcY: ndc.y,
+      ndcZ: ndc.z,
+      renderWorldPosition: Object.freeze({ x: position.x, y: position.y, z: position.z }),
+      ...(marker === undefined ? {} : { markerSizePixels: marker.size, positionErrorSceneUnits: marker.position.distanceTo(position) }),
+      ...(mesh === undefined || marker !== undefined ? {} : {
+        positionErrorSceneUnits: this.#view.bodyAnchor(objectId)?.position.distanceTo(position) ?? Number.POSITIVE_INFINITY,
+      }),
+      surfaceReflectanceSource: deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).source,
+      surfaceTextureKind: this.#surfaceDiagnostics.get(objectId)?.kind,
+      surfaceTextureLuminanceRange: (() => {
+        const value = this.#surfaceDiagnostics.get(objectId);
+        return value === undefined ? undefined : value.maxLuminance - value.minLuminance;
+      })(),
+      ...(textureSet === undefined ? {} : {
+        planetTextureSetId: objectId,
+        planetTextureLayers: Object.freeze(planetTextureAssets(textureSet).map((asset) => Object.freeze({ purpose: asset.purpose, assetKey: asset.key, loaded: textureState?.loadedKeys.has(asset.key) ?? false }))),
+      }),
+      ...(illumination === undefined ? {} : {
+        physicalIrradianceWattsPerSquareMeter: illumination.totalIrradianceWattsPerSquareMeter,
+        preExposureMappedIrradiance: illumination.contributions[0]?.exposureMappedIrradiance,
+      }),
+      displayExposure: this.displayExposureDiagnostics().displayExposure,
+      toneMappingMode: DISPLAY_TONE_MAPPING_MODE,
+      lightingMode: this.#lightingMode,
+      inspectionFillApplied: fillApplied,
+      inspectionFillContribution: fillApplied ? fill : 0,
+      rendererInspectionFillIntensity: fillApplied ? fill : 0,
+      stellarDirections,
+    });
+  }
+
+  setPath(path: OrbitPath | OrbitPathSnapshotInput): void {
+    const input = orbitSnapshotFromPath(path);
+    if (!this.#currentEntries.has(input.objectId)) throw new RangeError(`Unknown scenario body: ${input.objectId}`);
+    const snapshot = createCelestialRenderSnapshot({ instant: input.interval.start, origin: { kind: "frame", frameId: input.origin.frameId }, bodies: [{ objectId: input.objectId, positionRelativeToOriginMeters: input.samples[0]!.positionRelativeToOriginMeters, physicalRadiusMeters: 1 }], orbitPaths: [input] }).orbitPaths![0]!;
+    this.#paths.set(snapshot.objectId, snapshot);
+    const parent = snapshot.parentId === undefined ? undefined : this.#currentEntries.get(snapshot.parentId);
+    this.#orbitStyles.set(snapshot.objectId, orbitStyleFor(parent?.definition.type === ObjectType.star ? "primary" : "child"));
+    this.#refreshSnapshotPaths();
+    this.#rerender();
+  }
+
+  clearPath(objectId: ObjectId): void { this.#paths.delete(objectId); this.#orbitStyles.delete(objectId); this.#refreshSnapshotPaths(); this.#rerender(); }
+  clearPaths(): void { this.#paths.clear(); this.#orbitStyles.clear(); this.#refreshSnapshotPaths(); this.#rerender(); }
+  pathCount(): number { return this.#paths.size; }
+  selectedOrbitActive(): boolean { return this.#selected !== undefined && this.#paths.has(this.#selected); }
+
+  orbitGuideDiagnostics(): readonly OrbitGuideDiagnostics[] {
+    return Object.freeze([...this.#paths.values()].map((path) => {
+      const group = this.#view.root.getObjectByName(`Orbit ${path.objectId}`);
+      const base = group?.children[0];
+      const baseMaterial = base instanceof THREE.Line ? base.material : undefined;
+      const parent = path.parentId === undefined ? undefined : this.#currentEntries.get(path.parentId);
+      const localRoot = this.#localSystemRootFor(this.#focusId);
+      const role: OrbitGuideRole = path.objectId === this.#selected ? "selected" : path.parentId === localRoot ? "local-system" : "background";
+      const anchor = path.parentId === undefined ? undefined : this.#positions.get(path.parentId);
+      return Object.freeze({
+        objectId: path.objectId,
+        kind: parent?.definition.type === ObjectType.star ? "primary" : "child",
+        role,
+        opacity: baseMaterial instanceof THREE.LineBasicMaterial ? baseMaterial.opacity : role === "selected" ? (parent?.definition.type === ObjectType.star ? ORBIT_SELECTED_OPACITY : CHILD_ORBIT_SELECTED_OPACITY) : role === "local-system" ? ORBIT_LOCAL_SYSTEM_OPACITY : parent?.definition.type === ObjectType.star ? ORBIT_BACKGROUND_OPACITY : CHILD_ORBIT_OPACITY,
+        visible: group?.visible === true,
+        ...(anchor === undefined ? {} : { anchorPosition: Object.freeze({ x: anchor.x, y: anchor.y, z: anchor.z }) }),
       });
     }));
   }
 
-  setPath(path: OrbitPath): void {
-    const body = this.#bodies.get(path.objectId);
-    const entry = this.#currentEntries.get(path.objectId);
-    if (body === undefined && entry === undefined) throw new RangeError(`Unknown scenario body: ${path.objectId}`);
-    const color = this.#currentEntries.get(path.objectId)?.definition.display.accentColor ?? 0x9aa7b5;
-    const parent = this.#currentEntries.get(path.focusId);
-    const kind = parent?.definition.type === ObjectType.star ? "primary" : "child";
-    this.#orbitRenderer.setPath(path, color, kind);
-  }
-
-  clearPath(objectId: ObjectId): void {
-    this.#orbitRenderer.clearPath(objectId);
-  }
-
-  clearPaths(): void {
-    this.#orbitRenderer.clearPaths();
-  }
-
-  pathCount(): number {
-    return this.#orbitRenderer.pathCount();
-  }
-
-  orbitGuideDiagnostics(): readonly OrbitGuideDiagnostics[] {
-    return this.#orbitRenderer.guideDiagnostics();
-  }
-
-  setOrbitsVisible(visible: boolean): void {
-    this.#orbitRenderer.setVisible(visible);
-  }
-
-  orbitsVisible(): boolean {
-    return this.#orbitRenderer.isVisible();
-  }
-
-  selectedOrbitActive(): boolean {
-    const selected = this.#selected;
-    return selected !== undefined && this.#orbitRenderer.hasPath(selected);
-  }
+  setOrbitsVisible(visible: boolean): void { this.#orbitsVisible = Boolean(visible); this.#rerender(); }
+  orbitsVisible(): boolean { return this.#orbitsVisible; }
 
   meshFor(objectId: ObjectId): THREE.Mesh | undefined {
-    return this.#bodies.get(objectId)?.mesh ?? this.#runtimeSphereMeshes.get(objectId);
+    const anchor = this.#view.bodyAnchor(objectId);
+    if (anchor === undefined) return undefined;
+    return anchor.children.find((child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.representation === "sphere")
+      ?? anchor.children.find((child): child is THREE.Mesh => child instanceof THREE.Mesh);
   }
 
-  positionFor(objectId: ObjectId): THREE.Vector3 | undefined {
-    return this.#positions.get(objectId)?.clone();
-  }
-
-  selectedObjectId(): ObjectId | undefined {
-    return this.#selected;
-  }
-
-  markerCount(): number {
-    return this.#markerLayer.count();
-  }
+  positionFor(objectId: ObjectId): THREE.Vector3 | undefined { return this.#positions.get(objectId)?.clone(); }
+  selectedObjectId(): ObjectId | undefined { return this.#selected; }
+  markerCount(): number { return this.#markerObjectIds().length; }
 
   atmosphereDiagnosticsFor(objectId: ObjectId): AtmosphereDiagnostics {
-    return this.#atmosphereShells.diagnosticsFor(objectId);
+    const body = this.#snapshot?.bodies.find((candidate) => candidate.objectId === objectId);
+    const optics = resolveAtmosphereOptics(body?.appearance);
+    const atmosphere = this.#view.bodyAnchor(objectId)?.getObjectByName(`Atmosphere shell ${objectId}`);
+    return Object.freeze({
+      resourcesAllocated: atmosphere !== undefined,
+      visible: atmosphere?.visible === true,
+      projectedDiameterPixels: this.#projectedDiameterPixels(objectId),
+      viewSampleCount: ATMOSPHERE_VIEW_SAMPLES,
+      ...(optics === undefined ? {} : { opticalSource: optics.source, resolvedOptics: optics }),
+    });
   }
 
-  atmosphereResourceCount(): number {
-    return this.#atmosphereShells.resourceCount();
-  }
-
-  planetTextureResourceDiagnostics(): PlanetTextureResourceDiagnostics {
-    return this.#planetTextureResources.diagnostics();
-  }
+  atmosphereResourceCount(): number { return this.#view.diagnostics().atmosphereCount; }
+  planetTextureResourceDiagnostics(): PlanetTextureResourceDiagnostics { return this.#planetTextureResources.diagnostics(); }
 
   lodDiagnostics(): LodDiagnostics {
     let hiddenCount = 0;
     let markerCount = 0;
     let sphereCount = 0;
-    for (const objectId of this.#currentEntries.keys()) {
-      const representation = this.#representations.get(objectId);
-      if (representation === Representation.hidden) hiddenCount += 1;
-      else if (representation === Representation.marker) markerCount += 1;
-      else if (representation === Representation.sphere) sphereCount += 1;
-    }
-    return Object.freeze({
-      registeredCount: this.#currentEntries.size,
-      queriedCount: this.#queriedCount,
-      hiddenCount,
-      markerCount,
-      sphereCount,
-      promotedRuntimeSphereCount: this.#promotedRuntimeSphereCount,
+    this.#representations.forEach((representation) => {
+      if (representation === "hidden") hiddenCount += 1;
+      else if (representation === "marker") markerCount += 1;
+      else sphereCount += 1;
     });
+    return Object.freeze({ registeredCount: this.#currentEntries.size, queriedCount: this.#queriedCount, hiddenCount, markerCount, sphereCount, promotedRuntimeSphereCount: this.#promotedRuntimeSphereCount });
   }
 
-  /** Non-star focus framing is body-size driven; local hierarchy is revealed by zooming back out. */
   focusDistanceFor(objectId: ObjectId): number {
     const entry = this.#currentEntries.get(objectId);
     if (entry === undefined) throw new RangeError(`Unknown scenario body: ${objectId}`);
-    const physicalRadius = radiusToSceneUnits({
-      mode: "physical",
-      physicalRadiusMeters: meters(entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius ?? 0),
-    });
-    if (entry.definition.type !== ObjectType.star) {
-      return Math.min(
-        MAX_FOCUS_DISTANCE_SCENE_UNITS,
-        Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, physicalRadius * FOCUS_DISTANCE_RADIUS_MULTIPLIER),
-      );
-    }
-
+    const radius = physicalRadiusMeters(entry) / this.#renderSpace.metersPerSceneUnit;
+    if (entry.definition.type !== ObjectType.star) return Math.min(MAX_FOCUS_DISTANCE_SCENE_UNITS, Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, radius * FOCUS_DISTANCE_RADIUS_MULTIPLIER));
     const position = this.#positions.get(objectId);
     if (position === undefined) return MAX_FOCUS_DISTANCE_SCENE_UNITS;
-    const localDistances: number[] = [];
-    for (const candidate of this.#currentEntries.values()) {
-      if (candidate.definition.id === objectId || candidate.definition.centralBody !== objectId) continue;
-      const candidatePosition = this.#positions.get(candidate.definition.id);
-      if (candidatePosition !== undefined) localDistances.push(position.distanceTo(candidatePosition));
-    }
-    const extent = Math.max(...localDistances, 6);
-    return Math.min(MAX_FOCUS_DISTANCE_SCENE_UNITS, Math.max(1.6, extent * 0.25));
+    const distances = [...this.#currentEntries.values()]
+      .filter((candidate) => candidate.definition.centralBody === objectId)
+      .map((candidate) => this.#positions.get(candidate.definition.id))
+      .filter((candidate): candidate is THREE.Vector3 => candidate !== undefined)
+      .map((candidate) => position.distanceTo(candidate));
+    return Math.min(MAX_FOCUS_DISTANCE_SCENE_UNITS, Math.max(1.6, Math.max(...distances, 6) * 0.25));
   }
 
   dispose(): void {
-    this.#orbitRenderer.dispose();
-    this.#markerLayer.dispose();
-    this.#selectionHalo.dispose();
-    this.#atmosphereShells.dispose();
-    for (const objectId of this.#planetTextureStates.keys()) this.#releasePlanetTextures(objectId);
+    this.#view.dispose();
+    this.#scene.remove(this.#inspectionFillIndicator);
+    for (const objectId of [...this.#planetTextureStates.keys()]) this.#releasePlanetTextures(objectId);
     this.#planetTextureResources.dispose();
-    for (const body of this.#bodies.values()) {
-      this.#scene.remove(body.mesh);
-      body.mesh.geometry.dispose();
-      if (Array.isArray(body.mesh.material)) body.mesh.material.forEach((material) => material.dispose());
-      else body.mesh.material.dispose();
-    }
+    for (const objectId of [...this.#planetLayerMeshes.keys()]) this.#removePlanetLayers(objectId);
     for (const texture of this.#surfaceTextures.values()) texture.dispose();
     this.#surfaceTextures.clear();
     this.#surfaceDiagnostics.clear();
-    this.#planetFallbackColors.clear();
-    for (const mesh of this.#runtimeSphereMeshes.values()) this.#scene.remove(mesh);
-    this.#runtimeSphereMeshes.clear();
-    for (const light of this.#stellarLights.values()) {
-      this.#scene.remove(light);
-    }
-    this.#stellarLights.clear();
-    this.#scene.remove(this.#inspectionFillLight);
-    this.#inspectionFillTargets.clear();
-    this.#illuminationByBody.clear();
-    this.#runtimeSphereGeometry.dispose();
-    this.#runtimeSphereMaterial.dispose();
-    this.#bodies.clear();
     this.#currentEntries.clear();
-    this.#representations.clear();
     this.#states.clear();
     this.#positions.clear();
+    this.#representations.clear();
+    this.#illuminationByBody.clear();
+    this.#paths.clear();
+    this.#orbitStyles.clear();
   }
 
   selectFromPointer(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera): ObjectId | undefined {
@@ -746,203 +609,178 @@ export class SolarSystemScene {
     return objectId;
   }
 
-  #addBody(entry: RegisteredScenarioBody): void {
-    const radius = entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius;
-    if (radius === undefined) throw new TypeError(`Scenario body ${entry.definition.id} has no physical radius`);
-    const physicalRadiusMeters = meters(radius);
-    const accentColor = new THREE.Color(entry.definition.display.accentColor);
-    let material: THREE.Material;
-    if (entry.definition.type === ObjectType.star) {
-      material = new THREE.MeshStandardMaterial({
-        color: accentColor,
-        emissive: accentColor,
-        emissiveIntensity: 1,
-      });
-    } else {
-      const reflectance = deriveSurfaceReflectance(entry.definition.appearance, entry.definition.display.accentColor);
-      const textureSet = planetTextureSetFor(entry.definition.id);
-      const surfaceData = textureSet !== undefined
-        ? undefined
-        : entry.definition.appearance === undefined
-        ? undefined
-        : generateProceduralSurfaceData(
-          entry.definition.id,
-          entry.definition.appearance,
-          reflectance.linearReflectance,
-        );
-      if (surfaceData !== undefined) {
-        const texture = createProceduralSurfaceTexture(surfaceData);
-        this.#surfaceTextures.set(entry.definition.id, texture);
-        this.#surfaceDiagnostics.set(entry.definition.id, surfaceData);
-        material = new THREE.MeshLambertMaterial({
-          color: new THREE.Color(1, 1, 1),
-          map: texture,
-          dithering: true,
-        });
-      } else {
-        material = new THREE.MeshLambertMaterial({
-          color: new THREE.Color(
-            reflectance.linearReflectance.r,
-            reflectance.linearReflectance.g,
-            reflectance.linearReflectance.b,
-          ),
-          dithering: true,
-        });
-      }
-      if (textureSet !== undefined) {
-        this.#planetFallbackColors.set(
-          entry.definition.id,
-          new THREE.Color(
-            reflectance.linearReflectance.r,
-            reflectance.linearReflectance.g,
-            reflectance.linearReflectance.b,
-          ),
-        );
+  #rerender(): void {
+    if (this.#snapshot === undefined) return;
+    const camera = this.#lastCamera;
+    const selectedObjectIds = this.#selected === undefined ? new Set<ObjectId>() : new Set([this.#selected]);
+    const contextPriorityObjectIds = new Set([...this.#currentEntries.values()]
+      .filter(isGlobalContextEntry)
+      .map((entry) => entry.definition.id));
+    for (const rootId of [this.#localSystemRootFor(this.#focusId), this.#localSystemRootFor(this.#selected)]) {
+      if (rootId === undefined) continue;
+      for (const entry of this.#currentEntries.values()) {
+        let current: ObjectId | undefined = entry.definition.id;
+        while (current !== undefined) {
+          if (current === rootId) {
+            contextPriorityObjectIds.add(entry.definition.id);
+            break;
+          }
+          current = this.#currentEntries.get(current)?.definition.centralBody;
+        }
       }
     }
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 48, 32),
-      material,
-    );
-    mesh.name = entry.definition.name;
-    mesh.userData.objectId = entry.definition.id;
-    mesh.userData.objectType = entry.definition.type;
-    this.#scene.add(mesh);
-    this.#bodies.set(entry.definition.id, {
-      objectId: entry.definition.id,
-      physicalRadiusMeters,
-      parentId: entry.definition.centralBody,
-      type: entry.definition.type,
-      mesh,
-    });
-    mesh.scale.setScalar(radiusToSceneUnits({ mode: "physical", physicalRadiusMeters }));
+    const context = {
+      camera,
+      cameraPositionSceneUnits: camera?.getWorldPosition(new THREE.Vector3()),
+      viewportWidthCssPixels: camera instanceof THREE.PerspectiveCamera ? this.#lastViewportHeight * camera.aspect : this.#lastViewportHeight,
+      viewportHeightCssPixels: this.#lastViewportHeight,
+      selectedObjectId: this.#selected,
+      selectedObjectIds,
+      focusedObjectId: this.#focusId,
+      contextPriorityObjectIds,
+      radiusMode: this.#radiusMode,
+      orbitVisible: this.#orbitsVisible,
+      orbitStyleByObjectId: this.#orbitStyles,
+      lightingMode: this.#lightingMode,
+    };
+    const result = this.#view.update(this.#snapshot, context);
+    if (!result.committed) throw new Error(result.diagnostics.lastFailure?.message ?? "orbit-engine-three view update failed");
+    this.#representations.clear();
+    for (const entry of this.#currentEntries.values()) {
+      const representation = this.#view.representationFor(entry.definition.id);
+      if (representation !== undefined) this.#representations.set(entry.definition.id, representation);
+    }
+    this.#promotedRuntimeSphereCount = [...this.#runtimeIds].filter((objectId) => this.#representations.get(objectId) === "sphere").length;
+    const inspectionTargets = this.#inspectionTargets();
+    this.#inspectionFillIndicator.visible = inspectionTargets.length > 0;
+    for (const entry of this.#currentEntries.values()) {
+      const mesh = this.meshFor(entry.definition.id);
+      if (mesh === undefined) continue;
+      mesh.layers.disable(INSPECTION_FILL_LAYER);
+      if (inspectionTargets.includes(entry.definition.id)) mesh.layers.enable(INSPECTION_FILL_LAYER);
+    }
   }
 
-  #updatePlanetTexturePresentation(
-    entry: RegisteredScenarioBody,
-    representation: RepresentationLevel,
-    body: SceneBody,
-  ): void {
+  #refreshSnapshotPaths(): void {
+    if (this.#snapshot === undefined) return;
+    this.#snapshot = createCelestialRenderSnapshot({
+      instant: this.#snapshot.instant,
+      origin: this.#snapshot.origin,
+      bodies: this.#snapshot.bodies,
+      revision: this.#snapshot.revision,
+      ...(this.#paths.size === 0 ? {} : { orbitPaths: [...this.#paths.values()] }),
+    });
+  }
+
+  #resolveIllumination(bodies: readonly CelestialBodyRenderState[]): void {
+    const emitters = bodies.filter((body) => body.appearance?.stellarEmission !== undefined).map((body) => ({
+      objectId: body.objectId,
+      position: body.positionRelativeToOriginMeters,
+      effectiveTemperatureKelvin: body.appearance!.stellarEmission!.effectiveTemperatureKelvin,
+      luminosityWatts: body.appearance!.stellarEmission!.luminosityWatts,
+    }));
+    this.#illuminationByBody.clear();
+    for (const body of bodies) {
+      try {
+        this.#illuminationByBody.set(body.objectId, resolveStellarIllumination(body.positionRelativeToOriginMeters, emitters.filter((emitter) => emitter.objectId !== body.objectId)));
+      } catch {
+        this.#illuminationByBody.set(body.objectId, resolveStellarIllumination(body.positionRelativeToOriginMeters, []));
+      }
+    }
+  }
+
+  #surfaceTextureFor(body: CelestialBodyRenderState): { readonly texture: THREE.Texture; readonly ownership: "caller" } | undefined {
+    const textureSet = planetTextureSetFor(body.objectId);
+    const loaded = this.#loadedPlanetTextures.get(body.objectId);
+    if (textureSet !== undefined && loaded !== undefined) {
+      const primary = loaded.get(textureSet.primary.key);
+      if (primary !== undefined) return { texture: primary, ownership: "caller" };
+    }
+    if (textureSet !== undefined || body.appearance === undefined || body.objectType === ObjectType.star) return undefined;
+    let texture = this.#surfaceTextures.get(body.objectId);
+    if (texture === undefined) {
+      const surface = generateProceduralSurfaceData(body.objectId, body.appearance, deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).linearReflectance);
+      if (surface === undefined) return undefined;
+      texture = createProceduralSurfaceTexture(surface);
+      this.#surfaceTextures.set(body.objectId, texture);
+      this.#surfaceDiagnostics.set(body.objectId, surface);
+    }
+    return { texture, ownership: "caller" };
+  }
+
+  #updatePlanetTexturePresentation(entry: RegisteredScenarioBody): void {
     const textureSet = planetTextureSetFor(entry.definition.id);
-    if (textureSet === undefined || representation !== Representation.sphere) {
+    if (textureSet === undefined || this.#representations.get(entry.definition.id) !== "sphere") {
       this.#releasePlanetTextures(entry.definition.id);
       return;
     }
-
     let state = this.#planetTextureStates.get(entry.definition.id);
     if (state === undefined) {
       state = { set: textureSet, leases: [], loadedKeys: new Set() };
       this.#planetTextureStates.set(entry.definition.id, state);
       this.#ensurePlanetLayerMeshes(entry.definition.id, textureSet);
-      state.leases = planetTextureAssets(textureSet).map((asset) => this.#planetTextureResources.acquire(
-        asset,
-        (texture) => this.#applyPlanetTexture(entry.definition.id, asset, texture),
-      ));
+      state.leases = planetTextureAssets(textureSet).map((asset) => this.#planetTextureResources.acquire(asset, (texture) => this.#applyPlanetTexture(entry.definition.id, asset, texture)));
     }
-    this.#updatePlanetLayerTransforms(body);
   }
 
   #ensurePlanetLayerMeshes(objectId: ObjectId, textureSet: PlanetTextureSet): void {
-    const existing = this.#planetLayerMeshes.get(objectId);
-    if (existing !== undefined) return;
-
+    if (this.#planetLayerMeshes.has(objectId)) return;
     let clouds: PlanetLayerMeshes["clouds"];
     if (textureSet.clouds !== undefined) {
-      clouds = new THREE.Mesh(
-        new THREE.SphereGeometry(1, 48, 32),
-        new THREE.MeshLambertMaterial({
-          color: new THREE.Color(1, 1, 1),
-          transparent: true,
-          opacity: 0.88,
-          depthWrite: false,
-          side: THREE.FrontSide,
-          dithering: true,
-        }),
-      );
+      clouds = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.88, depthWrite: false }));
       clouds.name = `Cloud layer ${objectId}`;
       clouds.userData.objectId = objectId;
       clouds.visible = false;
       clouds.renderOrder = 1;
       this.#scene.add(clouds);
     }
-
     let nightLights: PlanetLayerMeshes["nightLights"];
     if (textureSet.nightLights !== undefined) {
-      nightLights = new THREE.Mesh(
-        new THREE.SphereGeometry(1, 48, 32),
-        createEarthNightLightsMaterial(),
-      );
+      nightLights = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), createEarthNightLightsMaterial());
       nightLights.name = `Night lights layer ${objectId}`;
       nightLights.userData.objectId = objectId;
       nightLights.visible = false;
       nightLights.renderOrder = 3;
       this.#scene.add(nightLights);
     }
-
     this.#planetLayerMeshes.set(objectId, { clouds, nightLights });
   }
 
   #applyPlanetTexture(objectId: ObjectId, asset: PlanetTextureAsset, texture: THREE.Texture): void {
     const state = this.#planetTextureStates.get(objectId);
-    const body = this.#bodies.get(objectId);
-    if (state === undefined || body === undefined || !planetTextureAssets(state.set).some((candidate) => candidate.key === asset.key)) {
-      return;
-    }
+    if (state === undefined) return;
     state.loadedKeys.add(asset.key);
-    if (asset === state.set.primary) {
-      const material = body.mesh.material;
-      if (material instanceof THREE.MeshLambertMaterial) {
-        material.map = texture;
-        material.color.setRGB(1, 1, 1);
-        material.emissiveMap = null;
-        material.needsUpdate = true;
-      }
-      return;
+    let loaded = this.#loadedPlanetTextures.get(objectId);
+    if (loaded === undefined) {
+      loaded = new Map();
+      this.#loadedPlanetTextures.set(objectId, loaded);
     }
-
+    loaded.set(asset.key, texture);
     const layers = this.#planetLayerMeshes.get(objectId);
     if (asset === state.set.clouds && layers?.clouds !== undefined) {
       layers.clouds.material.map = texture;
-      layers.clouds.material.alphaMap = texture;
       layers.clouds.material.needsUpdate = true;
       layers.clouds.visible = true;
-      return;
     }
     if (asset === state.set.nightLights && layers?.nightLights !== undefined) {
       layers.nightLights.material.uniforms.uMap!.value = texture;
       layers.nightLights.material.needsUpdate = true;
       layers.nightLights.visible = true;
     }
-  }
-
-  #updatePlanetLayerTransforms(body: SceneBody): void {
-    const layers = this.#planetLayerMeshes.get(body.objectId);
-    if (layers === undefined) return;
-    if (layers.clouds !== undefined) {
-      layers.clouds.position.copy(body.mesh.position);
-      layers.clouds.scale.copy(body.mesh.scale).multiplyScalar(1.006);
-    }
-    if (layers.nightLights !== undefined) {
-      layers.nightLights.position.copy(body.mesh.position);
-      layers.nightLights.scale.copy(body.mesh.scale).multiplyScalar(1.009);
-    }
+    this.#rerender();
   }
 
   #releasePlanetTextures(objectId: ObjectId): void {
     const state = this.#planetTextureStates.get(objectId);
     if (state !== undefined) {
-      for (const lease of state.leases) lease.release();
+      state.leases.forEach((lease) => lease.release());
       this.#planetTextureStates.delete(objectId);
     }
-    const body = this.#bodies.get(objectId);
-    const material = body?.mesh.material;
-    const fallbackColor = this.#planetFallbackColors.get(objectId);
-    if (material instanceof THREE.MeshLambertMaterial && fallbackColor !== undefined) {
-      material.map = null;
-      material.color.copy(fallbackColor);
-      material.emissiveMap = null;
-      material.needsUpdate = true;
-    }
+    this.#loadedPlanetTextures.delete(objectId);
+    this.#removePlanetLayers(objectId);
+  }
+
+  #removePlanetLayers(objectId: ObjectId): void {
     const layers = this.#planetLayerMeshes.get(objectId);
     if (layers === undefined) return;
     for (const layer of [layers.clouds, layers.nightLights]) {
@@ -954,265 +792,92 @@ export class SolarSystemScene {
     this.#planetLayerMeshes.delete(objectId);
   }
 
+  #updatePlanetLayerTransforms(): void {
+    for (const [objectId, layers] of this.#planetLayerMeshes) {
+      const body = this.meshFor(objectId);
+      const anchor = this.#view.bodyAnchor(objectId);
+      if (body === undefined || anchor === undefined) continue;
+      for (const layer of [layers.clouds, layers.nightLights]) {
+        if (layer === undefined) continue;
+        layer.position.copy(anchor.position);
+        layer.scale.copy(body.scale).multiplyScalar(layer === layers.clouds ? 1.006 : 1.009);
+      }
+    }
+  }
+
   #updateEarthNightLights(): void {
     for (const [objectId, layers] of this.#planetLayerMeshes) {
-      const nightLights = layers.nightLights;
-      if (nightLights === undefined) continue;
+      const layer = layers.nightLights;
+      if (layer === undefined) continue;
+      const direction = layer.material.uniforms.uLightDirection!.value as THREE.Vector3;
       const contribution = this.#illuminationByBody.get(objectId)?.contributions[0];
-      const direction = nightLights.material.uniforms.uLightDirection!.value as THREE.Vector3;
       if (contribution === undefined) direction.set(0, 1, 0);
-      else direction.set(
-        contribution.renderDirectionToEmitter.x,
-        contribution.renderDirectionToEmitter.y,
-        contribution.renderDirectionToEmitter.z,
-      ).normalize();
-    }
-  }
-
-  #updateInspectionFill(camera: THREE.Camera): void {
-    for (const body of this.#bodies.values()) body.mesh.layers.disable(INSPECTION_FILL_LAYER);
-    for (const mesh of this.#runtimeSphereMeshes.values()) mesh.layers.disable(INSPECTION_FILL_LAYER);
-    for (const body of this.#bodies.values()) this.#clearEnhancedMaterialAssist(body.mesh);
-    for (const mesh of this.#runtimeSphereMeshes.values()) this.#clearEnhancedMaterialAssist(mesh);
-    this.#inspectionFillTargets.clear();
-    if (this.#lightingMode !== "enhanced") {
-      this.#inspectionFillLight.visible = false;
-      this.#inspectionFillLight.intensity = 0;
-      return;
-    }
-
-    for (const objectId of new Set([this.#selected, this.#focusId].filter((id): id is ObjectId => id !== undefined))) {
-      if (this.#representations.get(objectId) !== Representation.sphere) continue;
-      const mesh = this.meshFor(objectId);
-      if (mesh === undefined || !mesh.visible) continue;
-      mesh.layers.enable(INSPECTION_FILL_LAYER);
-      this.#applyEnhancedMaterialAssist(mesh, inspectionFillContribution(this.#lightingMode));
-      this.#inspectionFillTargets.add(objectId);
-    }
-    this.#inspectionFillLight.position.copy(camera.position);
-    this.#inspectionFillLight.intensity = mapSceneDiffuseContributionToLambertLightIntensity(
-      inspectionFillContribution(this.#lightingMode),
-    );
-    this.#inspectionFillLight.visible = this.#inspectionFillTargets.size > 0;
-  }
-
-  /**
-   * Keep Enhanced readable on renderers whose clustered/light-list path does
-   * not apply a camera-local point light to a second object layer. This is a
-   * presentation-only material assist; the normalized inspection light above
-   * remains the canonical scene-light contribution and diagnostics path.
-   */
-  #applyEnhancedMaterialAssist(mesh: THREE.Mesh, contribution: number): void {
-    const material = mesh.material;
-    if (!(material instanceof THREE.MeshLambertMaterial)) return;
-    if (material.map !== null) {
-      material.emissive.setRGB(1, 1, 1);
-    } else {
-      material.emissive.copy(material.color);
-    }
-    material.emissiveIntensity = Math.min(1, contribution * 5);
-  }
-
-  #clearEnhancedMaterialAssist(mesh: THREE.Mesh): void {
-    const material = mesh.material;
-    if (!(material instanceof THREE.MeshLambertMaterial)) return;
-    material.emissiveIntensity = 0;
-    material.emissive.setRGB(0, 0, 0);
-  }
-
-  #ensureRuntimeSphere(objectId: ObjectId): THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial> {
-    const current = this.#runtimeSphereMeshes.get(objectId);
-    if (current !== undefined) return current;
-    const mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshLambertMaterial> = new THREE.Mesh(
-      this.#runtimeSphereGeometry,
-      this.#runtimeSphereMaterial,
-    );
-    mesh.name = `Runtime sphere ${objectId}`;
-    mesh.userData.objectId = objectId;
-    mesh.userData.objectType = ObjectType.asteroid;
-    this.#scene.add(mesh);
-    this.#runtimeSphereMeshes.set(objectId, mesh);
-    return mesh;
-  }
-
-  #removeRuntimeSphere(objectId: ObjectId): void {
-    const mesh = this.#runtimeSphereMeshes.get(objectId);
-    if (mesh === undefined) return;
-    this.#scene.remove(mesh);
-    this.#runtimeSphereMeshes.delete(objectId);
-  }
-
-  #applySphereScale(
-    mesh: THREE.Mesh,
-    entry: RegisteredScenarioBody,
-    camera: THREE.Camera,
-    perspective: THREE.PerspectiveCamera,
-    viewportHeightPixels: number,
-  ): void {
-    const physicalRadiusMeters = meters(entry.record.properties.physicalRadius ?? entry.definition.properties.physicalRadius ?? 0);
-    const physicalRadius = radiusToSceneUnits({ mode: "physical", physicalRadiusMeters });
-    if (this.#radiusMode === "physical") {
-      mesh.scale.setScalar(physicalRadius);
-      return;
-    }
-    const distance = Math.max(camera.position.distanceTo(mesh.position), physicalRadius * 2, Number.EPSILON);
-    const fieldOfView = perspective.fov * Math.PI / 180;
-    const physicalPixels = projectedRadiusPixels(physicalRadius, distance, fieldOfView, viewportHeightPixels);
-    const adaptiveRadius = projectedPixelsToSceneRadius(
-      adaptiveRadiusPixels(physicalPixels),
-      distance,
-      fieldOfView,
-      viewportHeightPixels,
-    );
-    mesh.scale.setScalar(cappedAdaptiveRadiusSceneUnits(
-      adaptiveRadius,
-      physicalRadius,
-      this.#nearestLocalSeparation(entry.definition.id),
-    ));
-  }
-
-  #nearestLocalSeparation(objectId: ObjectId): number | undefined {
-    const body = this.#bodies.get(objectId);
-    const position = this.#positions.get(objectId);
-    if (body === undefined || position === undefined) return undefined;
-    let nearest = Number.POSITIVE_INFINITY;
-    for (const other of this.#bodies.values()) {
-      if (other.objectId === objectId) continue;
-      const sibling = other.parentId !== undefined && other.parentId === body.parentId;
-      const parent = other.objectId === body.parentId || body.objectId === other.parentId;
-      if (!sibling && !parent) continue;
-      const otherPosition = this.#positions.get(other.objectId);
-      if (otherPosition !== undefined) nearest = Math.min(nearest, position.distanceTo(otherPosition));
-    }
-    return Number.isFinite(nearest) ? nearest : undefined;
-  }
-
-  #updateStellarLighting(stateById: ReadonlyMap<ObjectId, PropagationState>): void {
-    const emitters: StellarEmitter[] = [];
-    for (const entry of this.#currentEntries.values()) {
-      const emission = entry.definition.appearance?.stellarEmission;
-      const state = stateById.get(entry.definition.id);
-      if (emission === undefined || state === undefined) continue;
-      emitters.push({
-        objectId: entry.definition.id,
-        position: state.position,
-        effectiveTemperatureKelvin: emission.effectiveTemperatureKelvin,
-        luminosityWatts: emission.luminosityWatts,
-      });
-    }
-    const activeEmitterIds = new Set(emitters.map((emitter) => emitter.objectId));
-    for (const emitter of emitters) {
-      let light = this.#stellarLights.get(emitter.objectId);
-      if (light === undefined) {
-        light = new THREE.PointLight(0xffffff, 0, 0, 2);
-        light.name = `Stellar illumination ${emitter.objectId}`;
-        light.userData.objectId = emitter.objectId;
-        this.#scene.add(light);
-        this.#stellarLights.set(emitter.objectId, light);
+      else {
+        const render = transformSnapshotDirectionToRenderSpace(contribution.directionToEmitter, this.#renderSpace);
+        direction.set(render.x, render.y, render.z).normalize();
       }
-      const chromaticity = blackbodyTemperatureToLinearRgb(emitter.effectiveTemperatureKelvin);
-      light.color.setRGB(chromaticity.r, chromaticity.g, chromaticity.b);
-      // MeshLambertMaterial applies 1 / PI. Compensate that renderer BRDF
-      // exactly once while preserving the physical W/m² and inverse-square
-      // diagnostics calculated above the renderer boundary.
-      light.intensity = emitter.luminosityWatts
-        / (4 * Math.PI * METERS_PER_SCENE_UNIT ** 2 * REFERENCE_IRRADIANCE_WATTS_PER_SQUARE_METER)
-        * LAMBERT_RENDERER_IRRADIANCE_NORMALIZATION;
-      const position = positionToSceneUnits(emitter.position);
-      light.position.set(position.x, position.y, position.z);
-      light.visible = true;
     }
-    for (const [objectId, light] of this.#stellarLights) {
-      if (activeEmitterIds.has(objectId)) continue;
-      this.#scene.remove(light);
-      this.#stellarLights.delete(objectId);
-    }
-
-    this.#illuminationByBody.clear();
-    for (const entry of this.#currentEntries.values()) {
-      const state = stateById.get(entry.definition.id);
-      if (state === undefined) continue;
-      const bodyEmitters = emitters.filter((emitter) => emitter.objectId !== entry.definition.id);
-      this.#illuminationByBody.set(
-        entry.definition.id,
-        resolveStellarIllumination(state.position, bodyEmitters),
-      );
-    }
-    this.#updateEarthNightLights();
   }
 
-  #depth(entry: RegisteredScenarioBody): number {
-    let depth = 0;
-    let parent = entry.definition.centralBody;
-    const seen = new Set<ObjectId>();
-    while (parent !== undefined && this.#currentEntries.has(parent) && !seen.has(parent)) {
-      seen.add(parent);
-      depth += 1;
-      parent = this.#currentEntries.get(parent)?.definition.centralBody;
-    }
-    return depth;
+  #inspectionTargets(): ObjectId[] {
+    if (this.#lightingMode !== "enhanced") return [];
+    return [this.#selected, this.#focusId]
+      .filter((objectId): objectId is ObjectId => objectId !== undefined && this.#representations.get(objectId) === "sphere")
+      .filter((objectId, index, values) => values.indexOf(objectId) === index);
   }
 
-  #updateLocalSystemRoot(): void {
-    const focusRoot = this.#localSystemRootFor(this.#focusId);
-    const selectedRoot = this.#localSystemRootFor(this.#selected);
-    this.#orbitRenderer.setLocalSystemRoots([focusRoot, selectedRoot].filter((id): id is ObjectId => id !== undefined));
+  #markerObjectIds(): readonly ObjectId[] {
+    const points = this.#view.root.getObjectByName("orbit-engine-three batched markers");
+    return (points?.userData.objectIds as readonly ObjectId[] | undefined) ?? [];
+  }
+
+  #markerFor(objectId: ObjectId): { readonly position: THREE.Vector3; readonly size: number } | undefined {
+    const ids = this.#markerObjectIds();
+    const index = ids.indexOf(objectId);
+    if (index < 0) return undefined;
+    const points = this.#view.root.getObjectByName("orbit-engine-three batched markers");
+    if (!(points instanceof THREE.Points)) return undefined;
+    const position = points?.geometry.getAttribute("position");
+    const sizes = points?.geometry.getAttribute("markerSize");
+    if (!(position instanceof THREE.BufferAttribute) || !(sizes instanceof THREE.BufferAttribute)) return undefined;
+    return { position: new THREE.Vector3(position.getX(index), position.getY(index), position.getZ(index)), size: sizes.getX(index) };
+  }
+
+  #spherePick(normalizedDeviceX: number, normalizedDeviceY: number, camera: THREE.Camera): ObjectId | undefined {
+    this.#view.root.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(normalizedDeviceX, normalizedDeviceY), camera);
+    const meshes = [...this.#currentEntries.keys()]
+      .filter((objectId) => this.#representations.get(objectId) === "sphere")
+      .map((objectId) => this.meshFor(objectId))
+      .filter((mesh): mesh is THREE.Mesh => mesh !== undefined && mesh.visible);
+    const hit = raycaster.intersectObjects(meshes, false)[0];
+    return hit?.object.userData.objectId as ObjectId | undefined;
+  }
+
+  #projectedDiameterPixels(objectId: ObjectId): number {
+    const mesh = this.meshFor(objectId);
+    const position = this.#positions.get(objectId);
+    if (mesh === undefined || position === undefined || !(this.#lastCamera instanceof THREE.PerspectiveCamera)) return 0;
+    const distance = Math.max(this.#lastCamera.position.distanceTo(position), mesh.scale.x * 2, Number.EPSILON);
+    return mesh.scale.x / distance / Math.tan(this.#lastCamera.fov * Math.PI / 360) * this.#lastViewportHeight;
   }
 
   #localSystemRootFor(objectId: ObjectId | undefined): ObjectId | undefined {
     if (objectId === undefined) return undefined;
     const entry = this.#currentEntries.get(objectId);
     if (entry === undefined || entry.definition.type === ObjectType.star) return undefined;
-    const hasDirectChildren = [...this.#currentEntries.values()]
-      .some((candidate) => candidate.definition.centralBody === objectId);
-    if (hasDirectChildren) return objectId;
-    const parentId = entry.definition.centralBody;
-    if (parentId === undefined) return undefined;
-    const parent = this.#currentEntries.get(parentId);
-    return parent?.definition.type === ObjectType.star ? undefined : parentId;
+    if ([...this.#currentEntries.values()].some((candidate) => candidate.definition.centralBody === objectId)) return objectId;
+    const parent = entry.definition.centralBody === undefined ? undefined : this.#currentEntries.get(entry.definition.centralBody);
+    return parent?.definition.type === ObjectType.star ? undefined : entry.definition.centralBody;
   }
 
-  #ancestorIds(seeds: ReadonlySet<ObjectId>): Set<ObjectId> {
-    const result = new Set<ObjectId>();
-    for (const seed of seeds) {
-      let current = this.#currentEntries.get(seed)?.definition.centralBody;
-      while (current !== undefined && this.#currentEntries.has(current) && !result.has(current)) {
-        result.add(current);
-        current = this.#currentEntries.get(current)?.definition.centralBody;
-      }
-    }
-    return result;
+  isPathVisible(objectId: ObjectId): boolean {
+    return this.#view.root.getObjectByName(`Orbit ${objectId}`)?.visible === true && this.#orbitsVisible;
   }
+}
 
-  #updateSelectionHalo(camera: THREE.Camera | undefined, viewportHeightPixels?: number): void {
-    const selected = this.#selected;
-    if (selected === undefined) {
-      this.#selectionHalo.hide();
-      return;
-    }
-    const position = this.#positions.get(selected);
-    if (position === undefined) {
-      this.#selectionHalo.hide();
-      return;
-    }
-    this.#selectionHalo.setPosition(position);
-    if (!(camera instanceof THREE.PerspectiveCamera)
-        || viewportHeightPixels === undefined
-        || !Number.isFinite(viewportHeightPixels)
-        || viewportHeightPixels <= 0) {
-      return;
-    }
-
-    const representation = this.#representations.get(selected) ?? Representation.marker;
-    let bodyRadiusPixels = MARKER_PIXEL_SIZE / 2;
-    if (representation === Representation.sphere) {
-      const mesh = this.meshFor(selected);
-      if (mesh !== undefined) {
-        const distance = Math.max(camera.position.distanceTo(position), mesh.scale.x * 2, Number.EPSILON);
-        const fieldOfView = camera.fov * Math.PI / 180;
-        bodyRadiusPixels = projectedRadiusPixels(mesh.scale.x, distance, fieldOfView, viewportHeightPixels);
-      }
-    }
-    this.#selectionHalo.update(position, bodyRadiusPixels, camera, viewportHeightPixels);
-  }
+interface DisplayExposureDiagnostics extends PresentationDisplayExposureDiagnostics {
+  readonly toneMappingMode: typeof DISPLAY_TONE_MAPPING_MODE;
 }
