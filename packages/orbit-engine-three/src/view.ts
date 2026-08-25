@@ -119,16 +119,30 @@ const int LIGHT_SAMPLES = ${ATMOSPHERE_LIGHT_SAMPLES};
 const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
-const float LIMB_DISPLAY_GAIN = 1.35;
+const float LIMB_DISPLAY_GAIN = 1.25;
+const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
 
 float rayleighPhase(float cosine) {
   return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
 }
 
 float miePhase(float cosine, float anisotropy) {
-  float g2 = anisotropy * anisotropy;
-  float denominator = max(0.0001, pow(1.0 + g2 - 2.0 * anisotropy * cosine, 1.5));
-  return (1.0 - g2) / (4.0 * PI * denominator);
+  float g = clamp(anisotropy, -0.95, 0.95);
+  float g2 = g * g;
+  float denominator = max(0.0001, pow(1.0 + g2 - 2.0 * g * cosine, 1.5));
+  float henyeyGreenstein = (1.0 - g2) / (4.0 * PI * denominator);
+
+  // A single HG lobe makes spectrally strong aerosols almost disappear in
+  // back-scatter at the bounded 8x2 sample budget. Real dust/haze phase
+  // functions have a broader diffuse/back-scatter component. Derive that
+  // component from the semantic Mie spectral contrast rather than body IDs:
+  // neutral aerosols stay close to HG, strongly coloured aerosols retain their
+  // authored colour on the visible limb and dayside.
+  float mieLuminance = max(dot(uMieScattering, LINEAR_LUMINANCE), EPSILON);
+  float spectralContrast = clamp(abs(uMieScattering.r - uMieScattering.b) / mieLuminance, 0.0, 1.0);
+  float diffuseFraction = mix(0.12, 0.58, spectralContrast);
+  float isotropic = 1.0 / (4.0 * PI);
+  return mix(henyeyGreenstein, isotropic, diffuseFraction);
 }
 
 vec2 raySphereInterval(vec3 rayOrigin, vec3 rayDirection, float sphereRadius) {
