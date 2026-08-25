@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
@@ -109,9 +110,9 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
 
   // Atmosphere shells are marked by orbit-engine-three at their source. The
   // bloom composer temporarily hides every other renderable, so guides,
-  // selection rings, cloud overlays and body surfaces can never contribute to
-  // the halo. The bloom composer renders at half resolution and UnrealBloom's
-  // fixed mip chain supplies the bounded low-frequency falloff.
+  // selection indicators, cloud overlays and body surfaces can never
+  // contribute to the halo. The bloom composer renders at half resolution and
+  // UnrealBloom's fixed mip chain supplies the bounded low-frequency falloff.
   const bloomComposer = new EffectComposer(renderer);
   bloomComposer.setPixelRatio(BLOOM_COMPOSER_PIXEL_RATIO);
   bloomComposer.renderToScreen = false;
@@ -122,6 +123,11 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   const finalComposer = new EffectComposer(renderer);
   const finalScenePass = new RenderPass(scene, camera);
   finalComposer.addPass(finalScenePass);
+
+  // Keep base radiance and the selective atmosphere bloom in the same linear
+  // HDR domain. Renderer exposure, ACES and the sRGB transfer must happen only
+  // after both sources have been combined; otherwise focus exposure is lost
+  // when the scene is routed through EffectComposer render targets.
   const finalPass = new ShaderPass(new THREE.ShaderMaterial({
     uniforms: {
       tBase: { value: null },
@@ -147,6 +153,13 @@ void main() {
     toneMapped: false,
   }), "tBase");
   finalComposer.addPass(finalPass);
+
+  // EffectComposer renders the preceding passes into offscreen targets, where
+  // WebGLRenderer intentionally disables tone mapping. OutputPass is therefore
+  // the single authoritative display transform: it reads the renderer's
+  // toneMappingExposure and applies ACES + output color-space conversion once.
+  const outputPass = new OutputPass();
+  finalComposer.addPass(outputPass);
 
   function isRenderable(object: THREE.Object3D): boolean {
     const candidate = object as THREE.Object3D & {
@@ -190,6 +203,7 @@ void main() {
     bloomPass.dispose();
     bloomComposer.dispose();
     finalPass.dispose();
+    outputPass.dispose();
     finalComposer.dispose();
     renderer.dispose();
     scene.clear();
