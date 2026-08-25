@@ -33,6 +33,7 @@ This directory is the canonical architectural documentation for OrbitEngine. Age
 27. [Optional Reusable Three.js Visualization Package](27-optional-threejs-visualization-package.md) — separate `orbit-engine-three` package, snapshot-driven rendering, semantic appearance/lighting, render-space precision, LOD/batching, resource ownership, demo migration, packaging and CI.
 28. [Higher-Order Perturbation and Semi-Analytical Propagation](28-higher-order-perturbation-and-semi-analytical-propagation.md) — bounded `semiAnalytical/j2Secular` middle tier, shared physical J2 source, numerical J2 reference force, pole dependency, validity certificates, Fidelity switching and parity/performance contracts.
 29. [Natural-Body Orientation, Rotation, and Body-Fixed Sources](29-natural-body-orientation-rotation-and-body-fixed-sources.md) — IAU/IERS/JPL/NAIF source precedence, separate ORP dataset, normalized quaternion Chebyshev evaluation, angular velocity, body-fixed registration, surface motion, J2 dependency and parity/caching.
+30. [WidgetForge UI Architecture for the Solar-System Demo](30-widgetforge-solar-system-demo-ui.md) — Vue/WidgetForge application shell, locked Three.js viewport widget, top time-control dock, Settings/Object Inspector windows, semantic `ObjectId` selection, bridge ownership, bounded UI reactivity, and staged `DemoPanel` migration.
 
 Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT.md`](../CHATGPT_CONTEXT.md).
 
@@ -66,6 +67,7 @@ Project-level ChatGPT architecture context is maintained in [`../CHATGPT_CONTEXT
 - Native and WASM backends must preserve equivalent public semantics.
 - `orbit-engine` and the portable core remain free of Three.js/WebGL/DOM/rendering dependencies. Optional reusable rendering lives in the separate `orbit-engine-three` companion package defined by document 27.
 - `orbit-engine-three` consumes authoritative snapshots/public read APIs and is never physical authority; visual size, camera, selection, shader state and render cadence cannot alter simulation semantics.
+- The Solar-System demo may use Vue/WidgetForge as application UI, but those dependencies remain demo-only; simulation/render authority stays outside Vue and semantic selection crosses the UI/render boundary only as stable `ObjectId` values.
 - Appearance/atmosphere/stellar-rendering metadata remains presentation/dataset data rather than `orbit-engine` physical state unless a separately designed physical engine capability explicitly requires equivalent physical information.
 - Production reference ephemerides and orientation sources are pinned, offline-normalized scenario data evaluated by the shared portable core; live astronomy services and mutable external kernels never define normal runtime state.
 - Every issue must declare exactly one authoritative task type before execution.
