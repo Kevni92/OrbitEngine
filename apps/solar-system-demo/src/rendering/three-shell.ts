@@ -119,6 +119,18 @@ function linearRgbLuminance(value: THREE.Vector3): number {
   return value.x * 0.2126 + value.y * 0.7152 + value.z * 0.0722;
 }
 
+function ensureAtmosphereShellBlending(material: THREE.ShaderMaterial): void {
+  // The atmosphere shader already outputs premultiplied radiance + alpha.
+  // Normal premultiplied-alpha compositing attenuates the underlying surface
+  // while adding in-scattered light. Additive blending instead double-adds the
+  // bright limb and drives coloured atmospheres toward white clipping.
+  if (material.blending !== THREE.NormalBlending || material.premultipliedAlpha !== true) {
+    material.blending = THREE.NormalBlending;
+    material.premultipliedAlpha = true;
+    material.needsUpdate = true;
+  }
+}
+
 function prepareAtmosphereBloomMaterial(material: THREE.ShaderMaterial): AtmosphereBloomMaterialState | undefined {
   const rayleigh = material.uniforms.uRayleighScattering?.value;
   const mie = material.uniforms.uMieScattering?.value;
@@ -269,6 +281,7 @@ void main() {
       if (object.userData.atmosphereBloomSource === true) {
         const material = (object as THREE.Mesh).material;
         if (material instanceof THREE.ShaderMaterial) {
+          ensureAtmosphereShellBlending(material);
           const state = prepareAtmosphereBloomMaterial(material);
           if (state !== undefined) atmosphereStates.push(state);
         }
