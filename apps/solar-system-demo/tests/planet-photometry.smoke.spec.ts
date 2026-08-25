@@ -137,15 +137,7 @@ async function measure(page: Page, body: BodyDiagnostics): Promise<RegionMetrics
     const centerX = (input.ndcX + 1) * canvas.width / 2;
     const centerY = (1 - input.ndcY) * canvas.height / 2;
     const bodyRadius = Math.max(input.projectedDiameterPixels / 2, 18);
-
-    // Measure most of the visible disk rather than only the central core.
-    // This catches clipped limbs and overly dark presentation while leaving a
-    // small edge margin for atmosphere compositing.
     const diskRadius = bodyRadius * 0.72;
-
-    // The detached selection arcs now start 14 px outside the body. The halo
-    // probe can therefore stay close to the physical limb and measure the
-    // atmosphere/bloom where it is actually visible, without UI contamination.
     const annulusInner = bodyRadius + 1;
     const annulusOuter = bodyRadius + 8;
     const corners = [[4, 4], [canvas.width - 5, 4], [4, canvas.height - 5], [canvas.width - 5, canvas.height - 5]] as const;
@@ -209,17 +201,21 @@ async function measure(page: Page, body: BodyDiagnostics): Promise<RegionMetrics
 }
 
 for (const planet of PLANETS) {
-  test(`${planet.name} obeys the shared planetary photometry contract`, async ({ page }) => {
+  test(`${planet.name} obeys the shared planetary photometry contract`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/");
     await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
     await setPhysicalLighting(page);
     const daysideBody = await focusBody(page, planet.objectId);
     await hideOverlays(page);
+
+    // Persist the actual focused render as a review artifact. Numerical pixel
+    // metrics are a regression guard, not a substitute for visual acceptance.
+    await page.locator("#scene").screenshot({
+      path: testInfo.outputPath(`${planet.name.toLowerCase()}-focus-dayside.png`),
+    });
     const dayside = await measure(page, daysideBody);
 
-    // One shared contract for all current and future textured planets: readable
-    // but not clipped. No object-id-specific thresholds are allowed here.
     expect(dayside.diskLuminance).toBeGreaterThan(35);
     expect(dayside.diskLuminance).toBeLessThan(220);
     expect(dayside.clippedDiskFraction).toBeLessThan(0.12);
@@ -233,6 +229,9 @@ for (const planet of PLANETS) {
     }
 
     const nightsideBody = await orientOppositeSun(page, daysideBody);
+    await page.locator("#scene").screenshot({
+      path: testInfo.outputPath(`${planet.name.toLowerCase()}-opposite-sun.png`),
+    });
     const nightside = await measure(page, nightsideBody);
     expect(nightside.diskLuminance).toBeLessThan(80);
     expect(nightside.diskLuminance).toBeLessThan(dayside.diskLuminance * 0.45);
