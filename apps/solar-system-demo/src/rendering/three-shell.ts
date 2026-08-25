@@ -13,14 +13,28 @@ import {
 const DEFAULT_DISPLAY_EXPOSURE = 1;
 const DISPLAY_TONE_MAPPING_MODE = "ACESFilmic" as const;
 const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
-const BLOOM_COMPOSER_PIXEL_RATIO = 0.5;
-// The bloom pass is already strictly atmosphere-only, so a brightness
-// threshold only suppresses physically thin atmospheres such as Mars. Let all
-// atmosphere radiance enter the bounded half-resolution blur and keep the
-// strength/radius responsible for the visible exterior falloff.
-const BLOOM_STRENGTH = 0.22;
-const BLOOM_RADIUS = 0.90;
+
+// Bloom is deliberately presentation-only and atmosphere-only. A lower source
+// resolution gives the exterior halo a wider, softer photographic falloff at
+// lower cost than increasing the physical shell geometry.
+const BLOOM_COMPOSER_PIXEL_RATIO = 0.35;
+const BLOOM_STRENGTH = 0.42;
+const BLOOM_RADIUS = 0.95;
 const BLOOM_THRESHOLD = 0.0;
+const BLOOM_COMPOSITE_GAIN = 1.45;
+const BLOOM_LUMINANCE_GAMMA = 0.72;
+const BLOOM_MAX_LOW_LIGHT_LIFT = 4.5;
+
+// Dense atmospheres can become almost black in the bounded single-scattering
+// source pass even though a photographic atmosphere still has a visible halo
+// through multiple scattering. The base scene keeps the physical optical depth;
+// only the bloom-source render uses this bounded presentation cap.
+const BLOOM_SOURCE_MAX_OPTICAL_DEPTH = 1.25;
+
+// Spectrally coloured aerosols should colour their own bloom. These gains are
+// derived from the existing Mie spectral contrast, never from body IDs.
+const BLOOM_SOURCE_MIE_CHROMA_GAIN = 1.2;
+const BLOOM_SOURCE_RAYLEIGH_CHROMA_REDUCTION = 0.45;
 
 export class WebGL2UnavailableError extends Error {
   constructor() {
@@ -93,6 +107,62 @@ export function isWebGL2Available(canvas: HTMLCanvasElement): boolean {
   return canvas.getContext("webgl2") !== null;
 }
 
+interface AtmosphereBloomMaterialState {
+  readonly material: THREE.ShaderMaterial;
+  readonly rayleigh: THREE.Vector3;
+  readonly mie: THREE.Vector3;
+  readonly opticalDepth: number;
+}
+
+function linearRgbLuminance(value: THREE.Vector3): number {
+  return value.x * 0.2126 + value.y * 0.7152 + value.z * 0.0722;
+}
+
+function prepareAtmosphereBloomMaterial(material: THREE.ShaderMaterial): AtmosphereBloomMaterialState | undefined {
+  const rayleigh = material.uniforms.uRayleighScattering?.value;
+  const mie = material.uniforms.uMieScattering?.value;
+  const opticalDepth = material.uniforms.uReferenceVerticalOpticalDepth?.value;
+  if (!(rayleigh instanceof THREE.Vector3)
+    || !(mie instanceof THREE.Vector3)
+    || typeof opticalDepth !== "number"
+    || !Number.isFinite(opticalDepth)) {
+    return undefined;
+  }
+
+  const state: AtmosphereBloomMaterialState = {
+    material,
+    rayleigh: rayleigh.clone(),
+    mie: mie.clone(),
+    opticalDepth,
+  };
+
+  const mieLuminance = Math.max(linearRgbLuminance(mie), Number.EPSILON);
+  const spectralContrast = THREE.MathUtils.clamp(Math.abs(mie.x - mie.z) / mieLuminance, 0, 1);
+  const mieGain = 1 + BLOOM_SOURCE_MIE_CHROMA_GAIN * spectralContrast;
+  const rayleighGain = 1 - BLOOM_SOURCE_RAYLEIGH_CHROMA_REDUCTION * spectralContrast;
+
+  // This modifies only the off-screen bloom source. The actual atmosphere shell
+  // is restored before the base scene render, so physical transport diagnostics
+  // and the visible in-shell scattering remain unchanged.
+  rayleigh.multiplyScalar(rayleighGain);
+  mie.multiplyScalar(mieGain);
+  material.uniforms.uReferenceVerticalOpticalDepth!.value = Math.min(
+    Math.max(opticalDepth, 0),
+    BLOOM_SOURCE_MAX_OPTICAL_DEPTH,
+  );
+  return state;
+}
+
+function restoreAtmosphereBloomMaterial(state: AtmosphereBloomMaterialState): void {
+  const rayleigh = state.material.uniforms.uRayleighScattering?.value;
+  const mie = state.material.uniforms.uMieScattering?.value;
+  if (rayleigh instanceof THREE.Vector3) rayleigh.copy(state.rayleigh);
+  if (mie instanceof THREE.Vector3) mie.copy(state.mie);
+  if (state.material.uniforms.uReferenceVerticalOpticalDepth !== undefined) {
+    state.material.uniforms.uReferenceVerticalOpticalDepth.value = state.opticalDepth;
+  }
+}
+
 export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   if (!isWebGL2Available(canvas)) throw new WebGL2UnavailableError();
 
@@ -119,8 +189,8 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   // Atmosphere shells are marked by orbit-engine-three at their source. The
   // bloom composer temporarily hides every other renderable, so guides,
   // selection indicators, cloud overlays and body surfaces can never
-  // contribute to the halo. The bloom composer renders at half resolution and
-  // UnrealBloom's fixed mip chain supplies the bounded low-frequency falloff.
+  // contribute to the halo. The reduced-resolution fixed mip chain supplies a
+  // bounded exterior falloff instead of enlarging the physical atmosphere.
   const bloomComposer = new EffectComposer(renderer);
   bloomComposer.setPixelRatio(BLOOM_COMPOSER_PIXEL_RATIO);
   bloomComposer.renderToScreen = false;
@@ -133,9 +203,10 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   finalComposer.addPass(finalScenePass);
 
   // Keep base radiance and the selective atmosphere bloom in the same linear
-  // HDR domain. Renderer exposure, ACES and the sRGB transfer must happen only
-  // after both sources have been combined; otherwise focus exposure is lost
-  // when the scene is routed through EffectComposer render targets.
+  // HDR domain. Renderer exposure, ACES and the sRGB transfer happen only after
+  // both sources have been combined. A monotonic luminance curve lifts dim
+  // blurred tails without flattening their spatial falloff. The base-luminance
+  // mask prevents bloom from simply re-exposing the bright planetary disk.
   const finalPass = new ShaderPass(new THREE.ShaderMaterial({
     uniforms: {
       tBase: { value: null },
@@ -152,8 +223,25 @@ void main() {
 uniform sampler2D tBase;
 uniform sampler2D tBloom;
 varying vec2 vUv;
+const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
+const float BLOOM_COMPOSITE_GAIN = ${BLOOM_COMPOSITE_GAIN.toFixed(2)};
+const float BLOOM_LUMINANCE_GAMMA = ${BLOOM_LUMINANCE_GAMMA.toFixed(2)};
+const float BLOOM_MAX_LOW_LIGHT_LIFT = ${BLOOM_MAX_LOW_LIGHT_LIFT.toFixed(2)};
 void main() {
-  gl_FragColor = texture2D(tBase, vUv) + texture2D(tBloom, vUv);
+  vec4 base = texture2D(tBase, vUv);
+  vec3 bloom = texture2D(tBloom, vUv).rgb;
+  float bloomLuminance = max(dot(bloom, LINEAR_LUMINANCE), 0.0);
+  if (bloomLuminance > 0.0) {
+    float mappedLuminance = pow(bloomLuminance, BLOOM_LUMINANCE_GAMMA);
+    float lowLightLift = min(
+      BLOOM_MAX_LOW_LIGHT_LIFT,
+      mappedLuminance / max(bloomLuminance, 0.000001)
+    );
+    bloom *= lowLightLift * BLOOM_COMPOSITE_GAIN;
+  }
+  float baseLuminance = max(dot(base.rgb, LINEAR_LUMINANCE), 0.0);
+  float exteriorWeight = 1.0 - smoothstep(0.04, 0.20, baseLuminance);
+  gl_FragColor = vec4(base.rgb + bloom * exteriorWeight, base.a);
 }
 `,
     depthTest: false,
@@ -181,8 +269,17 @@ void main() {
 
   function render(): void {
     const hidden = new Map<THREE.Object3D, boolean>();
+    const atmosphereStates: AtmosphereBloomMaterialState[] = [];
     scene.traverse((object) => {
-      if (!isRenderable(object) || object.userData.atmosphereBloomSource === true) return;
+      if (!isRenderable(object)) return;
+      if (object.userData.atmosphereBloomSource === true) {
+        const material = (object as THREE.Mesh).material;
+        if (material instanceof THREE.ShaderMaterial) {
+          const state = prepareAtmosphereBloomMaterial(material);
+          if (state !== undefined) atmosphereStates.push(state);
+        }
+        return;
+      }
       hidden.set(object, object.visible);
       object.visible = false;
     });
@@ -192,6 +289,7 @@ void main() {
       bloomComposer.render();
     } finally {
       scene.background = previousBackground;
+      for (const state of atmosphereStates) restoreAtmosphereBloomMaterial(state);
       for (const [object, visible] of hidden) object.visible = visible;
     }
     finalComposer.render();
