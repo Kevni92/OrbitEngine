@@ -14,9 +14,13 @@ const DEFAULT_DISPLAY_EXPOSURE = 1;
 const DISPLAY_TONE_MAPPING_MODE = "ACESFilmic" as const;
 const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
 const BLOOM_COMPOSER_PIXEL_RATIO = 0.5;
-const BLOOM_STRENGTH = 0.16;
-const BLOOM_RADIUS = 0.75;
-const BLOOM_THRESHOLD = 0.72;
+// Atmosphere-only bloom should read as a low-frequency exterior falloff, not
+// as a second hard rim. The shell itself remains the only source; lowering the
+// threshold lets physically dim atmospheres contribute without body-specific
+// gains, while the modest strength keeps the halo bounded.
+const BLOOM_STRENGTH = 0.11;
+const BLOOM_RADIUS = 0.82;
+const BLOOM_THRESHOLD = 0.18;
 
 export class WebGL2UnavailableError extends Error {
   constructor() {
