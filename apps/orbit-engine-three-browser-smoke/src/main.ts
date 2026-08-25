@@ -6,11 +6,12 @@ import {
   createOrbitPathSnapshot,
 } from "orbit-engine-three";
 import { createCelestialAppearance, presentationPackageInfo } from "orbit-engine-three/presentation";
-import { objectId as engineObjectId, simulationInstant, type ObjectId } from "orbit-engine";
+import type { ObjectId, SimulationInstant } from "orbit-engine";
 
 const status = document.querySelector<HTMLParagraphElement>("#status");
 const canvas = document.querySelector<HTMLCanvasElement>("#scene");
-const objectId = (value: string): ObjectId => engineObjectId(value);
+const objectId = (value: string): ObjectId => value as ObjectId;
+const simulationInstant = (seconds: number, nanoseconds = 0): SimulationInstant => Object.freeze({ seconds, nanoseconds }) as SimulationInstant;
 
 function setStatus(value: "ready" | "error", message: string, diagnostics: Record<string, string | number | boolean> = {}): void {
   if (status === null) return;
