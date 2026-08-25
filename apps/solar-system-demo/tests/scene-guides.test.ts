@@ -7,14 +7,18 @@ import {
   niceGridStep,
 } from "../src/rendering/scene-guides.js";
 
-test("scene guides default to grid on and axes off with independent toggles", () => {
+test("scene guides default to grid and axes off with independent toggles", () => {
   const scene = new THREE.Scene();
   const guides = new SceneGuides(scene);
   assert.deepEqual(guides.settings(), DEFAULT_SCENE_GUIDE_SETTINGS);
   guides.setAxesVisible(true);
-  assert.deepEqual(guides.settings(), { axesVisible: true, gridVisible: true });
+  assert.deepEqual(guides.settings(), { axesVisible: true, gridVisible: false });
   guides.setGridVisible(false);
   assert.deepEqual(guides.settings(), { axesVisible: true, gridVisible: false });
+  guides.setGridVisible(true);
+  assert.deepEqual(guides.settings(), { axesVisible: true, gridVisible: true });
+  guides.setAxesVisible(false);
+  assert.deepEqual(guides.settings(), { axesVisible: false, gridVisible: true });
   guides.dispose();
 });
 test("adaptive grid uses bounded nice steps and avoids insignificant rebuilds", () => {

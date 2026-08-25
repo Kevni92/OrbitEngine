@@ -17,7 +17,7 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
   await expect(page.locator("#engine-status")).toContainText("Engine ready");
   await expect(page.locator("#scenario-note")).toHaveAttribute("data-state", "ready");
   await expect(page.locator("#focus-select")).toBeEnabled();
-  await expect(page.locator("#grid-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#grid-toggle")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator("#orbits-toggle")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#axes-toggle")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator("#orbit-status")).toContainText("reference orbits ready");
@@ -88,9 +88,9 @@ test("demo exposes polished guide, orbit, time, and advanced controls", async ({
 
   await page.click("#axes-toggle");
   await expect(page.locator("#axes-toggle")).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("#grid-toggle")).toHaveAttribute("aria-pressed", "true");
-  await page.click("#grid-toggle");
   await expect(page.locator("#grid-toggle")).toHaveAttribute("aria-pressed", "false");
+  await page.click("#grid-toggle");
+  await expect(page.locator("#grid-toggle")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#axes-toggle")).toHaveAttribute("aria-pressed", "true");
   await page.click("#grid-toggle");
   await page.click("#orbits-toggle");

@@ -20,6 +20,7 @@ import { createRepresentationPolicy, resolveRepresentationDecisions, type Repres
 import { createAdaptiveSizingConfiguration, resolveBodySizing, type AdaptiveSizingConfiguration, type BodyProjectionMetrics, type BodySizingResult, type RadiusMode } from "./sizing.js";
 import { OrbitPathRenderer, type OrbitPathRendererOptions, type OrbitPathStyle } from "./orbit-renderer.js";
 import { SelectionIndicator, type SelectionIndicatorOptions } from "./selection.js";
+import { applyTexturedBodyPoleAlignment } from "./texture-orientation.js";
 
 const MAX_LIGHTS = 4;
 const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
@@ -863,6 +864,7 @@ export class CelestialSystemView {
         surface.name = `Celestial surface ${body.objectId}`;
         surface.userData.objectId = body.objectId;
         surface.userData.representation = "sphere";
+        applyTexturedBodyPoleAlignment(surface);
         surface.scale.setScalar(radius);
         anchor.add(surface);
         if (body.appearance?.stellarEmission !== undefined) {

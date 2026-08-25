@@ -7,6 +7,7 @@ import {
   createCelestialRenderSnapshot,
   createOrbitPathSnapshot,
   createRenderSpaceConfig,
+  TEXTURED_BODY_POLE_ALIGNMENT_ROTATION_X_RADIANS,
   transformSnapshotPositionToSceneUnits,
 } from "../dist/index.js";
 import { createCelestialAppearance } from "../dist/presentation.js";
@@ -81,6 +82,35 @@ test("snapshot and render-space conversion are immutable and origin-relative", (
   assert.equal(value.origin.frameId, "test:ssb-origin");
   assert.notEqual(snapshot([body(EARTH_ID, { x: 1e9, y: 2e9, z: 3e9 })]).fingerprint, snapshot([body(EARTH_ID, { x: 1e9, y: 2e9, z: 4e9 })]).fingerprint);
   assert.throws(() => snapshot([body(EARTH_ID, { x: 0, y: 0, z: 0 }), body(EARTH_ID, { x: 1, y: 0, z: 0 })]), /duplicate objectId/);
+});
+
+test("textured body poles resolve to +Z while atmosphere and position stay unchanged", () => {
+  const callerTexture = new THREE.Texture();
+  const view = new CelestialSystemView({
+    surfaceTextureProvider: () => ({ texture: callerTexture, ownership: "caller" }),
+  });
+  const renderSnapshot = snapshot([
+    body(EARTH_ID, { x: 1e9, y: 2e9, z: 3e9 }, { appearance: earthAppearance }),
+  ]);
+  assert.equal(view.update(renderSnapshot).committed, true);
+  const anchor = view.bodyAnchor(EARTH_ID);
+  assert.ok(anchor);
+  const surface = anchor.children.find((child) => child.name === `Celestial surface ${EARTH_ID}`);
+  assert.ok(surface instanceof THREE.Mesh);
+  assert.equal(surface.rotation.x, TEXTURED_BODY_POLE_ALIGNMENT_ROTATION_X_RADIANS);
+  view.root.updateMatrixWorld(true);
+  const northPole = new THREE.Vector3(0, 1, 0)
+    .applyQuaternion(surface.getWorldQuaternion(new THREE.Quaternion()))
+    .normalize();
+  assert.ok(Math.abs(northPole.x) < 1e-12);
+  assert.ok(Math.abs(northPole.y) < 1e-12);
+  assert.ok(Math.abs(northPole.z - 1) < 1e-12);
+  const atmosphere = anchor.children.find((child) => child.name === `Atmosphere shell ${EARTH_ID}`);
+  assert.ok(atmosphere instanceof THREE.Mesh);
+  assert.equal(atmosphere.rotation.x, 0);
+  assert.deepEqual(anchor.position, new THREE.Vector3(1e9, 2e9, 3e9));
+  view.dispose();
+  callerTexture.dispose();
 });
 
 test("view creates composed star, planet, moon, and bounded atmosphere resources", () => {
