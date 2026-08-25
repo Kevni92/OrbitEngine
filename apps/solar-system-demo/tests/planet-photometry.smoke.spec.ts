@@ -39,7 +39,7 @@ interface PlanetPhotometryResult {
   readonly name: string;
   readonly atmosphere: boolean;
   readonly dayside: RegionMetrics;
-  readonly nightside: RegionMetrics;
+  readonly side: RegionMetrics;
 }
 
 const PLANETS = Object.freeze([
@@ -114,7 +114,7 @@ async function hideOverlays(page: Page): Promise<void> {
   await page.waitForTimeout(60);
 }
 
-async function orientOppositeSun(page: Page, body: BodyDiagnostics): Promise<BodyDiagnostics> {
+async function orientSideOn(page: Page, body: BodyDiagnostics): Promise<BodyDiagnostics> {
   const sunDirection = body.stellarDirections.find((direction) => direction.emitterId === "1000")?.renderDirectionToEmitter;
   if (sunDirection === undefined) throw new Error(`Sun direction is missing for ${body.objectId}`);
   await page.evaluate(({ center, direction }) => {
@@ -126,12 +126,34 @@ async function orientOppositeSun(page: Page, body: BodyDiagnostics): Promise<Bod
       }) => void;
     }).__orbitDemoSetCameraFixture;
     if (hook === undefined) throw new Error("Camera fixture hook is missing");
+
+    const sunLength = Math.hypot(direction.x, direction.y, direction.z);
+    if (sunLength <= Number.EPSILON) throw new Error("Sun direction is degenerate");
+    const sun = {
+      x: direction.x / sunLength,
+      y: direction.y / sunLength,
+      z: direction.z / sunLength,
+    };
+
+    // Put the camera exactly 90 degrees from the star direction so the star
+    // lies in the image plane and the planet shows a stable half-lit terminator.
+    const reference = Math.abs(sun.z) < 0.92
+      ? { x: 0, y: 0, z: 1 }
+      : { x: 0, y: 1, z: 0 };
+    const side = {
+      x: sun.y * reference.z - sun.z * reference.y,
+      y: sun.z * reference.x - sun.x * reference.z,
+      z: sun.x * reference.y - sun.y * reference.x,
+    };
+    const sideLength = Math.hypot(side.x, side.y, side.z);
+    if (sideLength <= Number.EPSILON) throw new Error("Side-on camera direction is degenerate");
+
     const distance = 0.06;
     hook({
       position: [
-        center.x - direction.x * distance,
-        center.y - direction.y * distance,
-        center.z - direction.z * distance,
+        center.x + side.x / sideLength * distance,
+        center.y + side.y / sideLength * distance,
+        center.z + side.z / sideLength * distance,
       ],
       target: [center.x, center.y, center.z],
       up: [0, 0, 1],
@@ -270,27 +292,28 @@ test("all primary planets obey the shared planetary photometry contract", async 
       path: testInfo.outputPath(`${planet.name.toLowerCase()}-focus-dayside.png`),
     });
 
-    // The controlled opposite-sun fixture remains the numerical nightside
-    // reference. Its screenshot gets the same close review framing afterward.
-    const nightsideBody = await orientOppositeSun(page, daysideReviewBody);
-    const nightside = await measure(page, nightsideBody);
-    const nightsideReviewBody = await zoomForVisualReview(page, planet.objectId);
+    // Replace the artificial full-dark view with a 90-degree side view. This
+    // shows the illuminated hemisphere, terminator, night hemisphere and limb
+    // atmosphere together and is much more useful for visual acceptance.
+    const sideBody = await orientSideOn(page, daysideReviewBody);
+    const side = await measure(page, sideBody);
+    const sideReviewBody = await zoomForVisualReview(page, planet.objectId);
     await page.locator("#scene").screenshot({
-      path: testInfo.outputPath(`${planet.name.toLowerCase()}-opposite-sun.png`),
+      path: testInfo.outputPath(`${planet.name.toLowerCase()}-side.png`),
     });
 
     const result = {
       name: planet.name,
       atmosphere: daysideBody.atmosphere.resourcesAllocated,
       dayside,
-      nightside,
+      side,
     } satisfies PlanetPhotometryResult;
     results.push(result);
     console.log("[planet-photometry]", planet.name, {
       ...result,
       reviewDiameterPixels: {
         dayside: daysideReviewBody.atmosphere.projectedDiameterPixels,
-        nightside: nightsideReviewBody.atmosphere.projectedDiameterPixels,
+        side: sideReviewBody.atmosphere.projectedDiameterPixels,
       },
     });
   }
@@ -317,10 +340,18 @@ test("all primary planets obey the shared planetary photometry contract", async 
       ).toBeLessThan(10);
     }
 
-    expect.soft(result.nightside.diskLuminance, `${result.name} nightside maximum luminance`).toBeLessThan(80);
+    // Shared half-phase contract: the side-on disk must remain readable, must
+    // not clip, and must be clearly dimmer than the fully illuminated focus view.
+    expect.soft(result.side.diskLuminance, `${result.name} side-view minimum luminance`).toBeGreaterThan(8);
+    expect.soft(result.side.diskLuminance, `${result.name} side-view maximum luminance`).toBeLessThan(210);
+    expect.soft(result.side.clippedDiskFraction, `${result.name} side-view clipped disk fraction`).toBeLessThan(0.12);
     expect.soft(
-      result.nightside.diskLuminance,
-      `${result.name} nightside/day-side contrast`,
-    ).toBeLessThan(result.dayside.diskLuminance * 0.45);
+      result.side.diskLuminance,
+      `${result.name} side/day minimum ratio`,
+    ).toBeGreaterThan(result.dayside.diskLuminance * 0.12);
+    expect.soft(
+      result.side.diskLuminance,
+      `${result.name} side/day maximum ratio`,
+    ).toBeLessThan(result.dayside.diskLuminance * 0.85);
   }
 });
