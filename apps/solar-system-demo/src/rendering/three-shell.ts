@@ -14,16 +14,15 @@ const DEFAULT_DISPLAY_EXPOSURE = 1;
 const DISPLAY_TONE_MAPPING_MODE = "ACESFilmic" as const;
 const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
 
-// Bloom is deliberately presentation-only and atmosphere-only. A lower source
-// resolution gives the exterior halo a wider, softer photographic falloff at
-// lower cost than increasing the physical shell geometry.
-const BLOOM_COMPOSER_PIXEL_RATIO = 0.35;
-const BLOOM_STRENGTH = 0.42;
-const BLOOM_RADIUS = 0.95;
+// Bloom is deliberately presentation-only and atmosphere-only. Keep the source
+// at half resolution so the fixed UnrealBloom mip chain produces a compact,
+// photographic falloff without turning weak tail values into a scene-wide fog.
+const BLOOM_COMPOSER_PIXEL_RATIO = 0.5;
+const BLOOM_STRENGTH = 0.28;
+const BLOOM_RADIUS = 0.85;
 const BLOOM_THRESHOLD = 0.0;
-const BLOOM_COMPOSITE_GAIN = 1.45;
-const BLOOM_LUMINANCE_GAMMA = 0.72;
-const BLOOM_MAX_LOW_LIGHT_LIFT = 4.5;
+const BLOOM_COMPOSITE_GAIN = 0.75;
+const BLOOM_SURFACE_WEIGHT = 0.16;
 
 // Dense atmospheres can become almost black in the bounded single-scattering
 // source pass even though a photographic atmosphere still has a visible halo
@@ -32,9 +31,11 @@ const BLOOM_MAX_LOW_LIGHT_LIFT = 4.5;
 const BLOOM_SOURCE_MAX_OPTICAL_DEPTH = 1.25;
 
 // Spectrally coloured aerosols should colour their own bloom. These gains are
-// derived from the existing Mie spectral contrast, never from body IDs.
-const BLOOM_SOURCE_MIE_CHROMA_GAIN = 1.2;
-const BLOOM_SOURCE_RAYLEIGH_CHROMA_REDUCTION = 0.45;
+// derived from the existing Mie spectral contrast, never from body IDs. A
+// strongly coloured dust/haze atmosphere therefore lets Mie dominate its halo,
+// while near-neutral aerosols remain close to the physical source balance.
+const BLOOM_SOURCE_MIE_CHROMA_GAIN = 4.0;
+const BLOOM_SOURCE_RAYLEIGH_CHROMA_REDUCTION = 0.90;
 
 export class WebGL2UnavailableError extends Error {
   constructor() {
@@ -204,9 +205,11 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
 
   // Keep base radiance and the selective atmosphere bloom in the same linear
   // HDR domain. Renderer exposure, ACES and the sRGB transfer happen only after
-  // both sources have been combined. A monotonic luminance curve lifts dim
-  // blurred tails without flattening their spatial falloff. The base-luminance
-  // mask prevents bloom from simply re-exposing the bright planetary disk.
+  // both sources have been combined. Do not remap low-light bloom values: the
+  // blur itself owns the spatial falloff. A small in-surface contribution lets
+  // the atmosphere's own chroma tint the immediate limb without washing out the
+  // planetary disk; the full bloom contribution is reserved for dark exterior
+  // pixels.
   const finalPass = new ShaderPass(new THREE.ShaderMaterial({
     uniforms: {
       tBase: { value: null },
@@ -225,23 +228,14 @@ uniform sampler2D tBloom;
 varying vec2 vUv;
 const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
 const float BLOOM_COMPOSITE_GAIN = ${BLOOM_COMPOSITE_GAIN.toFixed(2)};
-const float BLOOM_LUMINANCE_GAMMA = ${BLOOM_LUMINANCE_GAMMA.toFixed(2)};
-const float BLOOM_MAX_LOW_LIGHT_LIFT = ${BLOOM_MAX_LOW_LIGHT_LIFT.toFixed(2)};
+const float BLOOM_SURFACE_WEIGHT = ${BLOOM_SURFACE_WEIGHT.toFixed(2)};
 void main() {
   vec4 base = texture2D(tBase, vUv);
-  vec3 bloom = texture2D(tBloom, vUv).rgb;
-  float bloomLuminance = max(dot(bloom, LINEAR_LUMINANCE), 0.0);
-  if (bloomLuminance > 0.0) {
-    float mappedLuminance = pow(bloomLuminance, BLOOM_LUMINANCE_GAMMA);
-    float lowLightLift = min(
-      BLOOM_MAX_LOW_LIGHT_LIFT,
-      mappedLuminance / max(bloomLuminance, 0.000001)
-    );
-    bloom *= lowLightLift * BLOOM_COMPOSITE_GAIN;
-  }
+  vec3 bloom = texture2D(tBloom, vUv).rgb * BLOOM_COMPOSITE_GAIN;
   float baseLuminance = max(dot(base.rgb, LINEAR_LUMINANCE), 0.0);
   float exteriorWeight = 1.0 - smoothstep(0.04, 0.20, baseLuminance);
-  gl_FragColor = vec4(base.rgb + bloom * exteriorWeight, base.a);
+  float bloomWeight = mix(BLOOM_SURFACE_WEIGHT, 1.0, exteriorWeight);
+  gl_FragColor = vec4(base.rgb + bloom * bloomWeight, base.a);
 }
 `,
     depthTest: false,
