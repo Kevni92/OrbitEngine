@@ -1,0 +1,67 @@
+diff --git a/src/engine/primitives/primitive.js b/src/engine/primitives/primitive.js
+index b1ce5cfcba415c996dcccc36a777d921ada12674..6e0828cd8a5a8079bbd235f2e07cf400a6f27f95 100644
+--- a/src/engine/primitives/primitive.js
++++ b/src/engine/primitives/primitive.js
+@@ -35,7 +35,10 @@ export class Primitive extends THREE.Object3D {
+ 
+     this.quadTreeCollections = new Map();
+ 
+-    this.infrastructure      = infrastructure;
++    this.infrastructure      = params.infrastructure ?? new Infrastructure({
++      ...(params.useWorkers === undefined ? {} : { useWorkers: params.useWorkers }),
++      ...(params.material === undefined ? {} : { material: params.material }),
++    });
+ 
+     this._createMeshNodes    = () => {}
+   }
+@@ -77,12 +80,40 @@ export class Primitive extends THREE.Object3D {
+     } = meshNode.params
+ 
+     const { material } = this.infrastructure.config;
+-
+-    const { buffers, views } = bufferInit(this.infrastructure.config.arrybuffers[size].geometryData, geometryClass);
+-    
+     const textureObj = {textureSrc:{},uv:createUVObject().update(meshNode)}
+-
+     this.infrastructure.events.trigger('loadTexture',textureObj)
++
++    // The original fork always allocates SharedArrayBuffers and a blob worker.
++    // Keep that path as the default, but allow a consumer to opt into a small
++    // main-thread path for applications that do not enable cross-origin
++    // isolation or do not want a worker dependency for a spike.
++    if (this.infrastructure.config.useWorkers === false) {
++      const geometry = new geometryClass(size, size, resolution, resolution, ...Object.values(additionalPayload));
++      const matrix = new THREE.Matrix4();
++      const rotationMethod = matrixRotationData?.propMethod ?? matrixRotationData?.propMehtod;
++      if (rotationMethod && typeof matrix[rotationMethod] === 'function') {
++        matrix[rotationMethod](matrixRotationData.input);
++      }
++      geometry._setMatrix({ matrix });
++      geometry._setOffset({ offset });
++      const vertexCount = (resolution + 1) * (resolution + 1);
++      geometry._threadingBuild({
++        positionBuffer: new Float32Array(vertexCount * 3),
++        normalBuffer: new Float32Array(vertexCount * 3),
++        uvBuffer: new Float32Array(vertexCount * 2),
++        indexBuffer: new Uint32Array(resolution * resolution * 6),
++      });
++      const mesh = meshInit(geometry, material, [0, 0, 0]);
++      // Keep the main-thread path aligned with the worker path: the mesh
++      // geometry is generated in the face-local frame while the mesh node
++      // already carries the projected face center.
++      mesh.position.copy(meshNode.position.clone().negate())
++      meshNode.add(mesh);
++      this.infrastructure.events.trigger('afterMeshCreation', meshNode, { uv: textureObj.uv });
++      return Promise.resolve(meshNode);
++    }
++
++    const { buffers, views } = bufferInit(this.infrastructure.config.arrybuffers[size].geometryData, geometryClass);
+  
+     const threadarchitecture  = threadingInit(geometryClass, workersSRC);
+     threadarchitecture.setPayload({
+@@ -198,5 +229,3 @@ export class Primitive extends THREE.Object3D {
+ 
+ 
+  
+-
+-

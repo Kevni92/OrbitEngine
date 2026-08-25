@@ -1,12 +1,14 @@
-import type { ObjectId, OrbitEngine, PropagationState, ReferenceFrameId, SimulationInstant } from "orbit-engine";
+import type { ObjectId, OrbitEngine, PropagationState, Quaternion, ReferenceFrameId, SimulationInstant } from "orbit-engine";
 import type { RegisteredScenarioBody, SolarSystemScenario } from "./load-solar-system.js";
 import type { RuntimeAsteroidOverlay } from "./runtime-asteroid-overlay.js";
-import { SUN_ID } from "./scenario-data.js";
+import { MOON_ID, SUN_ID } from "./scenario-data.js";
 
 export interface ScenarioStateFrame {
   readonly focusId: ObjectId;
   readonly objectIds: readonly ObjectId[];
   readonly states: readonly PropagationState[];
+  /** Body-fixed orientation supplied by OrbitEngine's frame graph when available. */
+  readonly moonOrientation?: Quaternion;
 }
 
 export class SolarSystemStateSource {
@@ -50,6 +52,16 @@ export class SolarSystemStateSource {
     return this.#engine.relativeStateAt(objectId, centralBodyId, target, outputFrame);
   }
 
+  moonOrientationAt(target: SimulationInstant): Quaternion | undefined {
+    const propagationFrame = this.#scenario.bodyById.get(MOON_ID)?.definition.propagation.propagationFrame;
+    if (propagationFrame === undefined) return undefined;
+    try {
+      return this.#engine.frames().transform(propagationFrame, this.#scenario.rootFrame, target).rotation;
+    } catch {
+      return undefined;
+    }
+  }
+
   query(focusId: ObjectId, target: SimulationInstant): ScenarioStateFrame {
     const objectIds = this.currentObjectIds();
     if (focusId === SUN_ID) {
@@ -57,6 +69,7 @@ export class SolarSystemStateSource {
         focusId,
         objectIds,
         states: this.#engine.statesAt(objectIds, target, this.#scenario.rootFrame),
+        moonOrientation: this.moonOrientationAt(target),
       });
     }
     return Object.freeze({
@@ -64,6 +77,7 @@ export class SolarSystemStateSource {
       objectIds,
       states: Object.freeze(objectIds.map((id) =>
         this.#engine.relativeStateAt(id, focusId, target, this.#scenario.rootFrame))),
+      moonOrientation: this.moonOrientationAt(target),
     });
   }
 }

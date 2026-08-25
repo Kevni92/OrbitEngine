@@ -12,6 +12,7 @@
     "smoke": "playwright test"
   },
   "dependencies": {
+    "@funsoftware/planettech": "git+https://github.com/Kevni92/OpenWorlds.git#b1fe8ae33090f6faf5f3cd8b919ce2177c8da1bd",
     "orbit-engine": "workspace:*",
     "orbit-engine-three": "workspace:*",
     "three": "0.185.1"

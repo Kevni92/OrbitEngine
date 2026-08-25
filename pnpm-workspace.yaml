@@ -1,3 +1,5 @@
 packages:
   - packages/*
   - apps/*
+patchedDependencies:
+  '@funsoftware/planettech@0.0.8-alpha.0.1.7': patches/@funsoftware__planettech@0.0.8-alpha.0.1.7.patch

@@ -34,6 +34,7 @@ import {
   type Meters,
   type ObjectId,
   type PropagationState,
+  type Quaternion,
 } from "orbit-engine";
 import type { RegisteredScenarioBody, SolarSystemScenario } from "../scenario/load-solar-system.js";
 import type { RuntimeAsteroidBody } from "../scenario/runtime-asteroid-overlay.js";
@@ -57,10 +58,13 @@ import {
   type ProceduralSurfaceDiagnostics,
 } from "./procedural-surface.js";
 import { J2000_ECLIPTIC_OBLIQUITY_RADIANS } from "../coordinate-conventions.js";
+import { MOON_ID, SUN_ID } from "../scenario/scenario-data.js";
+import { OpenWorldsMoonRenderer, type OpenWorldsMoonDiagnostics } from "./openworlds-moon.js";
 
 export const MIN_FOCUS_DISTANCE_SCENE_UNITS = 0.000001;
 export const MAX_FOCUS_DISTANCE_SCENE_UNITS = 24;
 export const FOCUS_DISTANCE_RADIUS_MULTIPLIER = 24;
+export const MOON_FOCUS_DISTANCE_RADIUS_MULTIPLIER = 6;
 export const MAX_PROMOTED_RUNTIME_SPHERES = 128;
 export const INSPECTION_FILL_LAYER = 1;
 export const MARKER_PIXEL_SIZE = 7;
@@ -241,6 +245,7 @@ export class SolarSystemScene {
   readonly #planetTextureStates = new Map<ObjectId, PlanetTextureState>();
   readonly #loadedPlanetTextures = new Map<ObjectId, Map<string, THREE.Texture>>();
   readonly #planetLayerMeshes = new Map<ObjectId, PlanetLayerMeshes>();
+  readonly #moonTerrain: OpenWorldsMoonRenderer;
   readonly #inspectionFillIndicator = new THREE.Object3D();
   readonly #onSelect?: (objectId: ObjectId) => void;
   #snapshot?: CelestialRenderSnapshot;
@@ -253,6 +258,7 @@ export class SolarSystemScene {
   #orbitsVisible = true;
   #queriedCount = 0;
   #promotedRuntimeSphereCount = 0;
+  #moonOrientation = new THREE.Quaternion();
 
   constructor(scene: THREE.Scene, scenario: SolarSystemScenario, options: SolarSystemSceneOptions = {}) {
     this.#scene = scene;
@@ -274,6 +280,7 @@ export class SolarSystemScene {
       surfaceTextureProvider: (body) => this.#surfaceTextureFor(body),
     });
     this.#scene.add(this.#view.root);
+    this.#moonTerrain = new OpenWorldsMoonRenderer(this.#scene);
     this.#inspectionFillIndicator.name = "Enhanced inspection fill (presentation-only)";
     this.#inspectionFillIndicator.visible = false;
     this.#scene.add(this.#inspectionFillIndicator);
@@ -342,7 +349,11 @@ export class SolarSystemScene {
     this.#rerender();
   }
 
-  update(states: readonly PropagationState[], objectIds: readonly ObjectId[] = [...this.#currentEntries.keys()]): void {
+  update(
+    states: readonly PropagationState[],
+    objectIds: readonly ObjectId[] = [...this.#currentEntries.keys()],
+    moonOrientation?: Quaternion,
+  ): void {
     if (states.length !== objectIds.length) throw new RangeError(`Expected ${objectIds.length} scene states, received ${states.length}`);
     this.#queriedCount = objectIds.length;
     this.#states.clear();
@@ -352,6 +363,11 @@ export class SolarSystemScene {
       this.#states.set(objectId, state);
       const position = transformSnapshotPositionToSceneUnits(state.position, this.#renderSpace);
       this.#positions.set(objectId, new THREE.Vector3(position.x, position.y, position.z));
+    }
+    if (moonOrientation !== undefined) {
+      this.#moonOrientation.set(moonOrientation.x, moonOrientation.y, moonOrientation.z, moonOrientation.w).normalize();
+    } else {
+      this.#moonOrientation.identity();
     }
     const firstState = states[0];
     if (firstState === undefined) return;
@@ -391,6 +407,7 @@ export class SolarSystemScene {
     this.#lastCamera = camera;
     this.#lastViewportHeight = viewportHeightPixels;
     this.#rerender();
+    this.#updateMoonTerrain(camera);
     for (const entry of this.#currentEntries.values()) this.#updatePlanetTexturePresentation(entry);
     this.#updatePlanetLayerTransforms();
     this.#updateEarthNightLights();
@@ -556,6 +573,7 @@ export class SolarSystemScene {
 
   atmosphereResourceCount(): number { return this.#view.diagnostics().atmosphereCount; }
   planetTextureResourceDiagnostics(): PlanetTextureResourceDiagnostics { return this.#planetTextureResources.diagnostics(); }
+  openWorldsMoonDiagnostics(): OpenWorldsMoonDiagnostics { return this.#moonTerrain.diagnostics(); }
 
   lodDiagnostics(): LodDiagnostics {
     let hiddenCount = 0;
@@ -573,7 +591,10 @@ export class SolarSystemScene {
     const entry = this.#currentEntries.get(objectId);
     if (entry === undefined) throw new RangeError(`Unknown scenario body: ${objectId}`);
     const radius = physicalRadiusMeters(entry) / this.#renderSpace.metersPerSceneUnit;
-    if (entry.definition.type !== ObjectType.star) return Math.min(MAX_FOCUS_DISTANCE_SCENE_UNITS, Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, radius * FOCUS_DISTANCE_RADIUS_MULTIPLIER));
+    if (entry.definition.type !== ObjectType.star) {
+      const multiplier = entry.definition.id === MOON_ID ? MOON_FOCUS_DISTANCE_RADIUS_MULTIPLIER : FOCUS_DISTANCE_RADIUS_MULTIPLIER;
+      return Math.min(MAX_FOCUS_DISTANCE_SCENE_UNITS, Math.max(MIN_FOCUS_DISTANCE_SCENE_UNITS, radius * multiplier));
+    }
     const position = this.#positions.get(objectId);
     if (position === undefined) return MAX_FOCUS_DISTANCE_SCENE_UNITS;
     const distances = [...this.#currentEntries.values()]
@@ -585,6 +606,7 @@ export class SolarSystemScene {
   }
 
   dispose(): void {
+    this.#moonTerrain.dispose();
     this.#view.dispose();
     this.#scene.remove(this.#inspectionFillIndicator);
     for (const objectId of [...this.#planetTextureStates.keys()]) this.#releasePlanetTextures(objectId);
@@ -660,6 +682,36 @@ export class SolarSystemScene {
       mesh.layers.disable(INSPECTION_FILL_LAYER);
       if (inspectionTargets.includes(entry.definition.id)) mesh.layers.enable(INSPECTION_FILL_LAYER);
     }
+    this.#syncMoonSurfaceVisibility();
+  }
+
+  #updateMoonTerrain(camera: THREE.Camera): void {
+    const position = this.#positions.get(MOON_ID);
+    const entry = this.#currentEntries.get(MOON_ID);
+    const snapshot = this.#snapshot;
+    if (position === undefined || entry === undefined || snapshot === undefined) return;
+    const radius = physicalRadiusMeters(entry) / this.#renderSpace.metersPerSceneUnit;
+    const sunContribution = this.#illuminationByBody.get(MOON_ID)?.contributions.find((contribution) => contribution.emitterId === SUN_ID);
+    const directionToSun = sunContribution === undefined
+      ? undefined
+      : (() => {
+        const direction = transformSnapshotDirectionToRenderSpace(sunContribution.directionToEmitter, this.#renderSpace);
+        return new THREE.Vector3(direction.x, direction.y, direction.z);
+      })();
+    this.#moonTerrain.update({
+      camera,
+      position,
+      orientation: this.#moonOrientation,
+      directionToSun,
+      radiusSceneUnits: radius,
+      instant: snapshot.instant,
+    });
+    this.#syncMoonSurfaceVisibility();
+  }
+
+  #syncMoonSurfaceVisibility(): void {
+    const moonSurface = this.meshFor(MOON_ID);
+    if (moonSurface !== undefined) moonSurface.visible = !this.#moonTerrain.active();
   }
 
   #refreshSnapshotPaths(): void {

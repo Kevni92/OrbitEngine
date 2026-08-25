@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@funsoftware/planettech@0.0.8-alpha.0.1.7': 0569b4718891ec87469cf2a3ad9f3e5bc75905535554c8b3714a26928b73b31f
+
 importers:
 
   .:
@@ -64,6 +67,9 @@ importers:
 
   apps/solar-system-demo:
     dependencies:
+      '@funsoftware/planettech':
+        specifier: git+https://github.com/Kevni92/OpenWorlds.git#b1fe8ae33090f6faf5f3cd8b919ce2177c8da1bd
+        version: https://codeload.github.com/Kevni92/OpenWorlds/tar.gz/b1fe8ae33090f6faf5f3cd8b919ce2177c8da1bd(patch_hash=0569b4718891ec87469cf2a3ad9f3e5bc75905535554c8b3714a26928b73b31f)(three@0.185.1)
       orbit-engine:
         specifier: workspace:*
         version: link:../../packages/orbit-engine
@@ -118,6 +124,15 @@ packages:
 
   '@dimforge/rapier3d-compat@0.12.0':
     resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
+
+  '@dimforge/rapier3d@0.14.0':
+    resolution: {integrity: sha512-+R9T/AGbvdRLentporVaOYEYjPHKdUeUuGObOBAskhSv8fFFyTiUcGMKhRH4VyCaGP8JAKMLapAETR4xAvJqlg==}
+
+  '@funsoftware/planettech@https://codeload.github.com/Kevni92/OpenWorlds/tar.gz/b1fe8ae33090f6faf5f3cd8b919ce2177c8da1bd':
+    resolution: {gitHosted: true, integrity: sha512-w2G+gMTVyCRuqrtqV1r71MDQZk08nuDa8ELN4vxUCLvvTv0wPfRSrDC8FzRfEG5yluuRSlI4Fg37retsH/MrTg==, tarball: https://codeload.github.com/Kevni92/OpenWorlds/tar.gz/b1fe8ae33090f6faf5f3cd8b919ce2177c8da1bd}
+    version: 0.0.8-alpha.0.1.7
+    peerDependencies:
+      three: 0.185.1
 
   '@oxc-project/types@0.146.0':
     resolution: {integrity: sha512-XC0QsnnhVe7sLIWmYmdPw7x5P0h4W8vUU3Nv1ySgWXtvCz8NizoAEpGXA0sOYoJQV2Rl13LgURAHQ5cI5ILCSA==}
@@ -447,6 +462,13 @@ packages:
 snapshots:
 
   '@dimforge/rapier3d-compat@0.12.0': {}
+
+  '@dimforge/rapier3d@0.14.0': {}
+
+  '@funsoftware/planettech@https://codeload.github.com/Kevni92/OpenWorlds/tar.gz/b1fe8ae33090f6faf5f3cd8b919ce2177c8da1bd(patch_hash=0569b4718891ec87469cf2a3ad9f3e5bc75905535554c8b3714a26928b73b31f)(three@0.185.1)':
+    dependencies:
+      '@dimforge/rapier3d': 0.14.0
+      three: 0.185.1
 
   '@oxc-project/types@0.146.0': {}
 

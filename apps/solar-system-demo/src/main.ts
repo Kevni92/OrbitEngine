@@ -94,6 +94,7 @@ interface BrowserRenderDiagnostics {
     readonly lastFrameDurationMs: number;
     readonly averageFrameDurationMs: number;
   };
+  readonly moonTerrain: ReturnType<SolarSystemScene["openWorldsMoonDiagnostics"]>;
   readonly orbits: readonly BrowserOrbitDiagnostics[];
   readonly bodies: readonly BrowserRenderBodyDiagnostics[];
 }
@@ -141,6 +142,17 @@ function stateVector(state: ReturnType<OrbitEngine["stateAt"]>): readonly number
     state.velocity.y,
     state.velocity.z,
   ];
+}
+
+function publishMoonTerrainDiagnostics(canvas: HTMLCanvasElement, scene: SolarSystemScene | undefined): void {
+  const diagnostics = scene?.openWorldsMoonDiagnostics();
+  if (diagnostics === undefined) return;
+  canvas.dataset.openworldsMoonActive = String(diagnostics.active);
+  canvas.dataset.openworldsMoonMeshes = String(diagnostics.visibleMeshCount);
+  canvas.dataset.openworldsMoonTriangles = String(diagnostics.visibleTriangleCount);
+  canvas.dataset.openworldsMoonLod = diagnostics.lodLevel;
+  canvas.dataset.openworldsMoonRadius = String(diagnostics.radiusSceneUnits);
+  canvas.dataset.openworldsMoonDistance = String(diagnostics.cameraDistanceSceneUnits);
 }
 
 function referenceOrbitInterval(
@@ -255,6 +267,14 @@ async function bootstrap(): Promise<void> {
 
   function updateDisplayExposure(): void {
     renderShell?.setDisplayExposure(scene?.displayExposureDiagnostics().displayExposure ?? 1);
+  }
+
+  function updateMoonZoomGuard(): void {
+    if (renderShell === undefined) return;
+    const moon = scene?.openWorldsMoonDiagnostics();
+    renderShell.controls.minDistance = focusId === MOON_ID && moon !== undefined && moon.radiusSceneUnits > 0
+      ? moon.radiusSceneUnits * 2.8
+      : 0;
   }
 
   function updateClockUi(): void {
@@ -559,6 +579,8 @@ async function bootstrap(): Promise<void> {
   const resize = (): void => {
     renderShell!.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
     scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
+    updateMoonZoomGuard();
+    publishMoonTerrainDiagnostics(canvas, scene);
     if (scene !== undefined) panel.setLightingDiagnostics(scene.lightingDiagnostics());
   };
   window.addEventListener("resize", resize);
@@ -585,6 +607,8 @@ async function bootstrap(): Promise<void> {
     updateCameraClipPlanes(camera, controls.target);
     guides?.updateForCamera(camera);
     scene?.updatePresentation(camera, canvas.clientHeight || window.innerHeight);
+    updateMoonZoomGuard();
+    publishMoonTerrainDiagnostics(canvas, scene);
     updateDisplayExposure();
     renderShell!.renderer.render(renderShell!.scene, camera);
   };
@@ -605,6 +629,8 @@ async function bootstrap(): Promise<void> {
     guides?.updateForCamera(renderShell!.camera);
     updateCameraClipPlanes(renderShell!.camera, renderShell!.controls.target);
     scene?.updatePresentation(renderShell!.camera, canvas.clientHeight || window.innerHeight);
+    updateMoonZoomGuard();
+    publishMoonTerrainDiagnostics(canvas, scene);
     if (scene !== undefined) panel.setLightingDiagnostics(scene.lightingDiagnostics());
     panel.setHierarchyDiagnostics(scene?.representationFor(EUROPA_ID));
     const latest = coordinator?.latestSnapshot();
@@ -759,7 +785,7 @@ async function bootstrap(): Promise<void> {
     },
     onSnapshot: (snapshot) => {
       startup.mark("first-state-frame-ready");
-      scene?.update(snapshot.value.states, snapshot.value.objectIds);
+      scene?.update(snapshot.value.states, snapshot.value.objectIds, snapshot.value.moonOrientation);
       if (scene !== undefined) panel.setPopulationDiagnostics(runtimeOverlay?.count ?? 0, scene.lodDiagnostics());
       panel.setHierarchyDiagnostics(scene?.representationFor(EUROPA_ID));
       if (recenterAfterState && snapshot.value.focusId === focusId) {
@@ -816,6 +842,7 @@ async function bootstrap(): Promise<void> {
         lastFrameDurationMs,
         averageFrameDurationMs: renderedFrameCount === 0 ? 0 : totalFrameDurationMs / renderedFrameCount,
       },
+      moonTerrain: scene!.openWorldsMoonDiagnostics(),
       orbits: (scene?.orbitGuideDiagnostics() ?? []).map((orbit) => ({
         objectId: orbit.objectId,
         kind: orbit.kind,
