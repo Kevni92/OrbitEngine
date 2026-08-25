@@ -5,6 +5,11 @@ interface BodyDiagnostics {
   readonly representation: string;
   readonly ndcX: number;
   readonly ndcY: number;
+  readonly renderWorldPosition: { readonly x: number; readonly y: number; readonly z: number };
+  readonly stellarDirections: readonly {
+    readonly emitterId: string;
+    readonly renderDirectionToEmitter: { readonly x: number; readonly y: number; readonly z: number };
+  }[];
   readonly atmosphere: {
     readonly projectedDiameterPixels: number;
   };
@@ -38,7 +43,18 @@ async function readDiagnostics(page: Page): Promise<RenderDiagnostics | undefine
 }
 
 async function setFocus(page: Page, objectId: string): Promise<BodyDiagnostics> {
-  await page.selectOption("#focus-select", objectId);
+  const select = page.locator("#focus-select");
+  if (await select.isVisible()) {
+    await select.selectOption(objectId);
+  } else {
+    await page.evaluate((nextObjectId) => {
+      const hiddenSelect = document.querySelector<HTMLSelectElement>("#focus-select");
+      if (hiddenSelect === null) throw new Error("Focus select is missing");
+      hiddenSelect.value = nextObjectId;
+      hiddenSelect.dispatchEvent(new Event("input", { bubbles: true }));
+      hiddenSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }, objectId);
+  }
   await expect.poll(async () => (await readDiagnostics(page))?.focusId).toBe(objectId);
   await expect.poll(async () => (await readDiagnostics(page))?.bodies.find((body) => body.objectId === objectId)?.representation).toBe("sphere");
   await page.waitForTimeout(100);
@@ -80,8 +96,9 @@ async function analyzeImage(
   dataUrl: string,
   bodyDiameterPixels: number,
   fixedCenter?: readonly [number, number],
+  sector?: "left" | "right",
 ): Promise<PixelMetrics> {
-  return page.evaluate(async ({ source, diameter, requestedCenter }) => {
+  return page.evaluate(async ({ source, diameter, requestedCenter, requestedSector }) => {
     const image = new Image();
     image.src = source;
     await image.decode();
@@ -156,6 +173,8 @@ async function analyzeImage(
       for (let x = minX; x <= maxX; x += 1) {
         const distance = Math.hypot(x - centerX, y - centerY);
         const offset = (y * canvas.width + x) * 4;
+        if (requestedSector === "left" && x >= centerX) continue;
+        if (requestedSector === "right" && x < centerX) continue;
         if (distance <= diskRadius) {
           disk[0] += pixels[offset] ?? 0;
           disk[1] += pixels[offset + 1] ?? 0;
@@ -182,7 +201,7 @@ async function analyzeImage(
       annulusLuminance: luminance(annulusMean),
       annulusPixelCount: annulusCount,
     };
-  }, { source: dataUrl, diameter: bodyDiameterPixels, requestedCenter: fixedCenter });
+  }, { source: dataUrl, diameter: bodyDiameterPixels, requestedCenter: fixedCenter, requestedSector: sector });
 }
 
 async function canvasCenterForBody(page: Page, body: BodyDiagnostics): Promise<readonly [number, number]> {
@@ -193,6 +212,41 @@ async function canvasCenterForBody(page: Page, body: BodyDiagnostics): Promise<r
       (1 - ndc.y) * element.height / 2,
     ] as const;
   }, { x: body.ndcX, y: body.ndcY });
+}
+
+async function orientFocusedBody(page: Page, body: BodyDiagnostics, geometry: "dayside" | "terminator"): Promise<BodyDiagnostics> {
+  const sunDirection = body.stellarDirections.find((direction) => direction.emitterId === "1000")?.renderDirectionToEmitter;
+  if (sunDirection === undefined) throw new Error(`Sun direction is missing for ${body.objectId}`);
+  const cameraDirection = geometry === "dayside"
+    ? sunDirection
+    : (() => {
+      const reference = Math.abs(sunDirection.z) < 0.9 ? { x: 0, y: 0, z: 1 } : { x: 1, y: 0, z: 0 };
+      const tangent = {
+        x: sunDirection.y * reference.z - sunDirection.z * reference.y,
+        y: sunDirection.z * reference.x - sunDirection.x * reference.z,
+        z: sunDirection.x * reference.y - sunDirection.y * reference.x,
+      };
+      const length = Math.hypot(tangent.x, tangent.y, tangent.z);
+      return { x: tangent.x / length, y: tangent.y / length, z: tangent.z / length };
+    })();
+  await page.evaluate(({ center, direction }) => {
+    const hook = (window as Window & {
+      __orbitDemoSetCameraFixture?: (fixture: {
+        readonly position: readonly [number, number, number];
+        readonly target: readonly [number, number, number];
+        readonly up: readonly [number, number, number];
+      }) => void;
+    }).__orbitDemoSetCameraFixture;
+    if (hook === undefined) throw new Error("Camera fixture hook is missing");
+    const distance = 0.06;
+    hook({
+      position: [center.x + direction.x * distance, center.y + direction.y * distance, center.z + direction.z * distance],
+      target: [center.x, center.y, center.z],
+      up: [0, 0, 1],
+    });
+  }, { center: body.renderWorldPosition, direction: cameraDirection });
+  await page.waitForTimeout(80);
+  return (await readDiagnostics(page))!.bodies.find((candidate) => candidate.objectId === body.objectId)!;
 }
 
 test("Earth focus produces a visible blue atmospheric limb in actual canvas pixels", async ({ page }) => {
@@ -224,4 +278,51 @@ test("Neptune Enhanced mode stays readable while its body-driven atmosphere rema
   expect(enhanced.diskLuminance).toBeGreaterThan(20);
   expect(enhanced.diskLuminance - physical.diskLuminance).toBeGreaterThan(15);
   expect(enhanced.annulus[2] - enhanced.annulus[0]).toBeGreaterThan(5);
+});
+
+test("bounded atmosphere radiance remains measurable across body-specific optics and terminator geometry", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+  await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
+  await setLightingMode(page, "physical");
+  await prepareCleanScene(page);
+
+  const earth = await setFocus(page, "1003");
+  const earthDayside = await orientFocusedBody(page, earth, "dayside");
+  const earthDaysideMetrics = await analyzeImage(page, await screenshotDataUrl(page), earthDayside.atmosphere.projectedDiameterPixels);
+  const earthTerminator = await orientFocusedBody(page, earth, "terminator");
+  const earthTerminatorImage = await screenshotDataUrl(page);
+  const earthTerminatorMetrics = await analyzeImage(page, earthTerminatorImage, earthTerminator.atmosphere.projectedDiameterPixels);
+  const earthTerminatorLeft = await analyzeImage(page, earthTerminatorImage, earthTerminator.atmosphere.projectedDiameterPixels, undefined, "left");
+  const earthTerminatorRight = await analyzeImage(page, earthTerminatorImage, earthTerminator.atmosphere.projectedDiameterPixels, undefined, "right");
+  console.log("[atmosphere-radiance] Earth", { earthDaysideMetrics, earthTerminatorMetrics, earthTerminatorLeft, earthTerminatorRight });
+  expect(earthDaysideMetrics.annulusLuminance).toBeGreaterThan(1);
+  expect(earthDaysideMetrics.annulus[2] - earthDaysideMetrics.annulus[0]).toBeGreaterThan(1);
+  expect(earthTerminatorMetrics.annulusLuminance).toBeGreaterThan(0.5);
+  const daysideRedBlueRatio = earthDaysideMetrics.annulus[0] / Math.max(earthDaysideMetrics.annulus[2], 1);
+  const tangentRedBlueRatio = earthTerminatorLeft.annulus[0] / Math.max(earthTerminatorLeft.annulus[2], 1);
+  const oppositeTerminatorRedBlueRatio = earthTerminatorRight.annulus[0] / Math.max(earthTerminatorRight.annulus[2], 1);
+  expect(tangentRedBlueRatio).toBeGreaterThan(daysideRedBlueRatio);
+  expect(tangentRedBlueRatio).toBeGreaterThan(oppositeTerminatorRedBlueRatio + 0.1);
+
+  const mars = await setFocus(page, "1005");
+  const marsDayside = await orientFocusedBody(page, mars, "dayside");
+  const marsMetrics = await analyzeImage(page, await screenshotDataUrl(page), marsDayside.atmosphere.projectedDiameterPixels);
+  console.log("[atmosphere-radiance] Mars", { marsMetrics });
+  expect(marsMetrics.annulusLuminance).toBeGreaterThan(0.5);
+  expect(marsMetrics.annulus[0] / Math.max(marsMetrics.annulus[2], 1))
+    .toBeGreaterThan(earthDaysideMetrics.annulus[0] / Math.max(earthDaysideMetrics.annulus[2], 1));
+
+  const venus = await setFocus(page, "1002");
+  const venusDayside = await orientFocusedBody(page, venus, "dayside");
+  const venusMetrics = await analyzeImage(page, await screenshotDataUrl(page), venusDayside.atmosphere.projectedDiameterPixels);
+  console.log("[atmosphere-radiance] Venus", { venusMetrics });
+  expect(venusMetrics.annulusLuminance).toBeGreaterThan(0.5);
+
+  const neptune = await setFocus(page, "1009");
+  const neptuneDayside = await orientFocusedBody(page, neptune, "dayside");
+  const neptuneMetrics = await analyzeImage(page, await screenshotDataUrl(page), neptuneDayside.atmosphere.projectedDiameterPixels);
+  console.log("[atmosphere-radiance] Neptune", { neptuneMetrics });
+  expect(neptuneMetrics.annulusLuminance).toBeGreaterThan(0.5);
+  expect(neptuneMetrics.annulus[2]).toBeGreaterThan(neptuneMetrics.annulus[0]);
 });

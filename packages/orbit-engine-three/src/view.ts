@@ -21,6 +21,7 @@ import { createAdaptiveSizingConfiguration, resolveBodySizing, type AdaptiveSizi
 import { OrbitPathRenderer, type OrbitPathRendererOptions, type OrbitPathRendererWorkDiagnostics, type OrbitPathStyle } from "./orbit-renderer.js";
 import { SelectionIndicator, type SelectionIndicatorOptions } from "./selection.js";
 import { applyTexturedBodyPoleAlignment } from "./texture-orientation.js";
+import { normalizeAtmosphereOpticsForTransport } from "./presentation/atmosphere-math.js";
 
 const MAX_LIGHTS = 4;
 const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
@@ -88,6 +89,7 @@ uniform vec3 uMieScattering;
 uniform vec3 uAbsorption;
 uniform float uReferenceVerticalOpticalDepth;
 uniform float uMieAnisotropy;
+uniform float uDisplayExposure;
 uniform int uLightCount;
 uniform vec3 uLightDirections[${MAX_LIGHTS}];
 uniform vec3 uLightColors[${MAX_LIGHTS}];
@@ -196,7 +198,6 @@ void main() {
     vec3 samplePosition = rayOrigin + rayDirection * distanceAlongRay;
     vec3 fromCenter = samplePosition - uBodyCenter;
     float radialDistance = length(fromCenter);
-    vec3 localNormal = normalize(fromCenter);
     float altitudeFraction = clamp((radialDistance - uBodyRadius) / presentationThickness, 0.0, 1.0);
     float altitudeScaleHeights = altitudeFraction * uPhysicalExtentScaleHeights;
     float density = exp(-altitudeScaleHeights);
@@ -205,16 +206,14 @@ void main() {
     float viewOpticalDepthAtSample = uReferenceVerticalOpticalDepth
       * (integratedDensityScaleHeights - sampleColumn * 0.5) / verticalIntegral;
     vec3 viewTransmittance = exp(-extinction * viewOpticalDepthAtSample);
-    float sampleOpticalDepth = uReferenceVerticalOpticalDepth * sampleColumn / verticalIntegral;
-    vec3 viewScatteringWeight = (vec3(1.0) - exp(-extinction * sampleOpticalDepth))
-      / max(extinction, vec3(EPSILON));
+    // The calibrated reference optical depth belongs to the view/light
+    // transmittance and compositing alpha. It must not also scale this source
+    // column or optically thin brightness becomes proportional to it twice.
+    vec3 viewScatteringWeight = vec3(sampleColumn / verticalIntegral);
 
     for (int lightIndex = 0; lightIndex < ${MAX_LIGHTS}; lightIndex++) {
       if (lightIndex >= uLightCount) break;
       vec3 lightDirection = normalize(uLightDirections[lightIndex]);
-      float lightZenithCosine = dot(localNormal, lightDirection);
-      float dayFactor = smoothstep(-0.18, 0.08, lightZenithCosine);
-      if (dayFactor <= 0.0001) continue;
       vec3 lightTransmittance = integrateLightTransmittance(samplePosition, lightDirection);
       float phaseCosine = dot(viewDirection, lightDirection);
       vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
@@ -224,7 +223,6 @@ void main() {
         * uLightIntensity[lightIndex]
         * lightTransmittance
         * viewTransmittance
-        * dayFactor
         * viewScatteringWeight;
     }
   }
@@ -236,7 +234,7 @@ void main() {
     : clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
   float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
   vec3 radiance = integratedScattering * DISPLAY_GAIN * limbGain;
-  gl_FragColor = vec4(radiance * alpha, alpha);
+  gl_FragColor = vec4(radiance * alpha * uDisplayExposure, alpha);
 }`;
 
 export interface SurfaceTextureResource {
@@ -541,6 +539,7 @@ function createAtmosphereMaterial(
   cameraPosition: RenderVector3,
 ): THREE.ShaderMaterial {
   const uniforms = createLightUniforms();
+  const transport = normalizeAtmosphereOpticsForTransport(optics);
   return new THREE.ShaderMaterial({
     uniforms: {
       ...uniforms,
@@ -549,11 +548,12 @@ function createAtmosphereMaterial(
       uBodyRadius: { value: bodyRadiusSceneUnits },
       uShellRadius: { value: shellRadiusSceneUnits },
       uPhysicalExtentScaleHeights: { value: 4 },
-      uRayleighScattering: { value: new THREE.Vector3(optics.rayleighScattering.r, optics.rayleighScattering.g, optics.rayleighScattering.b) },
-      uMieScattering: { value: new THREE.Vector3(optics.mieScattering.r, optics.mieScattering.g, optics.mieScattering.b) },
-      uAbsorption: { value: new THREE.Vector3(optics.absorption.r, optics.absorption.g, optics.absorption.b) },
+      uRayleighScattering: { value: new THREE.Vector3(transport.rayleighScattering.r, transport.rayleighScattering.g, transport.rayleighScattering.b) },
+      uMieScattering: { value: new THREE.Vector3(transport.mieScattering.r, transport.mieScattering.g, transport.mieScattering.b) },
+      uAbsorption: { value: new THREE.Vector3(transport.absorption.r, transport.absorption.g, transport.absorption.b) },
       uReferenceVerticalOpticalDepth: { value: optics.referenceVerticalOpticalDepth },
       uMieAnisotropy: { value: optics.mieAnisotropy },
+      uDisplayExposure: { value: 1 },
     },
     vertexShader: ATMOSPHERE_VERTEX_SHADER,
     fragmentShader: ATMOSPHERE_FRAGMENT_SHADER,
@@ -1013,8 +1013,10 @@ export class CelestialSystemView {
       if (resource.atmosphere !== undefined) {
         const optics = resolveAtmosphereOptics(body.appearance);
         if (optics === undefined) throw new Error(`atmosphere resource for ${body.objectId} has no resolved optics`);
+        const transport = normalizeAtmosphereOpticsForTransport(optics);
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.atmosphere.material, illumination, this.#renderSpace);
+        resource.atmosphere.material.uniforms.uDisplayExposure!.value = surfaceDisplayExposure(illumination);
         const presentedRadius = decision.sizing.presentedRadiusSceneUnits || sceneRadius(body, this.#renderSpace);
         const shellRadius = atmosphereShellRadius(body, this.#renderSpace, presentedRadius, decision.sizing.presentedRadiusPixels);
         resource.atmosphere.scale.setScalar(shellRadius);
@@ -1029,9 +1031,9 @@ export class CelestialSystemView {
         const absorption = resource.atmosphere.material.uniforms.uAbsorption!.value as THREE.Vector3;
         resource.atmosphere.material.uniforms.uBodyRadius!.value = presentedRadius;
         resource.atmosphere.material.uniforms.uShellRadius!.value = shellRadius;
-        rayleigh.set(optics.rayleighScattering.r, optics.rayleighScattering.g, optics.rayleighScattering.b);
-        mie.set(optics.mieScattering.r, optics.mieScattering.g, optics.mieScattering.b);
-        absorption.set(optics.absorption.r, optics.absorption.g, optics.absorption.b);
+        rayleigh.set(transport.rayleighScattering.r, transport.rayleighScattering.g, transport.rayleighScattering.b);
+        mie.set(transport.mieScattering.r, transport.mieScattering.g, transport.mieScattering.b);
+        absorption.set(transport.absorption.r, transport.absorption.g, transport.absorption.b);
         resource.atmosphere.material.uniforms.uReferenceVerticalOpticalDepth!.value = optics.referenceVerticalOpticalDepth;
         resource.atmosphere.material.uniforms.uMieAnisotropy!.value = optics.mieAnisotropy;
       }
