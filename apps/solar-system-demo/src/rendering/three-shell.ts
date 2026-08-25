@@ -93,7 +93,11 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   if (!isWebGL2Available(canvas)) throw new WebGL2UnavailableError();
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x050914);
+  // Space is a display reference, not scene radiance. A non-zero background
+  // would be amplified by the focused body's photographic exposure and turn
+  // blue/gray at Jupiter, Saturn and beyond. Keep it exactly black so focus
+  // exposure only changes actual rendered radiance.
+  scene.background = new THREE.Color(0x000000);
   const camera = new THREE.PerspectiveCamera(45, 1, DEFAULT_CAMERA_NEAR, DEFAULT_CAMERA_FAR);
   camera.position.set(0, -30, 18);
   camera.up.set(SCENE_UP_VECTOR.x, SCENE_UP_VECTOR.y, SCENE_UP_VECTOR.z);
