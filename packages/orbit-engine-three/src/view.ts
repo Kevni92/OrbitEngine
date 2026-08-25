@@ -28,6 +28,7 @@ const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
 const ATMOSPHERE_RIM_THICKNESS_PIXELS = 4;
 const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
 const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 25;
+const ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN = 6;
 const ATMOSPHERE_VIEW_SAMPLES = 8;
 const ATMOSPHERE_LIGHT_SAMPLES = 2;
 const SURFACE_VERTEX_SHADER = `
@@ -175,10 +176,12 @@ void main() {
   if (segmentEnd <= segmentStart) discard;
 
   vec2 bodyInterval = raySphereInterval(rayOrigin, rayDirection, uBodyRadius);
-  bool bodyOccludesShell = false;
+  bool bodyIntersectsView = false;
   if (bodyInterval.y >= bodyInterval.x && bodyInterval.x > segmentStart) {
+    // The opaque surface truncates the view path, but the integrated
+    // front-side atmosphere still has to be composited over that surface.
     segmentEnd = min(segmentEnd, bodyInterval.x);
-    bodyOccludesShell = true;
+    bodyIntersectsView = true;
   }
   if (segmentEnd <= segmentStart) discard;
 
@@ -229,11 +232,15 @@ void main() {
 
   float densityPath = integratedDensityScaleHeights / verticalIntegral;
   float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
-  float alpha = bodyOccludesShell
-    ? 0.0
-    : clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
+  // A body hit only limits the integrated path to the front shell. Its
+  // atmosphere remains visible over the already-rendered opaque surface.
+  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
   float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
-  vec3 radiance = integratedScattering * DISPLAY_GAIN * limbGain;
+  // The shell rim keeps its calibrated display gain. Over an opaque body,
+  // use the bounded surface-composite gain so front-side scattering remains
+  // visible without washing out the surface presentation.
+  float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;
+  vec3 radiance = integratedScattering * displayGain * limbGain;
   gl_FragColor = vec4(radiance * alpha * uDisplayExposure, alpha);
 }`;
 

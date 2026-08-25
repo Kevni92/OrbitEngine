@@ -28,6 +28,9 @@ interface PixelMetrics {
   readonly center: readonly [number, number];
   readonly disk: readonly [number, number, number];
   readonly diskLuminance: number;
+  readonly insideLimb: readonly [number, number, number];
+  readonly insideLimbLuminance: number;
+  readonly insideLimbPixelCount: number;
   readonly annulus: readonly [number, number, number];
   readonly annulusLuminance: number;
   readonly annulusPixelCount: number;
@@ -159,11 +162,15 @@ async function analyzeImage(
 
     const bodyRadius = diameter / 2;
     const diskRadius = bodyRadius * 0.55;
+    const insideLimbInner = bodyRadius * 0.72;
+    const insideLimbOuter = bodyRadius * 0.90;
     const annulusInner = bodyRadius + 0.75;
     const annulusOuter = bodyRadius + 6;
     const disk: [number, number, number] = [0, 0, 0];
+    const insideLimb: [number, number, number] = [0, 0, 0];
     const annulus: [number, number, number] = [0, 0, 0];
     let diskCount = 0;
+    let insideLimbCount = 0;
     let annulusCount = 0;
     const minX = Math.max(0, Math.floor(centerX - annulusOuter - 2));
     const maxX = Math.min(canvas.width - 1, Math.ceil(centerX + annulusOuter + 2));
@@ -180,6 +187,11 @@ async function analyzeImage(
           disk[1] += pixels[offset + 1] ?? 0;
           disk[2] += pixels[offset + 2] ?? 0;
           diskCount += 1;
+        } else if (distance >= insideLimbInner && distance <= insideLimbOuter) {
+          insideLimb[0] += pixels[offset] ?? 0;
+          insideLimb[1] += pixels[offset + 1] ?? 0;
+          insideLimb[2] += pixels[offset + 2] ?? 0;
+          insideLimbCount += 1;
         } else if (distance >= annulusInner && distance <= annulusOuter) {
           annulus[0] += pixels[offset] ?? 0;
           annulus[1] += pixels[offset + 1] ?? 0;
@@ -188,8 +200,9 @@ async function analyzeImage(
         }
       }
     }
-    if (diskCount === 0 || annulusCount === 0) throw new Error("Insufficient screenshot samples");
+    if (diskCount === 0 || insideLimbCount === 0 || annulusCount === 0) throw new Error("Insufficient screenshot samples");
     const diskMean: [number, number, number] = [disk[0] / diskCount, disk[1] / diskCount, disk[2] / diskCount];
+    const insideLimbMean: [number, number, number] = [insideLimb[0] / insideLimbCount, insideLimb[1] / insideLimbCount, insideLimb[2] / insideLimbCount];
     const annulusMean: [number, number, number] = [annulus[0] / annulusCount, annulus[1] / annulusCount, annulus[2] / annulusCount];
     const luminance = (rgb: readonly [number, number, number]): number => rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
     return {
@@ -197,6 +210,9 @@ async function analyzeImage(
       center: [centerX, centerY] as [number, number],
       disk: diskMean,
       diskLuminance: luminance(diskMean),
+      insideLimb: insideLimbMean,
+      insideLimbLuminance: luminance(insideLimbMean),
+      insideLimbPixelCount: insideLimbCount,
       annulus: annulusMean,
       annulusLuminance: luminance(annulusMean),
       annulusPixelCount: annulusCount,
@@ -259,8 +275,12 @@ test("Earth focus produces a visible blue atmospheric limb in actual canvas pixe
   const limbBlueBias = metrics.annulus[2] - metrics.annulus[0];
   expect(metrics.diskLuminance).toBeGreaterThan(25);
   expect(metrics.annulusPixelCount).toBeGreaterThan(100);
-  expect(metrics.annulus[2] - metrics.background[2]).toBeGreaterThan(5);
+  expect(metrics.annulus[2] - metrics.background[2]).toBeGreaterThan(40);
   expect(limbBlueBias).toBeGreaterThan(5);
+  expect(metrics.insideLimbPixelCount).toBeGreaterThan(500);
+  expect(metrics.insideLimbLuminance - metrics.diskLuminance).toBeGreaterThan(30);
+  expect(metrics.insideLimb[2] - metrics.insideLimb[0])
+    .toBeGreaterThan(metrics.disk[2] - metrics.disk[0] + 5);
 });
 
 test("Neptune Enhanced mode stays readable while its body-driven atmosphere remains blue", async ({ page }) => {
@@ -277,7 +297,9 @@ test("Neptune Enhanced mode stays readable while its body-driven atmosphere rema
   const physical = await analyzeImage(page, physicalImage, neptune.atmosphere.projectedDiameterPixels, neptuneCenter);
   expect(enhanced.diskLuminance).toBeGreaterThan(20);
   expect(enhanced.diskLuminance - physical.diskLuminance).toBeGreaterThan(15);
-  expect(enhanced.annulus[2] - enhanced.annulus[0]).toBeGreaterThan(5);
+  const backgroundLuminance = enhanced.background[0] * 0.2126 + enhanced.background[1] * 0.7152 + enhanced.background[2] * 0.0722;
+  expect(enhanced.annulusLuminance - backgroundLuminance).toBeGreaterThan(25);
+  expect(enhanced.annulus[2] / Math.max(enhanced.annulus[0], 1)).toBeGreaterThan(1.03);
 });
 
 test("bounded atmosphere radiance remains measurable across body-specific optics and terminator geometry", async ({ page }) => {
@@ -296,33 +318,34 @@ test("bounded atmosphere radiance remains measurable across body-specific optics
   const earthTerminatorLeft = await analyzeImage(page, earthTerminatorImage, earthTerminator.atmosphere.projectedDiameterPixels, undefined, "left");
   const earthTerminatorRight = await analyzeImage(page, earthTerminatorImage, earthTerminator.atmosphere.projectedDiameterPixels, undefined, "right");
   console.log("[atmosphere-radiance] Earth", { earthDaysideMetrics, earthTerminatorMetrics, earthTerminatorLeft, earthTerminatorRight });
-  expect(earthDaysideMetrics.annulusLuminance).toBeGreaterThan(1);
-  expect(earthDaysideMetrics.annulus[2] - earthDaysideMetrics.annulus[0]).toBeGreaterThan(1);
-  expect(earthTerminatorMetrics.annulusLuminance).toBeGreaterThan(0.5);
-  const daysideRedBlueRatio = earthDaysideMetrics.annulus[0] / Math.max(earthDaysideMetrics.annulus[2], 1);
-  const tangentRedBlueRatio = earthTerminatorLeft.annulus[0] / Math.max(earthTerminatorLeft.annulus[2], 1);
-  const oppositeTerminatorRedBlueRatio = earthTerminatorRight.annulus[0] / Math.max(earthTerminatorRight.annulus[2], 1);
-  expect(tangentRedBlueRatio).toBeGreaterThan(daysideRedBlueRatio);
-  expect(tangentRedBlueRatio).toBeGreaterThan(oppositeTerminatorRedBlueRatio + 0.1);
+  expect(earthDaysideMetrics.annulusLuminance - earthDaysideMetrics.background.reduce((sum, channel) => sum + channel, 0) / 3).toBeGreaterThan(90);
+  expect(earthDaysideMetrics.insideLimbPixelCount).toBeGreaterThan(2_000);
+  expect(earthDaysideMetrics.insideLimbLuminance - earthDaysideMetrics.diskLuminance).toBeGreaterThan(30);
+  expect(earthTerminatorMetrics.insideLimbLuminance - earthTerminatorMetrics.diskLuminance).toBeGreaterThan(20);
+  expect(earthTerminatorRight.insideLimbLuminance - earthTerminatorRight.diskLuminance).toBeGreaterThan(30);
+  expect(earthTerminatorRight.insideLimb[2] - earthTerminatorRight.insideLimb[0])
+    .toBeGreaterThan(earthTerminatorRight.disk[2] - earthTerminatorRight.disk[0] + 10);
 
   const mars = await setFocus(page, "1005");
   const marsDayside = await orientFocusedBody(page, mars, "dayside");
   const marsMetrics = await analyzeImage(page, await screenshotDataUrl(page), marsDayside.atmosphere.projectedDiameterPixels);
   console.log("[atmosphere-radiance] Mars", { marsMetrics });
-  expect(marsMetrics.annulusLuminance).toBeGreaterThan(0.5);
-  expect(marsMetrics.annulus[0] / Math.max(marsMetrics.annulus[2], 1))
-    .toBeGreaterThan(earthDaysideMetrics.annulus[0] / Math.max(earthDaysideMetrics.annulus[2], 1));
+  expect(marsMetrics.annulusLuminance - marsMetrics.background.reduce((sum, channel) => sum + channel, 0) / 3).toBeGreaterThan(50);
+  expect(marsMetrics.insideLimbLuminance - marsMetrics.diskLuminance).toBeGreaterThan(20);
+  expect(marsMetrics.insideLimb[0] - marsMetrics.insideLimb[2])
+    .toBeGreaterThan(earthDaysideMetrics.insideLimb[0] - earthDaysideMetrics.insideLimb[2] - 10);
 
   const venus = await setFocus(page, "1002");
   const venusDayside = await orientFocusedBody(page, venus, "dayside");
   const venusMetrics = await analyzeImage(page, await screenshotDataUrl(page), venusDayside.atmosphere.projectedDiameterPixels);
   console.log("[atmosphere-radiance] Venus", { venusMetrics });
-  expect(venusMetrics.annulusLuminance).toBeGreaterThan(0.5);
+  const venusBackgroundLuminance = venusMetrics.background[0] * 0.2126 + venusMetrics.background[1] * 0.7152 + venusMetrics.background[2] * 0.0722;
+  expect(venusMetrics.annulusLuminance - venusBackgroundLuminance).toBeGreaterThan(20);
 
   const neptune = await setFocus(page, "1009");
   const neptuneDayside = await orientFocusedBody(page, neptune, "dayside");
   const neptuneMetrics = await analyzeImage(page, await screenshotDataUrl(page), neptuneDayside.atmosphere.projectedDiameterPixels);
   console.log("[atmosphere-radiance] Neptune", { neptuneMetrics });
-  expect(neptuneMetrics.annulusLuminance).toBeGreaterThan(0.5);
-  expect(neptuneMetrics.annulus[2]).toBeGreaterThan(neptuneMetrics.annulus[0]);
+  const neptuneBackgroundLuminance = neptuneMetrics.background[0] * 0.2126 + neptuneMetrics.background[1] * 0.7152 + neptuneMetrics.background[2] * 0.0722;
+  expect(neptuneMetrics.insideLimbLuminance - neptuneBackgroundLuminance).toBeGreaterThan(60);
 });

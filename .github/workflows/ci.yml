@@ -160,6 +160,29 @@ jobs:
       # 15 large-dataset pages here exhausts the hosted runner over time.
       - run: pnpm --filter orbit-engine-solar-system-demo exec playwright test tests/production-oep.smoke.spec.ts
 
+  demo-atmosphere-render:
+    name: Solar-system atmosphere render regression
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSCRIPTEN_VERSION }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:wasm
+      - run: pnpm demo:build
+      - run: pnpm --filter orbit-engine-solar-system-demo exec playwright install --with-deps chromium
+      # Keep this bounded to the renderer regression suite; the full demo
+      # smoke suite remains a local validation job because of its large data pack.
+      - run: pnpm --filter orbit-engine-solar-system-demo exec playwright test tests/render-output.smoke.spec.ts
+
   three-package:
     name: orbit-engine-three package and peer smoke
     runs-on: ubuntu-22.04

@@ -146,6 +146,9 @@ test("view creates composed star, planet, moon, and bounded atmosphere resources
   assert.match(atmosphereShader, /vec3 viewScatteringWeight = vec3\(sampleColumn \/ verticalIntegral\)/);
   assert.match(atmosphereShader, /integrateLightTransmittance\(samplePosition, lightDirection\)/);
   assert.doesNotMatch(atmosphereShader, /dayFactor/);
+  assert.match(atmosphereShader, /bodyIntersectsView = true/);
+  assert.match(atmosphereShader, /float displayGain = bodyIntersectsView/);
+  assert.doesNotMatch(atmosphereShader, /bodyIntersectsView\s*\?\s*0\.0/);
   assert.match(atmosphereShader, /radiance \* alpha \* uDisplayExposure/);
   assert.ok(earthAnchor.children[1].material.uniforms.uDisplayExposure.value > 0);
   assert.equal((atmosphereShader.match(/lightSampleIndex = 0; lightSampleIndex < LIGHT_SAMPLES/g) ?? []).length, 1);
