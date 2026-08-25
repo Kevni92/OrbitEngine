@@ -40,6 +40,8 @@ export interface CelestialRenderSnapshot extends CelestialRenderSnapshotInput {
   readonly orbitPaths?: readonly OrbitPathSnapshot[];
 }
 
+const normalizedSnapshots = new WeakSet<object>();
+
 function fail(message: string): never {
   throw new RangeError(`Render snapshot: ${message}`);
 }
@@ -104,6 +106,9 @@ function stableFingerprint(value: unknown): string {
 }
 
 export function createCelestialRenderSnapshot(input: CelestialRenderSnapshotInput): CelestialRenderSnapshot {
+  if (typeof input === "object" && input !== null && normalizedSnapshots.has(input)) {
+    return input as CelestialRenderSnapshot;
+  }
   validateInstant(input.instant);
   validateOrigin(input.origin);
   const ids = new Set<ObjectId>();
@@ -133,8 +138,17 @@ export function createCelestialRenderSnapshot(input: CelestialRenderSnapshotInpu
     });
   }
   const revision = input.revision;
-  const fingerprint = stableFingerprint({ instant, origin, bodies, orbitPaths, revision });
-  return Object.freeze({
+  const fingerprint = stableFingerprint({
+    instant,
+    origin,
+    bodies,
+    // Orbit paths carry their own content fingerprint. Reusing that compact
+    // identity keeps a new physical body snapshot from serializing every
+    // unchanged path sample again.
+    orbitPaths: orbitPaths?.map((path) => path.fingerprint),
+    revision,
+  });
+  const snapshot = Object.freeze({
     instant,
     origin,
     bodies,
@@ -142,4 +156,6 @@ export function createCelestialRenderSnapshot(input: CelestialRenderSnapshotInpu
     ...(revision === undefined ? {} : { revision }),
     fingerprint,
   });
+  normalizedSnapshots.add(snapshot);
+  return snapshot;
 }

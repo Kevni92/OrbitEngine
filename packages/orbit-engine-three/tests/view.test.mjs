@@ -80,6 +80,7 @@ test("snapshot and render-space conversion are immutable and origin-relative", (
   assert.equal(Object.isFrozen(value.bodies), true);
   assert.equal(Object.isFrozen(value.bodies[0].positionRelativeToOriginMeters), true);
   assert.equal(value.origin.frameId, "test:ssb-origin");
+  assert.strictEqual(createCelestialRenderSnapshot(value), value);
   assert.notEqual(snapshot([body(EARTH_ID, { x: 1e9, y: 2e9, z: 3e9 })]).fingerprint, snapshot([body(EARTH_ID, { x: 1e9, y: 2e9, z: 4e9 })]).fingerprint);
   assert.throws(() => snapshot([body(EARTH_ID, { x: 0, y: 0, z: 0 }), body(EARTH_ID, { x: 1, y: 0, z: 0 })]), /duplicate objectId/);
 });
@@ -274,5 +275,6 @@ test("view renders supplied orbit paths, updates selection indication, and prese
   });
   assert.equal(second.committed, true);
   assert.strictEqual(view.root.getObjectByName(`Orbit ${childId}`), orbitLayer.getObjectByName(`Orbit ${childId}`));
+  assert.deepEqual(second.diagnostics.orbitWork, result.diagnostics.orbitWork);
   view.dispose();
 });

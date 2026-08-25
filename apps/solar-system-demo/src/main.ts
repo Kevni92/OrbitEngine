@@ -8,6 +8,7 @@ import {
 } from "./rendering/three-shell.js";
 import { SceneGuides, DEFAULT_SCENE_GUIDE_SETTINGS } from "./rendering/scene-guides.js";
 import { SolarSystemScene, type AtmosphereDiagnostics, type StellarDirectionDiagnostics } from "./rendering/solar-system-scene.js";
+import { isPointerClick, type PointerCoordinates } from "./rendering/pointer-selection.js";
 import type { DisplayExposureDiagnostics, LightingMode } from "orbit-engine-three/presentation";
 import { lightingModeDiagnostics } from "orbit-engine-three/presentation";
 import { createOrbitEngineSnapshotSource, type OrbitEngineSnapshotSource } from "orbit-engine-three";
@@ -19,6 +20,7 @@ import { EARTH_ID, EUROPA_ID, MOON_ID, SCENARIO_ROOT_FRAME, SUN_ID } from "./sce
 import { SimulationClock } from "./simulation/simulation-clock.js";
 import { StateQueryCoordinator } from "./simulation/state-query-coordinator.js";
 import { StartupInstrumentation, type StartupDiagnostics } from "./simulation/startup-instrumentation.js";
+import { orbitInterval, resolveOrbitVisualizationDefinition } from "./simulation/orbit-visualization.js";
 import { CelestialBrowser } from "./ui/celestial-browser.js";
 import { DemoPanel } from "./ui/demo-panel.js";
 import { ResponsiveSurfaceManager } from "./ui/responsive-surfaces.js";
@@ -141,26 +143,6 @@ function stateVector(state: ReturnType<OrbitEngine["stateAt"]>): readonly number
     state.velocity.y,
     state.velocity.z,
   ];
-}
-
-function referenceOrbitInterval(
-  scenario: SolarSystemScenario,
-  entry: SolarSystemScenario["bodies"][number],
-  anchor: ReturnType<typeof simulationInstant>,
-): { readonly start: ReturnType<typeof simulationInstant>; readonly end: ReturnType<typeof simulationInstant>; readonly sampleCount: number; readonly closedReferenceOrbit: boolean } {
-  const definition = entry.definition.propagation.orbitVisualization ?? {
-    sampleSpanSeconds: 31_557_600,
-    sampleCount: 128,
-    closedReferenceOrbit: false,
-  };
-  const validityEnd = scenario.validity.end;
-  if (validityEnd === undefined || compareSimulationInstants(anchor, scenario.validity.start) < 0 || compareSimulationInstants(anchor, validityEnd) >= 0) {
-    throw new RangeError("Orbit visualization anchor is outside the supported scenario interval");
-  }
-  const candidateEnd = simulationInstant(anchor.seconds + definition.sampleSpanSeconds, anchor.nanoseconds);
-  const end = compareSimulationInstants(candidateEnd, validityEnd) < 0 ? candidateEnd : validityEnd;
-  if (compareSimulationInstants(anchor, end) >= 0) throw new RangeError("Orbit visualization interval is empty");
-  return Object.freeze({ start: anchor, end, sampleCount: definition.sampleCount, closedReferenceOrbit: definition.closedReferenceOrbit });
 }
 
 function validateEclipseRegression(engine: OrbitEngine, scenario: SolarSystemScenario): EclipseRegressionDiagnostics {
@@ -318,7 +300,7 @@ async function bootstrap(): Promise<void> {
       scene?.clearPath(previousSelectedId);
     }
     const selectedEntry = stateSource?.bodyFor(selectedId);
-    if (selectedEntry?.definition.type === ObjectType.asteroid) {
+    if (selectedEntry?.definition.centralBody !== undefined) {
       sampleReferenceOrbit(selectedEntry);
     }
     if (scene?.selectedOrbitActive()) {
@@ -359,14 +341,21 @@ async function bootstrap(): Promise<void> {
     try {
       const parentId = entry.definition.centralBody;
       if (parentId === undefined) return false;
-      const interval = referenceOrbitInterval(scenario, entry, clock.currentInstant());
+      const anchorInstant = clock.currentInstant();
+      const visualization = resolveOrbitVisualizationDefinition({
+        scenario,
+        body: entry,
+        anchorInstant,
+        stateAt: (objectIdValue, centralBodyId, target, outputFrame) => engine!.relativeStateAt(objectIdValue, centralBodyId, target, outputFrame),
+      });
+      const interval = orbitInterval(scenario, visualization, anchorInstant);
       const path = snapshotSource.sampleOrbitPath({
         objectId: entry.definition.id,
         parentId,
         frame: scenario.rootFrame,
         interval,
-        sampleCount: interval.sampleCount,
-        closedReferenceOrbit: interval.closedReferenceOrbit,
+        sampleCount: visualization.sampleCount,
+        closedReferenceOrbit: visualization.closedReferenceOrbit,
       });
       scene.setPath(path);
       return true;
@@ -422,6 +411,8 @@ async function bootstrap(): Promise<void> {
     onFocusChange: (objectIdValue) => {
       pendingNavigation = undefined;
       focusId = objectIdValue;
+      const focusEntry = stateSource?.bodyFor(focusId);
+      if (focusEntry?.definition.centralBody !== undefined) sampleReferenceOrbit(focusEntry);
       requestCurrentState(true);
     },
     onSelectedChange: (objectIdValue) => {
@@ -589,7 +580,31 @@ async function bootstrap(): Promise<void> {
     renderShell!.renderer.render(renderShell!.scene, camera);
   };
 
+  let pointerDown: (PointerCoordinates & { readonly pointerId: number }) | undefined;
+  let suppressNextCanvasClick = false;
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    pointerDown = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY };
+    suppressNextCanvasClick = false;
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (pointerDown?.pointerId !== event.pointerId) return;
+    if (!isPointerClick(pointerDown, event)) suppressNextCanvasClick = true;
+  });
+  canvas.addEventListener("pointerup", (event) => {
+    if (pointerDown?.pointerId !== event.pointerId) return;
+    if (!isPointerClick(pointerDown, event)) suppressNextCanvasClick = true;
+    pointerDown = undefined;
+  });
+  canvas.addEventListener("pointercancel", (event) => {
+    if (pointerDown?.pointerId !== event.pointerId) return;
+    pointerDown = undefined;
+    suppressNextCanvasClick = true;
+  });
   canvas.addEventListener("click", (event) => {
+    const suppressClick = suppressNextCanvasClick;
+    suppressNextCanvasClick = false;
+    if (event.button !== 0 || suppressClick) return;
     if (scene === undefined || renderShell === undefined) return;
     const bounds = canvas.getBoundingClientRect();
     const x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;

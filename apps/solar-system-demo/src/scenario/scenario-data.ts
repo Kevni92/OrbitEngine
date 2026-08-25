@@ -110,7 +110,10 @@ export const PRODUCTION_REFERENCE_BINDINGS: ReadonlyMap<ObjectId, ProductionRefe
 ]);
 
 function orbitVisualization(sampleSpanSeconds: number): OrbitVisualizationDefinition {
-  return Object.freeze({ sampleSpanSeconds, sampleCount: 128, closedReferenceOrbit: true });
+  // Production reference paths are sampled from the authoritative engine. A
+  // denser presentation path keeps large, camera-filling orbits visibly round
+  // without adding any renderer-local propagation or interpolation.
+  return Object.freeze({ sampleSpanSeconds, sampleCount: 256, closedReferenceOrbit: true });
 }
 
 export type ScenarioBodyDefinition = CelestialBodyDefinition;
@@ -747,7 +750,7 @@ export const SCENARIO_BODIES: readonly ScenarioBodyDefinition[] = Object.freeze(
     { mass: 7.342e22, mu: 4.9048695e12, physicalRadius: 1_737_400 },
     anchor(294_005_336.79215735, 247_637_278.97416842, 0, -656.0090681046934, 778.8414079083318, 0, EARTH_CENTERED_FRAME),
     EARTH_ID,
-    orbitVisualization(2_360_000),
+    orbitVisualization(2_371_844),
   ),
   horizonsBody(
     PHOBOS_ID, "Phobos", ObjectType.moon, 0x8f817c, MARS_CENTERED_FRAME, "11",

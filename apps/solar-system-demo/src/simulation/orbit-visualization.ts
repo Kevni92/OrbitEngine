@@ -30,6 +30,8 @@ export interface OrbitVisualizationRequest {
   readonly anchorInstant?: SimulationInstant;
 }
 
+export type OrbitVisualizationResolutionRequest = Omit<OrbitVisualizationRequest, "cache">;
+
 export function orbitInterval(
   scenario: SolarSystemScenario,
   definition: OrbitVisualizationDefinition,
@@ -66,7 +68,7 @@ function estimateBoundOrbitPeriodSeconds(
   return Math.max(1, Math.round(period));
 }
 
-function fallbackOrbitVisualization(request: OrbitVisualizationRequest, centralBodyId: ObjectId): OrbitVisualizationDefinition {
+function fallbackOrbitVisualization(request: OrbitVisualizationResolutionRequest, centralBodyId: ObjectId): OrbitVisualizationDefinition {
   const centralBody = request.scenario.bodyById.get(centralBodyId);
   const centralMu = centralBody?.record.properties.mu;
   if (centralMu !== undefined) {
@@ -93,11 +95,26 @@ function fallbackOrbitVisualization(request: OrbitVisualizationRequest, centralB
   });
 }
 
+/**
+ * Resolve only the visualization interval metadata. Explicit scenario data is
+ * authoritative; the one-year open interval is a bounded generic fallback for
+ * states that are not a valid bound orbit or lack a central-body mu.
+ */
+export function resolveOrbitVisualizationDefinition(
+  request: OrbitVisualizationResolutionRequest,
+): OrbitVisualizationDefinition {
+  const centralBodyId = request.body.definition.centralBody;
+  if (centralBodyId === undefined) {
+    throw new RangeError(`Body ${request.body.definition.id} has no central body`);
+  }
+  return request.body.definition.propagation.orbitVisualization
+    ?? fallbackOrbitVisualization(request, centralBodyId);
+}
+
 export function createOrbitPath(request: OrbitVisualizationRequest): OrbitPath | undefined {
   const centralBodyId = request.body.definition.centralBody;
   if (centralBodyId === undefined) return undefined;
-  const visualization = request.body.definition.propagation.orbitVisualization
-    ?? fallbackOrbitVisualization(request, centralBodyId);
+  const visualization = resolveOrbitVisualizationDefinition(request);
   const interval = orbitInterval(request.scenario, visualization, request.anchorInstant);
   return request.cache.getOrCreate({
     objectId: request.body.definition.id,
