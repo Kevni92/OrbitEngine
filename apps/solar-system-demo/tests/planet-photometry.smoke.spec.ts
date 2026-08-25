@@ -137,12 +137,17 @@ async function measure(page: Page, body: BodyDiagnostics): Promise<RegionMetrics
     const centerX = (input.ndcX + 1) * canvas.width / 2;
     const centerY = (1 - input.ndcY) * canvas.height / 2;
     const bodyRadius = Math.max(input.projectedDiameterPixels / 2, 18);
-    const diskRadius = bodyRadius * 0.56;
-    // SelectionIndicator occupies bodyRadius + 2 .. +3.25 px. Sample the
-    // atmosphere/bloom strictly outside that UI affordance so a white
-    // selection ring can neither fake a halo nor fail an airless body.
-    const annulusInner = bodyRadius + 4;
-    const annulusOuter = bodyRadius + 10;
+
+    // Measure most of the visible disk rather than only the central core.
+    // This catches clipped limbs and overly dark presentation while leaving a
+    // small edge margin for atmosphere compositing.
+    const diskRadius = bodyRadius * 0.72;
+
+    // The detached selection arcs now start 14 px outside the body. The halo
+    // probe can therefore stay close to the physical limb and measure the
+    // atmosphere/bloom where it is actually visible, without UI contamination.
+    const annulusInner = bodyRadius + 1;
+    const annulusOuter = bodyRadius + 8;
     const corners = [[4, 4], [canvas.width - 5, 4], [4, canvas.height - 5], [canvas.width - 5, canvas.height - 5]] as const;
     const background = [0, 0, 0];
     for (const [x, y] of corners) {
