@@ -26,12 +26,13 @@ const MAX_LIGHTS = 4;
 const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
 const ATMOSPHERE_RIM_THICKNESS_PIXELS = 4;
 const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
+const DEFAULT_TEXTURE_REFERENCE_LUMINANCE = 0.18;
 // Presentation gains stay shared across every body. Semantic optics determine
 // body-specific color/strength; the renderer must not contain planet-specific
 // gain branches or a different photometric scale for cloud-deck planets.
 const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 3.5;
-const ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN = 0.55;
-const SURFACE_RADIANCE_DISPLAY_GAIN = 2.0;
+const ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN = 0.38;
+const SURFACE_RADIANCE_DISPLAY_GAIN = 1.6;
 const ATMOSPHERE_VIEW_SAMPLES = 8;
 const ATMOSPHERE_LIGHT_SAMPLES = 2;
 const SURFACE_VERTEX_SHADER = `
@@ -49,6 +50,7 @@ uniform vec3 uEmissionColor;
 uniform float uEmissionStrength;
 uniform float uInspectionFill;
 uniform float uSurfaceRadianceDisplayGain;
+uniform float uTextureReferenceLuminance;
 uniform bool uUseTexture;
 uniform sampler2D uSurfaceMap;
 uniform int uLightCount;
@@ -64,12 +66,13 @@ void main() {
     vec3 textureColor = texture2D(uSurfaceMap, vUv).rgb;
     float textureLuminance = max(dot(textureColor, LINEAR_LUMINANCE), 0.0001);
     float semanticLuminance = max(dot(uBaseColor, LINEAR_LUMINANCE), 0.0001);
-    // Source texture exposure is asset-dependent and must not become the
-    // body's absolute reflectance. Preserve bounded chroma/detail while the
-    // semantic appearance contract owns disk luminance.
-    vec3 textureChroma = clamp(textureColor / textureLuminance, vec3(0.35), vec3(2.85));
-    float textureDetail = mix(0.72, 1.28, smoothstep(0.03, 0.85, textureLuminance));
-    base = textureChroma * semanticLuminance * textureDetail;
+    float referenceLuminance = max(uTextureReferenceLuminance, 0.01);
+    // Normalize only the asset-wide exposure, not each texel. This keeps the
+    // semantic appearance contract in charge of mean reflectance while
+    // preserving real local texture contrast (oceans/land, bands, craters).
+    vec3 textureChroma = clamp(textureColor / textureLuminance, vec3(0.25), vec3(4.0));
+    float relativeLuminance = clamp(textureLuminance / referenceLuminance, 0.25, 2.25);
+    base = textureChroma * semanticLuminance * relativeLuminance;
   }
   vec3 incident = vec3(0.0);
   vec3 normal = normalize(vWorldNormal);
@@ -116,7 +119,7 @@ const int LIGHT_SAMPLES = ${ATMOSPHERE_LIGHT_SAMPLES};
 const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
-const float LIMB_DISPLAY_GAIN = 1.7;
+const float LIMB_DISPLAY_GAIN = 1.35;
 
 float rayleighPhase(float cosine) {
   return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
@@ -254,8 +257,8 @@ void main() {
   // atmosphere remains visible over the already-rendered opaque surface.
   float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
   float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
-  // Keep the physically integrated limb bright enough to bloom, while the
-  // front-side contribution over an opaque surface stays bounded.
+  // Keep the physical shell readable without turning it into a hard outline;
+  // the selective post-process owns the softer low-frequency exterior glow.
   float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;
   vec3 radiance = integratedScattering * displayGain * limbGain;
   gl_FragColor = vec4(radiance * alpha, alpha);
@@ -379,8 +382,6 @@ function cameraProjectionMetrics(position: RenderVector3, camera: THREE.Camera, 
   const insideBody = physicalRadiusSceneUnits > 0 && cameraWorldPosition.distanceTo(worldPosition) <= physicalRadiusSceneUnits;
   const distance = cameraWorldPosition.distanceTo(worldPosition);
   const cameraDepth = perspective ? (insideBody ? physicalRadiusSceneUnits : -cameraSpace.z) : 1;
-  // Physical marker sizing remains useful for bodies behind the camera, but
-  // keeps the true view-space depth whenever the body is in front of it.
   const depth = perspective
     ? Math.max(insideBody || cameraDepth <= 0 ? (insideBody ? physicalRadiusSceneUnits : distance) : cameraDepth, Number.EPSILON)
     : 1;
@@ -487,6 +488,50 @@ function createLightUniforms(): Record<string, THREE.IUniform> {
   };
 }
 
+function srgbChannelToLinear(value: number): number {
+  return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+}
+
+function estimateTextureReferenceLuminance(texture: THREE.Texture | undefined): number {
+  if (texture === undefined || typeof document === "undefined") return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+  const image = texture.image as (CanvasImageSource & {
+    readonly width?: number;
+    readonly height?: number;
+    readonly naturalWidth?: number;
+    readonly naturalHeight?: number;
+  }) | undefined;
+  if (image === undefined) return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+  const sourceWidth = image.naturalWidth ?? image.width ?? 0;
+  const sourceHeight = image.naturalHeight ?? image.height ?? 0;
+  if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0) {
+    return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 48;
+    canvas.height = 24;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (context === null) return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let total = 0;
+    let weight = 0;
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      const alpha = (pixels[offset + 3] ?? 255) / 255;
+      if (alpha <= 0.01) continue;
+      const r = srgbChannelToLinear((pixels[offset] ?? 0) / 255);
+      const g = srgbChannelToLinear((pixels[offset + 1] ?? 0) / 255);
+      const b = srgbChannelToLinear((pixels[offset + 2] ?? 0) / 255);
+      total += (r * 0.2126 + g * 0.7152 + b * 0.0722) * alpha;
+      weight += alpha;
+    }
+    if (weight <= Number.EPSILON) return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+    return THREE.MathUtils.clamp(total / weight, 0.03, 0.85);
+  } catch {
+    return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+  }
+}
+
 function createSurfaceMaterial(body: CelestialBodyRenderState, texture: SurfaceTextureResource | undefined): THREE.ShaderMaterial {
   const isEmitter = body.appearance?.stellarEmission !== undefined;
   const emission = isEmitter ? blackbodyTemperatureToLinearRgb(body.appearance!.stellarEmission!.effectiveTemperatureKelvin) : { r: 0, g: 0, b: 0 };
@@ -502,6 +547,7 @@ function createSurfaceMaterial(body: CelestialBodyRenderState, texture: SurfaceT
       uEmissionStrength: { value: isEmitter ? 1 : 0 },
       uInspectionFill: { value: 0 },
       uSurfaceRadianceDisplayGain: { value: SURFACE_RADIANCE_DISPLAY_GAIN },
+      uTextureReferenceLuminance: { value: estimateTextureReferenceLuminance(texture?.texture) },
       uUseTexture: { value: texture !== undefined },
       uSurfaceMap: { value: texture?.texture ?? null },
     },
@@ -576,9 +622,6 @@ function createAtmosphereMaterial(
     transparent: true,
     depthWrite: false,
     side: THREE.FrontSide,
-    // Scattering is an emitted radiance contribution. Additive compositing
-    // keeps a dark front-side shell from attenuating an already-lit surface
-    // (especially the bounded Enhanced inspection fill).
     blending: THREE.AdditiveBlending,
     lights: false,
     toneMapped: true,
@@ -951,10 +994,6 @@ export class CelestialSystemView {
           atmosphere = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), createAtmosphereMaterial(optics, radius, shellRadius, center, camera));
           atmosphere.name = `Atmosphere shell ${body.objectId}`;
           atmosphere.userData.objectId = body.objectId;
-          // The demo's selective post-process may use this actual shell
-          // radiance as its only bloom source. Keep the marker presentation
-          // local to the mesh so consumer-side guides and surfaces cannot
-          // accidentally enter the glow pass.
           atmosphere.userData.atmosphereBloomSource = true;
           atmosphere.scale.setScalar(shellRadius);
           atmosphere.renderOrder = 2;
