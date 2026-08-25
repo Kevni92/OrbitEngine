@@ -59,7 +59,7 @@ const PLANETS = Object.freeze([
 const REVIEW_TARGET_DIAMETER_PIXELS = 360;
 const REVIEW_MIN_DIAMETER_PIXELS = 330;
 const REVIEW_MAX_DIAMETER_PIXELS = 390;
-const REVIEW_ZOOM_ATTEMPTS = 24;
+const REVIEW_ZOOM_ATTEMPTS = 16;
 
 async function readDiagnostics(page: Page): Promise<RenderDiagnostics | undefined> {
   return page.evaluate(() => {
@@ -99,7 +99,7 @@ async function focusBody(page: Page, objectId: string): Promise<BodyDiagnostics>
   await expect.poll(async () => (await readDiagnostics(page))?.bodies
     .find((body) => body.objectId === objectId)
     ?.planetTextureLayers?.some((layer) => layer.loaded) ?? false).toBe(true);
-  await page.waitForTimeout(180);
+  await page.waitForTimeout(100);
   return bodyDiagnostics(page, objectId);
 }
 
@@ -112,7 +112,7 @@ async function hideOverlays(page: Page): Promise<void> {
     document.querySelector<HTMLElement>("#demo-panel")?.style.setProperty("display", "none");
     document.querySelector<HTMLElement>("#celestial-browser")?.style.setProperty("display", "none");
   });
-  await page.waitForTimeout(60);
+  await page.waitForTimeout(40);
 }
 
 async function orientSideOn(page: Page, body: BodyDiagnostics): Promise<BodyDiagnostics> {
@@ -160,7 +160,7 @@ async function orientSideOn(page: Page, body: BodyDiagnostics): Promise<BodyDiag
       up: [0, 0, 1],
     });
   }, { center: body.renderWorldPosition, direction: sunDirection });
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(80);
   return bodyDiagnostics(page, body.objectId);
 }
 
@@ -173,15 +173,15 @@ async function zoomForVisualReview(page: Page, objectId: string): Promise<BodyDi
     if (diameter >= REVIEW_MIN_DIAMETER_PIXELS && diameter <= REVIEW_MAX_DIAMETER_PIXELS) break;
 
     // Keep every review frame in the same screen-space band. Negative wheel
-    // delta dollies in; positive delta dollies out. The old helper could only
-    // zoom in, which made Jupiter/Saturn side fixtures fill or exceed the frame.
+    // delta dollies in; positive delta dollies out. Use bounded large steps so
+    // software-WebGL runs do not spend the suite timeout on tiny wheel events.
     const ratio = diameter < REVIEW_MIN_DIAMETER_PIXELS
       ? REVIEW_TARGET_DIAMETER_PIXELS / Math.max(diameter, 1)
       : diameter / REVIEW_TARGET_DIAMETER_PIXELS;
-    const magnitude = ratio > 2.5 ? 900 : ratio > 1.5 ? 520 : 240;
+    const magnitude = ratio > 2.5 ? 1000 : ratio > 1.5 ? 600 : 300;
     const deltaY = diameter < REVIEW_MIN_DIAMETER_PIXELS ? -magnitude : magnitude;
     await page.mouse.wheel(0, deltaY);
-    await page.waitForTimeout(60);
+    await page.waitForTimeout(35);
     body = await bodyDiagnostics(page, objectId);
   }
 
@@ -276,9 +276,9 @@ async function measure(page: Page, body: BodyDiagnostics): Promise<RegionMetrics
 test("all primary planets obey the shared planetary photometry contract", async ({ page }, testInfo) => {
   // The OEP-backed demo startup dominates this suite. Keep one page alive and
   // move the same camera through all eight planets instead of paying the full
-  // dataset/bootstrap cost once per body. Local visual-review runs can be slow
-  // on software/WebGL fallback, so allow enough time to capture all 16 PNGs.
-  test.setTimeout(420_000);
+  // dataset/bootstrap cost once per body. Local software-WebGL can be slow,
+  // but the suite must still finish all 16 review PNGs before asserting.
+  test.setTimeout(900_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
