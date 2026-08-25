@@ -6,7 +6,7 @@ import {
   type CloudLayerAppearance,
   type LinearRgb,
 } from "../scenario/celestial-appearance.js";
-import { LINEAR_SRGB_LUMINANCE, linearRgbToSrgb } from "./celestial-appearance-rendering.js";
+import { LINEAR_SRGB_LUMINANCE, linearRgbToSrgb } from "orbit-engine-three/presentation";
 
 export const PROCEDURAL_SURFACE_WIDTH = 128;
 export const PROCEDURAL_SURFACE_HEIGHT = 64;

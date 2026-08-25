@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   deriveSurfaceReflectance,
   LINEAR_SRGB_LUMINANCE,
-} from "../src/rendering/celestial-appearance-rendering.js";
+} from "orbit-engine-three/presentation";
 import {
   createProceduralSurfaceTexture,
   generateProceduralSurfaceData,

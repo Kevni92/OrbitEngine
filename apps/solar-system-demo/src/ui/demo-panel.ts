@@ -1,8 +1,10 @@
 import { objectId, type ObjectId, type OrbitEngine, type OepDatasetIdentity, type OepSourceIdentity, type PropagationState, type SimulationInstant } from "orbit-engine";
+import type { BodyRepresentation } from "orbit-engine-three";
+import type { LightingMode, LightingModeDiagnostics } from "orbit-engine-three/presentation";
 import type { RegisteredScenarioBody } from "../scenario/load-solar-system.js";
-import type { LodDiagnostics } from "../rendering/representation-lod.js";
-import type { RepresentationLevel } from "../rendering/representation-lod.js";
-import type { LightingMode, LightingModeDiagnostics } from "../rendering/lighting-mode.js";
+import type { LodDiagnostics } from "../rendering/solar-system-scene.js";
+
+type RepresentationLevel = BodyRepresentation;
 import {
   formatDistance,
   formatExactInstant,

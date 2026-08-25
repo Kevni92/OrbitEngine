@@ -81,7 +81,7 @@ test("major planet orbits stay visible when planet bodies demote to markers", ()
   assert.equal(earthDiagnostics?.orbitVisible, true);
 
   visual.setOrbitsVisible(false);
-  assert.equal(earthOrbit.visible, true, "entry visibility remains eligible while the root orbit layer is disabled");
+  assert.equal(earthOrbit.visible, false, "the public orbit layer hides entries when orbit visibility is disabled");
   assert.equal(visual.renderDiagnosticsFor(EARTH_ID, camera)?.orbitVisible, false);
 
   visual.dispose();

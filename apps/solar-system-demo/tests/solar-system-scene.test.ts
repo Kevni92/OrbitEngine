@@ -56,7 +56,7 @@ test("scene keys meshes by stable ObjectId and consumes returned positions", () 
   const earthMesh = visual.meshFor(earth.id)!;
   assert.equal(earthMesh.userData.objectId, earth.id);
   const expected = positionToSceneUnits(earth.anchor.position);
-  assert.deepEqual(earthMesh.position.toArray(), [expected.x, expected.y, expected.z]);
+  assert.ok(visual.positionFor(earth.id)?.distanceTo(new THREE.Vector3(expected.x, expected.y, expected.z))! < 1e-12);
   assert.deepEqual(earth.anchor.position, rawEarthPosition);
 
   visual.setSelected(SUN_ID);
@@ -96,7 +96,7 @@ test("scene keys meshes by stable ObjectId and consumes returned positions", () 
   );
   // BufferGeometry position attributes are Float32, while body mesh positions
   // retain JavaScript double precision. They must coincide within GPU geometry precision.
-  assert.ok(firstOrbitPoint.distanceTo(earthMesh.position) < FLOAT32_SCENE_POSITION_TOLERANCE);
+  assert.ok(firstOrbitPoint.distanceTo(visual.positionFor(earth.id)!) < FLOAT32_SCENE_POSITION_TOLERANCE);
 
   visual.clearPaths();
   assert.equal(visual.pathCount(), 0);
@@ -131,9 +131,9 @@ test("resolved surfaces use lit materials while stellar illumination survives st
   const visual = new SolarSystemScene(root, scenario());
   visual.update(SCENARIO_BODIES.map((body) => body.anchor));
   const earthMaterial = visual.meshFor(EARTH_ID)?.material;
-  assert.ok(earthMaterial instanceof THREE.MeshLambertMaterial);
-  assert.equal(earthMaterial.emissiveMap, null);
-  assert.ok(visual.meshFor(SUN_ID)?.material instanceof THREE.MeshStandardMaterial);
+  assert.ok(earthMaterial instanceof THREE.ShaderMaterial);
+  assert.equal(earthMaterial.uniforms.uEmissionStrength?.value, 0);
+  assert.ok(visual.meshFor(SUN_ID)?.material instanceof THREE.ShaderMaterial);
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10_000);
   camera.position.set(0, -1_000, 600);
   camera.lookAt(0, 0, 0);
