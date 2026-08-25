@@ -53,11 +53,24 @@ const PLANETS = Object.freeze([
   { name: "Neptune", objectId: "1009" },
 ] as const);
 
+// Numerical photometry stays on the normal focus camera. Review PNGs are
+// deliberately closer so texture detail, clipping, limb scattering and bloom
+// can be judged visually instead of from an ~80 px disk.
+const REVIEW_TARGET_DIAMETER_PIXELS = 360;
+const REVIEW_MIN_DIAMETER_PIXELS = 330;
+const REVIEW_ZOOM_ATTEMPTS = 18;
+
 async function readDiagnostics(page: Page): Promise<RenderDiagnostics | undefined> {
   return page.evaluate(() => {
     const hook = (window as Window & { __orbitDemoRenderDiagnostics?: () => RenderDiagnostics }).__orbitDemoRenderDiagnostics;
     return hook?.();
   });
+}
+
+async function bodyDiagnostics(page: Page, objectId: string): Promise<BodyDiagnostics> {
+  const body = (await readDiagnostics(page))?.bodies.find((candidate) => candidate.objectId === objectId);
+  if (body === undefined) throw new Error(`Render diagnostics are missing for ${objectId}`);
+  return body;
 }
 
 async function setPhysicalLighting(page: Page): Promise<void> {
@@ -86,7 +99,7 @@ async function focusBody(page: Page, objectId: string): Promise<BodyDiagnostics>
     .find((body) => body.objectId === objectId)
     ?.planetTextureLayers?.some((layer) => layer.loaded) ?? false).toBe(true);
   await page.waitForTimeout(180);
-  return (await readDiagnostics(page))!.bodies.find((body) => body.objectId === objectId)!;
+  return bodyDiagnostics(page, objectId);
 }
 
 async function hideOverlays(page: Page): Promise<void> {
@@ -125,7 +138,33 @@ async function orientOppositeSun(page: Page, body: BodyDiagnostics): Promise<Bod
     });
   }, { center: body.renderWorldPosition, direction: sunDirection });
   await page.waitForTimeout(120);
-  return (await readDiagnostics(page))!.bodies.find((candidate) => candidate.objectId === body.objectId)!;
+  return bodyDiagnostics(page, body.objectId);
+}
+
+async function zoomForVisualReview(page: Page, objectId: string): Promise<BodyDiagnostics> {
+  await page.locator("#scene").hover();
+  let body = await bodyDiagnostics(page, objectId);
+
+  for (let attempt = 0; attempt < REVIEW_ZOOM_ATTEMPTS; attempt += 1) {
+    const diameter = body.atmosphere.projectedDiameterPixels;
+    if (diameter >= REVIEW_MIN_DIAMETER_PIXELS) break;
+
+    // OrbitControls uses negative wheel delta to dolly in. Use larger steps
+    // while far away and progressively smaller ones near the review target to
+    // avoid filling the entire viewport with the planet.
+    const ratio = REVIEW_TARGET_DIAMETER_PIXELS / Math.max(diameter, 1);
+    const deltaY = ratio > 2.5 ? -900 : ratio > 1.5 ? -520 : -240;
+    await page.mouse.wheel(0, deltaY);
+    await page.waitForTimeout(60);
+    body = await bodyDiagnostics(page, objectId);
+  }
+
+  if (body.atmosphere.projectedDiameterPixels < REVIEW_MIN_DIAMETER_PIXELS) {
+    throw new Error(
+      `${objectId} review zoom only reached ${body.atmosphere.projectedDiameterPixels.toFixed(1)} px; expected at least ${REVIEW_MIN_DIAMETER_PIXELS} px`,
+    );
+  }
+  return body;
 }
 
 async function measure(page: Page, body: BodyDiagnostics): Promise<RegionMetrics> {
@@ -221,17 +260,24 @@ test("all primary planets obey the shared planetary photometry contract", async 
   const results: PlanetPhotometryResult[] = [];
 
   for (const planet of PLANETS) {
+    // Keep objective metrics tied to the product's normal focus distance.
     const daysideBody = await focusBody(page, planet.objectId);
+    const dayside = await measure(page, daysideBody);
+
+    // Then dolly in only for the human visual-review PNG.
+    const daysideReviewBody = await zoomForVisualReview(page, planet.objectId);
     await page.locator("#scene").screenshot({
       path: testInfo.outputPath(`${planet.name.toLowerCase()}-focus-dayside.png`),
     });
-    const dayside = await measure(page, daysideBody);
 
-    const nightsideBody = await orientOppositeSun(page, daysideBody);
+    // The controlled opposite-sun fixture remains the numerical nightside
+    // reference. Its screenshot gets the same close review framing afterward.
+    const nightsideBody = await orientOppositeSun(page, daysideReviewBody);
+    const nightside = await measure(page, nightsideBody);
+    const nightsideReviewBody = await zoomForVisualReview(page, planet.objectId);
     await page.locator("#scene").screenshot({
       path: testInfo.outputPath(`${planet.name.toLowerCase()}-opposite-sun.png`),
     });
-    const nightside = await measure(page, nightsideBody);
 
     const result = {
       name: planet.name,
@@ -240,7 +286,13 @@ test("all primary planets obey the shared planetary photometry contract", async 
       nightside,
     } satisfies PlanetPhotometryResult;
     results.push(result);
-    console.log("[planet-photometry]", planet.name, result);
+    console.log("[planet-photometry]", planet.name, {
+      ...result,
+      reviewDiameterPixels: {
+        dayside: daysideReviewBody.atmosphere.projectedDiameterPixels,
+        nightside: nightsideReviewBody.atmosphere.projectedDiameterPixels,
+      },
+    });
   }
 
   // Assert only after every screenshot has been captured. Soft assertions keep
