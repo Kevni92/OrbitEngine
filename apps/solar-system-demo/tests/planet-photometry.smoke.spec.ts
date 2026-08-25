@@ -271,8 +271,9 @@ async function measure(page: Page, body: BodyDiagnostics): Promise<RegionMetrics
 test("all primary planets obey the shared planetary photometry contract", async ({ page }, testInfo) => {
   // The OEP-backed demo startup dominates this suite. Keep one page alive and
   // move the same camera through all eight planets instead of paying the full
-  // dataset/bootstrap cost once per body.
-  test.setTimeout(180_000);
+  // dataset/bootstrap cost once per body. Local visual-review runs can be slow
+  // on software/WebGL fallback, so allow enough time to capture all 16 PNGs.
+  test.setTimeout(420_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
