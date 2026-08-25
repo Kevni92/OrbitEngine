@@ -18,7 +18,7 @@ import { createCelestialRenderSnapshot, type BodyRepresentation, type CelestialB
 import { BatchedMarkerLayer, type BatchedMarkerLayerOptions, type MarkerRenderEntry } from "./markers.js";
 import { createRepresentationPolicy, resolveRepresentationDecisions, type RepresentationDecision, type RepresentationPolicy, type RepresentationPolicyConfiguration } from "./lod.js";
 import { createAdaptiveSizingConfiguration, resolveBodySizing, type AdaptiveSizingConfiguration, type BodyProjectionMetrics, type BodySizingResult, type RadiusMode } from "./sizing.js";
-import { OrbitPathRenderer, type OrbitPathRendererOptions, type OrbitPathStyle } from "./orbit-renderer.js";
+import { OrbitPathRenderer, type OrbitPathRendererOptions, type OrbitPathRendererWorkDiagnostics, type OrbitPathStyle } from "./orbit-renderer.js";
 import { SelectionIndicator, type SelectionIndicatorOptions } from "./selection.js";
 import { applyTexturedBodyPoleAlignment } from "./texture-orientation.js";
 
@@ -251,6 +251,7 @@ export interface CelestialSystemViewDiagnostics {
   readonly atmosphereCount: number;
   readonly packageOwnedResourceCount: number;
   readonly committedSnapshotFingerprint?: string;
+  readonly orbitWork?: OrbitPathRendererWorkDiagnostics;
   readonly lastFailure?: VisualFailure;
 }
 
@@ -526,10 +527,11 @@ function isSameResourceShape(
   resource: BodyResources | undefined,
   body: CelestialBodyRenderState,
   surfaceTexture: SurfaceTextureResource | undefined,
+  representation: BodyRepresentation,
 ): boolean {
   return resource !== undefined
-    && resource.representation === (body.representation ?? "sphere")
-    && resource.hasAtmosphere === (resource.representation === "sphere" && resolveAtmosphereOptics(body.appearance) !== undefined)
+    && resource.representation === representation
+    && resource.hasAtmosphere === (representation === "sphere" && resolveAtmosphereOptics(body.appearance) !== undefined)
     && resource.hasStellarEmission === (body.appearance?.stellarEmission !== undefined)
     && resource.surfaceTexture?.texture === surfaceTexture?.texture;
 }
@@ -656,7 +658,7 @@ export class CelestialSystemView {
         }
       }
     }
-    const orbitHit = this.#orbitRenderer?.pick(normalizedDeviceX, normalizedDeviceY, camera);
+    const orbitHit = this.#orbitRenderer?.pick(normalizedDeviceX, normalizedDeviceY, camera, viewportHeightCssPixels);
     if (orbitHit !== undefined && (best === undefined || orbitHit.distance < (best.distance ?? Number.POSITIVE_INFINITY))) best = orbitHit;
     return best;
   }
@@ -687,6 +689,7 @@ export class CelestialSystemView {
       atmosphereCount,
       packageOwnedResourceCount,
       ...(this.#lastSnapshot === undefined ? {} : { committedSnapshotFingerprint: this.#lastSnapshot.fingerprint }),
+      ...(this.#orbitRenderer === undefined ? {} : { orbitWork: this.#orbitRenderer.workDiagnostics() }),
       ...(this.#lastFailure === undefined ? {} : { lastFailure: this.#lastFailure }),
     });
   }
@@ -698,7 +701,9 @@ export class CelestialSystemView {
     }
     let snapshot: CelestialRenderSnapshot;
     try {
-      snapshot = createCelestialRenderSnapshot(snapshotInput);
+      snapshot = snapshotInput === this.#lastSnapshot
+        ? snapshotInput
+        : createCelestialRenderSnapshot(snapshotInput);
       if (context.cameraPositionSceneUnits !== undefined) {
         finite("cameraPositionSceneUnits.x", context.cameraPositionSceneUnits.x);
         finite("cameraPositionSceneUnits.y", context.cameraPositionSceneUnits.y);
@@ -794,14 +799,7 @@ export class CelestialSystemView {
       contextPriorityObjectIds: context.contextPriorityObjectIds,
       policy: this.#representationPolicy,
     });
-    const resolvedSnapshot = createCelestialRenderSnapshot({
-      instant: snapshot.instant,
-      origin: snapshot.origin,
-      revision: snapshot.revision,
-      bodies: snapshot.bodies.map((body) => ({ ...body, representation: decisions.get(body.objectId)!.representation })),
-      ...(snapshot.orbitPaths === undefined ? {} : { orbitPaths: snapshot.orbitPaths }),
-    });
-    return { snapshot: resolvedSnapshot, decisions };
+    return { snapshot, decisions };
   }
 
   #prepare(snapshot: CelestialRenderSnapshot, decisions: ReadonlyMap<ObjectId, RepresentationDecision>): PreparedUpdate {
@@ -811,9 +809,9 @@ export class CelestialSystemView {
     try {
       for (const body of snapshot.bodies) {
         validateCelestialAppearance(body.appearance, body.objectId);
-        if ((body.representation ?? "sphere") === "sphere") sceneRadius(body, this.#renderSpace);
         const decision = decisions.get(body.objectId);
         if (decision === undefined) throw new RangeError(`Missing representation decision for ${body.objectId}`);
+        if (decision.representation === "sphere") sceneRadius(body, this.#renderSpace);
         if (decision.representation === "marker") {
           const position = transformSnapshotPositionToSceneUnits(body.positionRelativeToOriginMeters, this.#renderSpace);
           markerEntries.push({ objectId: body.objectId, positionSceneUnits: position, sizePixels: decision.sizing.markerSizePixels, color: body.accentColor ?? this.#fallbackAccentColor });
@@ -822,18 +820,19 @@ export class CelestialSystemView {
           ? this.#surfaceTextureProvider?.(body)
           : undefined;
         const existing = this.#resources.get(body.objectId);
-        if (isSameResourceShape(existing, body, surfaceTexture)) {
+        if (isSameResourceShape(existing, body, surfaceTexture, decision.representation)) {
           next.set(body.objectId, existing!);
           continue;
         }
-        const resource = this.#createBodyResources(body);
+        const resource = this.#createBodyResources(body, decision.representation);
         next.set(body.objectId, resource);
         created.push(resource);
       }
       const emitters = snapshot.bodies.map(emitterForBody).filter((emitter): emitter is StellarEmitter => emitter !== undefined);
       const illuminations = new Map<ObjectId, StellarIllumination>();
       for (const body of snapshot.bodies) {
-        if (body.representation === "hidden" || body.representation === "marker") continue;
+        const decision = decisions.get(body.objectId);
+        if (decision === undefined || decision.representation === "hidden" || decision.representation === "marker") continue;
         const bodyEmitters = emitters.filter((emitter) => emitter.objectId !== body.objectId);
         illuminations.set(body.objectId, resolveStellarIllumination(body.positionRelativeToOriginMeters, bodyEmitters, { maxStellarContributors: this.#maxStellarContributors }));
       }
@@ -845,8 +844,7 @@ export class CelestialSystemView {
     }
   }
 
-  #createBodyResources(body: CelestialBodyRenderState): BodyResources {
-    const representation = body.representation ?? "sphere";
+  #createBodyResources(body: CelestialBodyRenderState, representation: BodyRepresentation): BodyResources {
     const anchor = new THREE.Group();
     anchor.name = `Celestial body ${body.objectId}`;
     anchor.userData.objectId = body.objectId;

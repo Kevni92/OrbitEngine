@@ -245,12 +245,15 @@ export class SolarSystemScene {
   readonly #onSelect?: (objectId: ObjectId) => void;
   #snapshot?: CelestialRenderSnapshot;
   #lastCamera?: THREE.Camera;
+  #lastCameraWorldMatrix?: readonly number[];
+  #lastCameraProjectionMatrix?: readonly number[];
   #lastViewportHeight = 1_000;
   #radiusMode: "physical" | "adaptive" = "adaptive";
   #lightingMode: LightingMode = "physical";
   #selected?: ObjectId;
   #focusId?: ObjectId;
   #orbitsVisible = true;
+  #presentationNeedsStabilization = false;
   #queriedCount = 0;
   #promotedRuntimeSphereCount = 0;
 
@@ -286,6 +289,7 @@ export class SolarSystemScene {
 
   setRadiusMode(mode: "physical" | "adaptive"): void {
     if (mode !== "physical" && mode !== "adaptive") throw new RangeError(`Unknown radius mode: ${String(mode)}`);
+    if (this.#radiusMode === mode) return;
     this.#radiusMode = mode;
     this.#rerender();
   }
@@ -293,6 +297,7 @@ export class SolarSystemScene {
   radiusMode(): "physical" | "adaptive" { return this.#radiusMode; }
 
   setLightingMode(mode: LightingMode): void {
+    if (this.#lightingMode === mode) return;
     this.#lightingMode = mode;
     this.#rerender();
   }
@@ -301,6 +306,7 @@ export class SolarSystemScene {
 
   setFocusId(objectId: ObjectId | undefined): void {
     if (objectId !== undefined && !this.#currentEntries.has(objectId)) throw new RangeError(`Unknown scenario body: ${objectId}`);
+    if (this.#focusId === objectId) return;
     this.#focusId = objectId;
     this.#rerender();
   }
@@ -338,6 +344,7 @@ export class SolarSystemScene {
 
   setSelected(objectId: ObjectId | undefined): void {
     if (objectId !== undefined && !this.#currentEntries.has(objectId)) throw new RangeError(`Unknown scenario body: ${objectId}`);
+    if (this.#selected === objectId) return;
     this.#selected = objectId;
     this.#rerender();
   }
@@ -388,9 +395,22 @@ export class SolarSystemScene {
   }
 
   updatePresentation(camera: THREE.Camera, viewportHeightPixels: number): void {
+    if (!Number.isFinite(viewportHeightPixels) || viewportHeightPixels <= 0) throw new RangeError("presentation viewport height must be finite and positive");
+    camera.updateMatrixWorld(true);
+    const worldMatrix = camera.matrixWorld.elements;
+    const projectionMatrix = camera.projectionMatrix.elements;
+    const cameraChanged = this.#lastCamera !== camera
+      || this.#lastViewportHeight !== viewportHeightPixels
+      || this.#lastCameraWorldMatrix === undefined
+      || this.#lastCameraProjectionMatrix === undefined
+      || this.#presentationNeedsStabilization
+      || worldMatrix.some((value, index) => value !== this.#lastCameraWorldMatrix![index])
+      || projectionMatrix.some((value, index) => value !== this.#lastCameraProjectionMatrix![index]);
     this.#lastCamera = camera;
     this.#lastViewportHeight = viewportHeightPixels;
-    this.#rerender();
+    this.#lastCameraWorldMatrix = [...worldMatrix];
+    this.#lastCameraProjectionMatrix = [...projectionMatrix];
+    if (cameraChanged) this.#rerender();
     for (const entry of this.#currentEntries.values()) this.#updatePlanetTexturePresentation(entry);
     this.#updatePlanetLayerTransforms();
     this.#updateEarthNightLights();
@@ -527,7 +547,12 @@ export class SolarSystemScene {
     }));
   }
 
-  setOrbitsVisible(visible: boolean): void { this.#orbitsVisible = Boolean(visible); this.#rerender(); }
+  setOrbitsVisible(visible: boolean): void {
+    const nextVisible = Boolean(visible);
+    if (this.#orbitsVisible === nextVisible) return;
+    this.#orbitsVisible = nextVisible;
+    this.#rerender();
+  }
   orbitsVisible(): boolean { return this.#orbitsVisible; }
 
   meshFor(objectId: ObjectId): THREE.Mesh | undefined {
@@ -612,6 +637,7 @@ export class SolarSystemScene {
 
   #rerender(): void {
     if (this.#snapshot === undefined) return;
+    const previousRepresentations = new Map(this.#representations);
     const camera = this.#lastCamera;
     const selectedObjectIds = this.#selected === undefined ? new Set<ObjectId>() : new Set([this.#selected]);
     const contextPriorityObjectIds = new Set([...this.#currentEntries.values()]
@@ -652,6 +678,8 @@ export class SolarSystemScene {
       if (representation !== undefined) this.#representations.set(entry.definition.id, representation);
     }
     this.#promotedRuntimeSphereCount = [...this.#runtimeIds].filter((objectId) => this.#representations.get(objectId) === "sphere").length;
+    this.#presentationNeedsStabilization = previousRepresentations.size !== this.#representations.size
+      || [...this.#representations].some(([objectId, representation]) => previousRepresentations.get(objectId) !== representation);
     const inspectionTargets = this.#inspectionTargets();
     this.#inspectionFillIndicator.visible = inspectionTargets.length > 0;
     for (const entry of this.#currentEntries.values()) {

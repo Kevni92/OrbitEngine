@@ -42,6 +42,8 @@ export interface OrbitPathSnapshot extends OrbitPathSnapshotInput {
   readonly fingerprint: string;
 }
 
+const normalizedOrbitPaths = new WeakSet<object>();
+
 export interface OrbitPathSamplingRequest {
   readonly objectId: ObjectId;
   readonly parentId?: ObjectId;
@@ -167,6 +169,9 @@ export function orbitPathCacheKey(input: OrbitPathCacheKeyInput): string {
 }
 
 export function createOrbitPathSnapshot(input: OrbitPathSnapshotInput): OrbitPathSnapshot {
+  if (typeof input === "object" && input !== null && normalizedOrbitPaths.has(input)) {
+    return input as OrbitPathSnapshot;
+  }
   if (typeof input.objectId !== "string" || input.objectId.length === 0) fail("objectId must be a non-empty ObjectId");
   validateOrigin(input.origin);
   validateInstant("interval.start", input.interval.start);
@@ -217,7 +222,7 @@ export function createOrbitPathSnapshot(input: OrbitPathSnapshotInput): OrbitPat
     sourceRevision: input.sourceRevision,
     sourceRevisionFingerprint,
   });
-  return Object.freeze({
+  const path = Object.freeze({
     objectId: input.objectId,
     ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
     origin,
@@ -234,6 +239,8 @@ export function createOrbitPathSnapshot(input: OrbitPathSnapshotInput): OrbitPat
     ...(sourceRevisionFingerprint === undefined ? {} : { sourceRevisionFingerprint }),
     fingerprint,
   });
+  normalizedOrbitPaths.add(path);
+  return path;
 }
 
 function exactSampleInstant(start: SimulationInstant, end: SimulationInstant, index: number, sampleCount: number): SimulationInstant {

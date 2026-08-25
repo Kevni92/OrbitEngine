@@ -58,3 +58,46 @@ test("clicking centered Mars does not get stolen by a nearby moon marker", async
   await expect.poll(async () => (await readDiagnostics(page))?.selectedId).toBe("1005");
   expect(pageErrors).toHaveLength(0);
 });
+
+test("camera drags do not select the body under the pointer on release", async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error));
+  await page.goto("/");
+  await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
+  await expect(page.locator("#rendering-status")).toHaveAttribute("data-state", "ready");
+  await page.selectOption("#focus-select", "1003"); // Earth
+  await page.selectOption("#selected-select", "1004"); // Moon
+  await expect.poll(async () => (await readDiagnostics(page))?.selectedId).toBe("1004");
+
+  const canvas = page.locator("#scene");
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  const start = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 120, start.y + 24, { steps: 6 });
+  await page.mouse.up();
+
+  await expect.poll(async () => (await readDiagnostics(page))?.selectedId).toBe("1004");
+  expect(pageErrors).toHaveLength(0);
+});
+
+test("blank local-system clicks do not select a moon through a broad orbit hit radius", async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error));
+  await page.goto("/");
+  await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
+  await expect(page.locator("#rendering-status")).toHaveAttribute("data-state", "ready");
+  await page.selectOption("#focus-select", "1009"); // Neptune
+  await page.selectOption("#selected-select", "1009"); // Neptune
+  await expect.poll(async () => (await readDiagnostics(page))?.focusId).toBe("1009");
+  await expect.poll(async () => (await readDiagnostics(page))?.selectedId).toBe("1009");
+
+  const canvas = page.locator("#scene");
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  await canvas.click({ position: { x: box!.width / 2 + 110, y: box!.height / 2 } });
+
+  await expect.poll(async () => (await readDiagnostics(page))?.selectedId).toBe("1009");
+  expect(pageErrors).toHaveLength(0);
+});

@@ -22,7 +22,7 @@ import {
 } from "../src/scenario/scenario-data.js";
 import type { SolarSystemScenario } from "../src/scenario/load-solar-system.js";
 import { PathCache } from "../src/simulation/path-sampling.js";
-import { createOrbitPath } from "../src/simulation/orbit-visualization.js";
+import { createOrbitPath, resolveOrbitVisualizationDefinition } from "../src/simulation/orbit-visualization.js";
 
 function scenario(): SolarSystemScenario {
   const bodies = SCENARIO_BODIES.map((definition) => ({
@@ -63,7 +63,7 @@ test("orbit visualization omits Sun and uses bounded body-specific relative samp
   assert.equal(createOrbitPath({ scenario: loaded, body: loaded.bodyById.get(SUN_ID)!, cache, stateAt }), undefined);
   const earthPath = createOrbitPath({ scenario: loaded, body: loaded.bodyById.get(EARTH_ID)!, cache, stateAt });
   assert.ok(earthPath !== undefined);
-  assert.equal(earthPath!.sampleCount, 128);
+  assert.equal(earthPath!.sampleCount, 256);
   assert.equal(earthPath!.closedReferenceOrbit, true);
   assert.equal(earthPath!.interval.end.seconds, 31_557_600);
   assert.ok(calls.every((call) => call[1] === SUN_ID));
@@ -121,4 +121,44 @@ test("orbit visualization infers a bounded sampling period from parent state whe
   assert.equal(path!.sampleCount, 128);
   assert.equal(path!.closedReferenceOrbit, true);
   assert.ok(path!.interval.end.seconds > path!.interval.start.seconds);
+});
+
+test("explicit orbit visualization metadata wins without querying a fallback state", () => {
+  const loaded = scenario();
+  const body = loaded.bodyById.get(EARTH_ID)!;
+  const definition = body.definition.propagation.orbitVisualization!;
+  const resolved = resolveOrbitVisualizationDefinition({
+    scenario: loaded,
+    body,
+    stateAt: () => { throw new Error("fallback state must not be queried"); },
+  });
+  assert.deepEqual(resolved, definition);
+});
+
+test("unbound and missing-mu bodies use the documented generic orbit fallback", () => {
+  const loaded = scenario();
+  const body = loaded.bodyById.get(AMALTHEA_ID)!;
+  const parent = loaded.bodyById.get(JUPITER_ID)!;
+  const unbound = resolveOrbitVisualizationDefinition({
+    scenario: loaded,
+    body,
+    stateAt: (objectIdValue, centralBodyId, target, frame) => propagationState({
+      position: { x: meters(83_500_000), y: meters(0), z: meters(0) },
+      velocity: { x: metersPerSecond(100_000), y: metersPerSecond(0), z: metersPerSecond(0) },
+      epoch: target,
+      referenceFrame: frame,
+    }),
+  });
+  assert.equal(unbound.sampleSpanSeconds, 31_557_600);
+  assert.equal(unbound.closedReferenceOrbit, false);
+
+  const missingMuParent = { ...parent, record: { ...parent.record, properties: { ...parent.record.properties, mu: undefined } } };
+  const missingMuScenario = { ...loaded, bodies: loaded.bodies.map((entry) => entry.definition.id === parent.definition.id ? missingMuParent : entry), bodyById: new Map(loaded.bodies.map((entry) => [entry.definition.id, entry.definition.id === parent.definition.id ? missingMuParent : entry])) } as SolarSystemScenario;
+  const missingMu = resolveOrbitVisualizationDefinition({
+    scenario: missingMuScenario,
+    body: missingMuScenario.bodyById.get(AMALTHEA_ID)!,
+    stateAt: () => { throw new Error("missing-mu fallback must not query state"); },
+  });
+  assert.equal(missingMu.sampleSpanSeconds, 31_557_600);
+  assert.equal(missingMu.closedReferenceOrbit, false);
 });

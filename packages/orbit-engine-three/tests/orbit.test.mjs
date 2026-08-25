@@ -12,13 +12,15 @@ import {
 
 const BODY_ID = objectId("20");
 const PARENT_ID = objectId("10");
+const OTHER_BODY_ID = objectId("21");
+const OTHER_PARENT_ID = objectId("11");
 const FRAME_ID = "1";
 
-function path(samples = 4) {
+function path(samples = 4, objectIdValue = BODY_ID, parentIdValue = PARENT_ID) {
   return sampleOrbitPath({
-    objectId: BODY_ID,
-    parentId: PARENT_ID,
-    origin: { kind: "object", objectId: PARENT_ID, frameId: FRAME_ID },
+    objectId: objectIdValue,
+    parentId: parentIdValue,
+    origin: { kind: "object", objectId: parentIdValue, frameId: FRAME_ID },
     interval: { start: simulationInstant(0), end: simulationInstant(10) },
     sampleCount: samples,
     motionRevision: "1",
@@ -36,6 +38,7 @@ test("orbit path snapshots sample exact bounded instants and expose cache identi
   assert.equal(value.origin.objectId, PARENT_ID);
   assert.equal(value.closedReferenceOrbit, true);
   assert.equal(typeof value.fingerprint, "string");
+  assert.strictEqual(createOrbitPathSnapshot(value), value);
   assert.equal(DEFAULT_ORBIT_PATH_SAMPLES, 128);
   assert.throws(() => createOrbitPathSnapshot({
     ...value,
@@ -76,4 +79,50 @@ test("orbit renderer anchors parent-relative samples, emphasizes selection, and 
   assert.equal(renderer.pick(0, 0, new THREE.PerspectiveCamera()), undefined);
   renderer.dispose();
   assert.equal(renderer.pathCount(), 0);
+});
+
+test("orbit renderer skips stable geometry/trail work and isolates changed anchors", () => {
+  const scene = new THREE.Scene();
+  const renderer = new OrbitPathRenderer(scene, {
+    renderSpace: { metersPerSceneUnit: 1 },
+    defaultStyle: { direction: { enabled: true } },
+  });
+  renderer.setPaths([path(), path(4, OTHER_BODY_ID, OTHER_PARENT_ID)]);
+  const firstLine = renderer.group.getObjectByName(`Orbit ${BODY_ID}`).children[0];
+  const firstBefore = Array.from(firstLine.geometry.getAttribute("position").array);
+  renderer.updateBodyPositions(new Map([
+    [PARENT_ID, new THREE.Vector3(100, 0, 0)],
+    [BODY_ID, new THREE.Vector3(105, 0, 0)],
+    [OTHER_PARENT_ID, new THREE.Vector3(200, 0, 0)],
+    [OTHER_BODY_ID, new THREE.Vector3(205, 0, 0)],
+  ]));
+  renderer.setSelected(BODY_ID);
+  const afterSelected = renderer.workDiagnostics();
+  renderer.updateBodyPositions(new Map([
+    [PARENT_ID, new THREE.Vector3(100, 0, 0)],
+    [BODY_ID, new THREE.Vector3(105, 0, 0)],
+    [OTHER_PARENT_ID, new THREE.Vector3(201, 0, 0)],
+    [OTHER_BODY_ID, new THREE.Vector3(206, 0, 0)],
+  ]));
+  const firstAfterUnrelatedMove = Array.from(firstLine.geometry.getAttribute("position").array);
+  const afterUnrelatedMove = renderer.workDiagnostics();
+
+  assert.deepEqual(firstAfterUnrelatedMove, firstBefore.map((value, index) => index % 3 === 0 ? value + 100 : value));
+  assert.equal(afterUnrelatedMove.geometryUpdateCount, afterSelected.geometryUpdateCount + 1);
+  assert.equal(afterUnrelatedMove.trailUpdateCount, afterSelected.trailUpdateCount);
+  assert.equal(afterUnrelatedMove.localSampleTransformCount, afterSelected.localSampleTransformCount);
+
+  renderer.updateBodyPositions(new Map([
+    [PARENT_ID, new THREE.Vector3(101, 0, 0)],
+    [BODY_ID, new THREE.Vector3(106, 0, 0)],
+    [OTHER_PARENT_ID, new THREE.Vector3(201, 0, 0)],
+    [OTHER_BODY_ID, new THREE.Vector3(206, 0, 0)],
+  ]));
+  const afterSelectedMove = renderer.workDiagnostics();
+  assert.equal(afterSelectedMove.geometryUpdateCount, afterUnrelatedMove.geometryUpdateCount + 1);
+  assert.equal(afterSelectedMove.trailUpdateCount, afterUnrelatedMove.trailUpdateCount + 1);
+  renderer.setSelected(OTHER_BODY_ID);
+  const afterSelectionChange = renderer.workDiagnostics();
+  assert.equal(afterSelectionChange.trailUpdateCount, afterSelectedMove.trailUpdateCount + 1);
+  renderer.dispose();
 });
