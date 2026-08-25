@@ -233,7 +233,10 @@ void main() {
       if (lightIndex >= uLightCount) break;
       vec3 lightDirection = normalize(uLightDirections[lightIndex]);
       vec3 lightTransmittance = integrateLightTransmittance(samplePosition, lightDirection);
-      float phaseCosine = dot(viewDirection, lightDirection);
+      // uLightDirections points from the sample toward the emitter, while the
+      // scattering phase uses the incoming photon direction. The photon travels
+      // from the emitter to the sample, so the direction must be negated here.
+      float phaseCosine = dot(viewDirection, -lightDirection);
       vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
         + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
       integratedScattering += scatteringSource
