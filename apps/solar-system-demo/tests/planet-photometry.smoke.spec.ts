@@ -35,6 +35,13 @@ interface RegionMetrics {
   readonly backgroundLuminance: number;
 }
 
+interface PlanetPhotometryResult {
+  readonly name: string;
+  readonly atmosphere: boolean;
+  readonly dayside: RegionMetrics;
+  readonly nightside: RegionMetrics;
+}
+
 const PLANETS = Object.freeze([
   { name: "Mercury", objectId: "1001" },
   { name: "Venus", objectId: "1002" },
@@ -200,42 +207,68 @@ async function measure(page: Page, body: BodyDiagnostics): Promise<RegionMetrics
   });
 }
 
-for (const planet of PLANETS) {
-  test(`${planet.name} obeys the shared planetary photometry contract`, async ({ page }, testInfo) => {
-    await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto("/");
-    await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
-    await setPhysicalLighting(page);
-    const daysideBody = await focusBody(page, planet.objectId);
-    await hideOverlays(page);
+test("all primary planets obey the shared planetary photometry contract", async ({ page }, testInfo) => {
+  // The OEP-backed demo startup dominates this suite. Keep one page alive and
+  // move the same camera through all eight planets instead of paying the full
+  // dataset/bootstrap cost once per body.
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+  await expect(page.locator("#engine-status")).toHaveAttribute("data-state", "ready");
+  await setPhysicalLighting(page);
+  await hideOverlays(page);
 
-    // Persist the actual focused render as a review artifact. Numerical pixel
-    // metrics are a regression guard, not a substitute for visual acceptance.
+  const results: PlanetPhotometryResult[] = [];
+
+  for (const planet of PLANETS) {
+    const daysideBody = await focusBody(page, planet.objectId);
     await page.locator("#scene").screenshot({
       path: testInfo.outputPath(`${planet.name.toLowerCase()}-focus-dayside.png`),
     });
     const dayside = await measure(page, daysideBody);
-
-    expect(dayside.diskLuminance).toBeGreaterThan(35);
-    expect(dayside.diskLuminance).toBeLessThan(220);
-    expect(dayside.clippedDiskFraction).toBeLessThan(0.12);
-
-    if (daysideBody.atmosphere.resourcesAllocated) {
-      expect(dayside.annulusLuminance - dayside.backgroundLuminance).toBeGreaterThan(3);
-      expect(dayside.annulusLuminance).toBeLessThan(235);
-      expect(dayside.clippedAnnulusFraction).toBeLessThan(0.25);
-    } else {
-      expect(dayside.annulusLuminance - dayside.backgroundLuminance).toBeLessThan(10);
-    }
 
     const nightsideBody = await orientOppositeSun(page, daysideBody);
     await page.locator("#scene").screenshot({
       path: testInfo.outputPath(`${planet.name.toLowerCase()}-opposite-sun.png`),
     });
     const nightside = await measure(page, nightsideBody);
-    expect(nightside.diskLuminance).toBeLessThan(80);
-    expect(nightside.diskLuminance).toBeLessThan(dayside.diskLuminance * 0.45);
 
-    console.log("[planet-photometry]", planet.name, { dayside, nightside, atmosphere: daysideBody.atmosphere.resourcesAllocated });
-  });
-}
+    const result = {
+      name: planet.name,
+      atmosphere: daysideBody.atmosphere.resourcesAllocated,
+      dayside,
+      nightside,
+    } satisfies PlanetPhotometryResult;
+    results.push(result);
+    console.log("[planet-photometry]", planet.name, result);
+  }
+
+  // Assert only after every screenshot has been captured. Soft assertions keep
+  // the complete eight-body visual review set available even when several
+  // planets violate the common contract in the same run.
+  for (const result of results) {
+    expect.soft(result.dayside.diskLuminance, `${result.name} dayside minimum luminance`).toBeGreaterThan(35);
+    expect.soft(result.dayside.diskLuminance, `${result.name} dayside maximum luminance`).toBeLessThan(220);
+    expect.soft(result.dayside.clippedDiskFraction, `${result.name} clipped disk fraction`).toBeLessThan(0.12);
+
+    if (result.atmosphere) {
+      expect.soft(
+        result.dayside.annulusLuminance - result.dayside.backgroundLuminance,
+        `${result.name} atmosphere visibility`,
+      ).toBeGreaterThan(3);
+      expect.soft(result.dayside.annulusLuminance, `${result.name} atmosphere maximum luminance`).toBeLessThan(235);
+      expect.soft(result.dayside.clippedAnnulusFraction, `${result.name} clipped atmosphere fraction`).toBeLessThan(0.25);
+    } else {
+      expect.soft(
+        result.dayside.annulusLuminance - result.dayside.backgroundLuminance,
+        `${result.name} airless halo`,
+      ).toBeLessThan(10);
+    }
+
+    expect.soft(result.nightside.diskLuminance, `${result.name} nightside maximum luminance`).toBeLessThan(80);
+    expect.soft(
+      result.nightside.diskLuminance,
+      `${result.name} nightside/day-side contrast`,
+    ).toBeLessThan(result.dayside.diskLuminance * 0.45);
+  }
+});
