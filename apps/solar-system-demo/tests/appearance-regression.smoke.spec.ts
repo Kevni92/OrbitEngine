@@ -196,6 +196,7 @@ test("representative appearance bodies keep deterministic atmosphere, fallback, 
   const overview = await readDiagnostics(page);
   expect(overview!.performance.frameCount).toBeGreaterThan(0);
   expect(Number.isFinite(overview!.performance.averageFrameDurationMs)).toBe(true);
+  console.log("[atmosphere-performance] overview", overview!.performance, { atmosphereResourceCount: overview!.atmosphereResourceCount });
 
   for (const [objectId, opticalSource] of [
     ["1003", "explicit"], // Earth-like Rayleigh atmosphere
@@ -217,6 +218,7 @@ test("representative appearance bodies keep deterministic atmosphere, fallback, 
   expect(airless.atmosphere.resourcesAllocated).toBe(false);
   expect(airless.atmosphere.visible).toBe(false);
   expect(airless.atmosphere.viewSampleCount).toBe(8);
+  console.log("[atmosphere-performance] without focused atmosphere", (await readDiagnostics(page))!.performance);
 
   const fallback = await focusBody(page, "2001"); // Ceres, no detailed appearance metadata
   expect(fallback.surfaceReflectanceSource).toBe("fallbackAccent");
@@ -224,6 +226,7 @@ test("representative appearance bodies keep deterministic atmosphere, fallback, 
 
   const earth = await focusBody(page, "1003");
   const beforeRadiusChange = (await readDiagnostics(page))!;
+  console.log("[atmosphere-performance] focused Earth", beforeRadiusChange.performance, { atmosphereResourceCount: beforeRadiusChange.atmosphereResourceCount });
   const earthIrradiance = earth.physicalIrradianceWattsPerSquareMeter;
   await page.selectOption("#radius-mode", "physical");
   await expect.poll(async () => (await readDiagnostics(page))?.bodies.find((body) => body.objectId === "1003")?.physicalIrradianceWattsPerSquareMeter).toBe(earthIrradiance);

@@ -446,6 +446,23 @@ The default WebGL 2 path uses a bounded fixed-cost single-scattering approximati
 
 The initial target is 6–8 fixed view samples per atmosphere fragment. The exact selected value is a presentation constant validated by the shader implementation tests and browser profiling; adaptive/unbounded sample counts are forbidden in the default path.
 
+The current `orbit-engine-three` implementation fixes this cost at 8 view samples and
+2 analytic light-path samples for each active stellar contributor. With the default
+maximum of four contributors, one atmosphere fragment therefore evaluates at most
+64 light-path density samples in addition to its 8 view samples. The light-path
+segment is bounded by analytic shell/body intersections and all shader loops are
+compile-time bounded. The appearance-regression browser test records the existing
+frame-duration diagnostic for overview, focused-Earth, and no-focused-atmosphere
+scenarios; these measurements are the quality/performance baseline for the browser
+companion rather than a consumer-configurable semantic optics field.
+
+The 2026-08-25 Chromium smoke run at 1280×900 recorded the following existing
+frame diagnostics (hardware-dependent sanity measurements, not a cross-machine
+performance guarantee): overview with no shell resources `2.04 ms` average /
+`8.10 ms` last frame, focused Earth with one shell resource `6.79 ms` average /
+`2.40 ms` last frame, and focused Vesta without an atmosphere `5.77 ms` average /
+`1.90 ms` last frame.
+
 This produces the required qualitative behavior:
 
 - bright limb/horizon glow from longer optical path length;

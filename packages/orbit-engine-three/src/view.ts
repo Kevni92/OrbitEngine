@@ -27,6 +27,8 @@ const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
 const ATMOSPHERE_RIM_THICKNESS_PIXELS = 4;
 const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
 const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 25;
+const ATMOSPHERE_VIEW_SAMPLES = 8;
+const ATMOSPHERE_LIGHT_SAMPLES = 2;
 const SURFACE_VERTEX_SHADER = `
 varying vec3 vWorldNormal;
 varying vec2 vUv;
@@ -91,7 +93,8 @@ uniform vec3 uLightDirections[${MAX_LIGHTS}];
 uniform vec3 uLightColors[${MAX_LIGHTS}];
 uniform float uLightIntensity[${MAX_LIGHTS}];
 varying vec3 vWorldPosition;
-const int VIEW_SAMPLES = 8;
+const int VIEW_SAMPLES = ${ATMOSPHERE_VIEW_SAMPLES};
+const int LIGHT_SAMPLES = ${ATMOSPHERE_LIGHT_SAMPLES};
 const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
@@ -117,6 +120,47 @@ vec2 raySphereInterval(vec3 rayOrigin, vec3 rayDirection, float sphereRadius) {
   return vec2(-b - root, -b + root);
 }
 
+float atmosphereDensity(vec3 position) {
+  float presentationThickness = max(uShellRadius - uBodyRadius, EPSILON);
+  float radialDistance = length(position - uBodyCenter);
+  float altitudeFraction = clamp((radialDistance - uBodyRadius) / presentationThickness, 0.0, 1.0);
+  return exp(-altitudeFraction * uPhysicalExtentScaleHeights);
+}
+
+float normalizedVerticalDensityIntegral() {
+  return max(1.0 - exp(-uPhysicalExtentScaleHeights), EPSILON);
+}
+
+vec3 integrateLightTransmittance(vec3 samplePosition, vec3 lightDirection) {
+  vec2 lightInterval = raySphereInterval(samplePosition, lightDirection, uShellRadius);
+  float lightStart = max(0.0, lightInterval.x);
+  float lightEnd = lightInterval.y;
+  if (lightEnd <= lightStart) return vec3(0.0);
+
+  // A direct stellar ray that enters the opaque body cannot illuminate this
+  // sample. The body intersection is analytic; only the bounded atmosphere
+  // segment is sampled below.
+  vec2 bodyInterval = raySphereInterval(samplePosition, lightDirection, uBodyRadius);
+  if (bodyInterval.y >= bodyInterval.x && bodyInterval.x >= 0.0 && bodyInterval.x < lightEnd) {
+    return vec3(0.0);
+  }
+
+  float lightSegmentLength = lightEnd - lightStart;
+  float presentationThickness = max(uShellRadius - uBodyRadius, EPSILON);
+  float lightSampleLengthScaleHeights = lightSegmentLength / presentationThickness * uPhysicalExtentScaleHeights;
+  float integratedLightDensityScaleHeights = 0.0;
+  for (int lightSampleIndex = 0; lightSampleIndex < LIGHT_SAMPLES; lightSampleIndex++) {
+    float sampleFraction = (float(lightSampleIndex) + 0.5) / float(LIGHT_SAMPLES);
+    vec3 lightSamplePosition = samplePosition + lightDirection * (lightStart + lightSegmentLength * sampleFraction);
+    integratedLightDensityScaleHeights += atmosphereDensity(lightSamplePosition) * lightSampleLengthScaleHeights;
+  }
+
+  vec3 extinction = uRayleighScattering + uMieScattering + uAbsorption;
+  vec3 lightOpticalDepth = extinction * uReferenceVerticalOpticalDepth
+    * integratedLightDensityScaleHeights / normalizedVerticalDensityIntegral();
+  return exp(-lightOpticalDepth);
+}
+
 void main() {
   // Three supplies cameraPosition in world space for ShaderMaterial. Using
   // the renderer-owned value keeps camera fixtures and shell sampling in the
@@ -140,10 +184,11 @@ void main() {
   float segmentLength = segmentEnd - segmentStart;
   float sampleLength = segmentLength / float(VIEW_SAMPLES);
   float sampleLengthScaleHeights = sampleLength / presentationThickness * uPhysicalExtentScaleHeights;
-  float verticalIntegral = max(1.0 - exp(-uPhysicalExtentScaleHeights), EPSILON);
+  float verticalIntegral = normalizedVerticalDensityIntegral();
   float integratedDensityScaleHeights = 0.0;
   vec3 integratedScattering = vec3(0.0);
   vec3 viewDirection = -rayDirection;
+  vec3 extinction = uRayleighScattering + uMieScattering + uAbsorption;
 
   for (int sampleIndex = 0; sampleIndex < VIEW_SAMPLES; sampleIndex++) {
     float sampleFraction = (float(sampleIndex) + 0.5) / float(VIEW_SAMPLES);
@@ -157,31 +202,30 @@ void main() {
     float density = exp(-altitudeScaleHeights);
     float sampleColumn = density * sampleLengthScaleHeights;
     integratedDensityScaleHeights += sampleColumn;
+    float viewOpticalDepthAtSample = uReferenceVerticalOpticalDepth
+      * (integratedDensityScaleHeights - sampleColumn * 0.5) / verticalIntegral;
+    vec3 viewTransmittance = exp(-extinction * viewOpticalDepthAtSample);
+    float sampleOpticalDepth = uReferenceVerticalOpticalDepth * sampleColumn / verticalIntegral;
+    vec3 viewScatteringWeight = (vec3(1.0) - exp(-extinction * sampleOpticalDepth))
+      / max(extinction, vec3(EPSILON));
 
     for (int lightIndex = 0; lightIndex < ${MAX_LIGHTS}; lightIndex++) {
       if (lightIndex >= uLightCount) break;
       vec3 lightDirection = normalize(uLightDirections[lightIndex]);
-      // A shell whose star is directly behind the body is not illuminated
-      // toward this camera. Suppress that far-side lobe so the projected rim
-      // remains rotationally symmetric instead of producing a false camera
-      // up/down bias in backlit views.
-      if (dot(lightDirection, rayDirection) > 0.75) continue;
       float lightZenithCosine = dot(localNormal, lightDirection);
       float dayFactor = smoothstep(-0.18, 0.08, lightZenithCosine);
       if (dayFactor <= 0.0001) continue;
-      float lightPathFactor = 1.0 / max(0.12, lightZenithCosine + 0.20);
-      float verticalDepthAboveSample = uReferenceVerticalOpticalDepth * exp(-altitudeScaleHeights);
-      float absorptionMean = (uAbsorption.r + uAbsorption.g + uAbsorption.b) / 3.0;
-      float transmittance = exp(-absorptionMean * verticalDepthAboveSample * lightPathFactor);
+      vec3 lightTransmittance = integrateLightTransmittance(samplePosition, lightDirection);
       float phaseCosine = dot(viewDirection, lightDirection);
       vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
         + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
       integratedScattering += scatteringSource
         * uLightColors[lightIndex]
         * uLightIntensity[lightIndex]
-        * transmittance
+        * lightTransmittance
+        * viewTransmittance
         * dayFactor
-        * sampleColumn / verticalIntegral;
+        * viewScatteringWeight;
     }
   }
 
