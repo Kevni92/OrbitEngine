@@ -58,7 +58,8 @@ const PLANETS = Object.freeze([
 // can be judged visually instead of from an ~80 px disk.
 const REVIEW_TARGET_DIAMETER_PIXELS = 360;
 const REVIEW_MIN_DIAMETER_PIXELS = 330;
-const REVIEW_ZOOM_ATTEMPTS = 18;
+const REVIEW_MAX_DIAMETER_PIXELS = 390;
+const REVIEW_ZOOM_ATTEMPTS = 24;
 
 async function readDiagnostics(page: Page): Promise<RenderDiagnostics | undefined> {
   return page.evaluate(() => {
@@ -169,21 +170,25 @@ async function zoomForVisualReview(page: Page, objectId: string): Promise<BodyDi
 
   for (let attempt = 0; attempt < REVIEW_ZOOM_ATTEMPTS; attempt += 1) {
     const diameter = body.atmosphere.projectedDiameterPixels;
-    if (diameter >= REVIEW_MIN_DIAMETER_PIXELS) break;
+    if (diameter >= REVIEW_MIN_DIAMETER_PIXELS && diameter <= REVIEW_MAX_DIAMETER_PIXELS) break;
 
-    // OrbitControls uses negative wheel delta to dolly in. Use larger steps
-    // while far away and progressively smaller ones near the review target to
-    // avoid filling the entire viewport with the planet.
-    const ratio = REVIEW_TARGET_DIAMETER_PIXELS / Math.max(diameter, 1);
-    const deltaY = ratio > 2.5 ? -900 : ratio > 1.5 ? -520 : -240;
+    // Keep every review frame in the same screen-space band. Negative wheel
+    // delta dollies in; positive delta dollies out. The old helper could only
+    // zoom in, which made Jupiter/Saturn side fixtures fill or exceed the frame.
+    const ratio = diameter < REVIEW_MIN_DIAMETER_PIXELS
+      ? REVIEW_TARGET_DIAMETER_PIXELS / Math.max(diameter, 1)
+      : diameter / REVIEW_TARGET_DIAMETER_PIXELS;
+    const magnitude = ratio > 2.5 ? 900 : ratio > 1.5 ? 520 : 240;
+    const deltaY = diameter < REVIEW_MIN_DIAMETER_PIXELS ? -magnitude : magnitude;
     await page.mouse.wheel(0, deltaY);
     await page.waitForTimeout(60);
     body = await bodyDiagnostics(page, objectId);
   }
 
-  if (body.atmosphere.projectedDiameterPixels < REVIEW_MIN_DIAMETER_PIXELS) {
+  if (body.atmosphere.projectedDiameterPixels < REVIEW_MIN_DIAMETER_PIXELS
+    || body.atmosphere.projectedDiameterPixels > REVIEW_MAX_DIAMETER_PIXELS) {
     throw new Error(
-      `${objectId} review zoom only reached ${body.atmosphere.projectedDiameterPixels.toFixed(1)} px; expected at least ${REVIEW_MIN_DIAMETER_PIXELS} px`,
+      `${objectId} review zoom reached ${body.atmosphere.projectedDiameterPixels.toFixed(1)} px; expected ${REVIEW_MIN_DIAMETER_PIXELS}-${REVIEW_MAX_DIAMETER_PIXELS} px`,
     );
   }
   return body;
@@ -296,9 +301,9 @@ test("all primary planets obey the shared planetary photometry contract", async 
     // Replace the artificial full-dark view with a 90-degree side view. This
     // shows the illuminated hemisphere, terminator, night hemisphere and limb
     // atmosphere together and is much more useful for visual acceptance.
-    const sideBody = await orientSideOn(page, daysideReviewBody);
-    const side = await measure(page, sideBody);
-    const sideReviewBody = await zoomForVisualReview(page, planet.objectId);
+    const sideFixtureBody = await orientSideOn(page, daysideReviewBody);
+    const sideReviewBody = await zoomForVisualReview(page, sideFixtureBody.objectId);
+    const side = await measure(page, sideReviewBody);
     await page.locator("#scene").screenshot({
       path: testInfo.outputPath(`${planet.name.toLowerCase()}-side.png`),
     });
