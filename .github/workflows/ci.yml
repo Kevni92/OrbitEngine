@@ -179,9 +179,9 @@ jobs:
       - run: pnpm build:wasm
       - run: pnpm demo:build
       - run: pnpm --filter orbit-engine-solar-system-demo exec playwright install --with-deps chromium
-      # Keep this bounded to the renderer regression suite; the full demo
-      # smoke suite remains a local validation job because of its large data pack.
-      - run: pnpm --filter orbit-engine-solar-system-demo exec playwright test tests/render-output.smoke.spec.ts
+      # Keep this bounded to the renderer regression suites; every primary
+      # planet is covered by the shared photometry contract in CI.
+      - run: pnpm --filter orbit-engine-solar-system-demo exec playwright test tests/render-output.smoke.spec.ts tests/planet-photometry.smoke.spec.ts
 
   three-package:
     name: orbit-engine-three package and peer smoke

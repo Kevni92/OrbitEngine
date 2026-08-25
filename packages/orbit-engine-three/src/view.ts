@@ -26,16 +26,12 @@ const MAX_LIGHTS = 4;
 const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
 const ATMOSPHERE_RIM_THICKNESS_PIXELS = 4;
 const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
-// These are presentation gains for the shared renderer's linear pre-display
-// radiance. They stay deliberately below the former un-tonemapped values so
-// ACESFilmic can preserve wavelength contrast instead of clipping the shell.
-const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 1.1;
-const ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN = 1.1;
-// A bounded presentation calibration keeps low-albedo texture maps readable
-// in the shared renderer without changing the single renderer exposure or
-// the physical stellar irradiance supplied to the material.
-const SURFACE_RADIANCE_DISPLAY_GAIN = 2.4;
-const CLOUD_DECK_RADIANCE_DISPLAY_GAIN = 240.0;
+// Presentation gains stay shared across every body. Semantic optics determine
+// body-specific color/strength; the renderer must not contain planet-specific
+// gain branches or a different photometric scale for cloud-deck planets.
+const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 3.5;
+const ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN = 0.55;
+const SURFACE_RADIANCE_DISPLAY_GAIN = 2.0;
 const ATMOSPHERE_VIEW_SAMPLES = 8;
 const ATMOSPHERE_LIGHT_SAMPLES = 2;
 const SURFACE_VERTEX_SHADER = `
@@ -61,9 +57,20 @@ uniform vec3 uLightColors[${MAX_LIGHTS}];
 uniform float uLightIntensity[${MAX_LIGHTS}];
 varying vec3 vWorldNormal;
 varying vec2 vUv;
+const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
 void main() {
   vec3 base = uBaseColor;
-  if (uUseTexture) base *= texture2D(uSurfaceMap, vUv).rgb;
+  if (uUseTexture) {
+    vec3 textureColor = texture2D(uSurfaceMap, vUv).rgb;
+    float textureLuminance = max(dot(textureColor, LINEAR_LUMINANCE), 0.0001);
+    float semanticLuminance = max(dot(uBaseColor, LINEAR_LUMINANCE), 0.0001);
+    // Source texture exposure is asset-dependent and must not become the
+    // body's absolute reflectance. Preserve bounded chroma/detail while the
+    // semantic appearance contract owns disk luminance.
+    vec3 textureChroma = clamp(textureColor / textureLuminance, vec3(0.35), vec3(2.85));
+    float textureDetail = mix(0.72, 1.28, smoothstep(0.03, 0.85, textureLuminance));
+    base = textureChroma * semanticLuminance * textureDetail;
+  }
   vec3 incident = vec3(0.0);
   vec3 normal = normalize(vWorldNormal);
   for (int index = 0; index < ${MAX_LIGHTS}; index += 1) {
@@ -110,8 +117,6 @@ const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
 const float LIMB_DISPLAY_GAIN = 1.7;
-const float RAYLEIGH_DISPLAY_BOOST = 6.0;
-const float MIE_DISPLAY_SCALE = 0.2;
 
 float rayleighPhase(float cosine) {
   return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
@@ -229,8 +234,8 @@ void main() {
       vec3 lightDirection = normalize(uLightDirections[lightIndex]);
       vec3 lightTransmittance = integrateLightTransmittance(samplePosition, lightDirection);
       float phaseCosine = dot(viewDirection, lightDirection);
-      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine) * RAYLEIGH_DISPLAY_BOOST
-        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy) * MIE_DISPLAY_SCALE;
+      vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
+        + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
       integratedScattering += scatteringSource
         * uLightColors[lightIndex]
         * uLightIntensity[lightIndex]
@@ -246,9 +251,8 @@ void main() {
   // atmosphere remains visible over the already-rendered opaque surface.
   float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
   float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
-  // The shell rim keeps its calibrated display gain. Over an opaque body,
-  // use the bounded surface-composite gain so front-side scattering remains
-  // visible without washing out the surface presentation.
+  // Keep the physically integrated limb bright enough to bloom, while the
+  // front-side contribution over an opaque surface stays bounded.
   float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;
   vec3 radiance = integratedScattering * displayGain * limbGain;
   gl_FragColor = vec4(radiance * alpha, alpha);
@@ -486,19 +490,15 @@ function createSurfaceMaterial(body: CelestialBodyRenderState, texture: SurfaceT
   const reflectance = isEmitter
     ? emission
     : deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).linearReflectance;
-  const baseColor = texture === undefined ? reflectance : { r: 1, g: 1, b: 1 };
-  const surfaceRadianceDisplayGain = body.appearance?.visibleLayer?.kind === "cloudDeck"
-    ? CLOUD_DECK_RADIANCE_DISPLAY_GAIN
-    : SURFACE_RADIANCE_DISPLAY_GAIN;
   const uniforms = createLightUniforms();
   return new THREE.ShaderMaterial({
     uniforms: {
       ...uniforms,
-      uBaseColor: { value: new THREE.Color(baseColor.r, baseColor.g, baseColor.b) },
+      uBaseColor: { value: new THREE.Color(reflectance.r, reflectance.g, reflectance.b) },
       uEmissionColor: { value: new THREE.Color(emission.r, emission.g, emission.b) },
       uEmissionStrength: { value: isEmitter ? 1 : 0 },
       uInspectionFill: { value: 0 },
-      uSurfaceRadianceDisplayGain: { value: surfaceRadianceDisplayGain },
+      uSurfaceRadianceDisplayGain: { value: SURFACE_RADIANCE_DISPLAY_GAIN },
       uUseTexture: { value: texture !== undefined },
       uSurfaceMap: { value: texture?.texture ?? null },
     },
@@ -518,9 +518,7 @@ function updateSurfaceMaterialAppearance(material: THREE.ShaderMaterial, body: C
     : deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).linearReflectance;
   const baseColor = material.uniforms.uBaseColor!.value as THREE.Color;
   const emissionColor = material.uniforms.uEmissionColor!.value as THREE.Color;
-  const textured = material.uniforms.uUseTexture?.value === true;
-  const visibleColor = textured ? { r: 1, g: 1, b: 1 } : reflectance;
-  baseColor.setRGB(emissionGlow ? 0 : visibleColor.r, emissionGlow ? 0 : visibleColor.g, emissionGlow ? 0 : visibleColor.b);
+  baseColor.setRGB(emissionGlow ? 0 : reflectance.r, emissionGlow ? 0 : reflectance.g, emissionGlow ? 0 : reflectance.b);
   emissionColor.setRGB(emission.r, emission.g, emission.b);
   material.uniforms.uEmissionStrength!.value = emissionGlow ? 0.22 : isEmitter ? 1 : 0;
 }
