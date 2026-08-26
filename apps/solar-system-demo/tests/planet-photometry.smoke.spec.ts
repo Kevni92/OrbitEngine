@@ -214,7 +214,7 @@ async function measure(page: Page, body: BodyDiagnostics): Promise<RegionMetrics
     const annulusInner = bodyRadius + 1;
     const annulusOuter = bodyRadius + 8;
     const corners = [[4, 4], [canvas.width - 5, 4], [4, canvas.height - 5], [canvas.width - 5, canvas.height - 5]] as const;
-    const background = [0, 0, 0];
+    const background: [number, number, number] = [0, 0, 0];
     for (const [x, y] of corners) {
       const offset = (y * canvas.width + x) * 4;
       background[0] += pixels[offset] ?? 0;
