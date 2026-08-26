@@ -26,12 +26,18 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import base64, re
+          import base64
           text = Path('.github/workflows/apply-atmosphere-softening.yml').read_text()
-          match = re.search(r"echo '([A-Za-z0-9+/=]+)' \\| base64 -d > /tmp/apply-softening\.py", text)
-          if match is None:
+          encoded = None
+          for line in text.splitlines():
+              marker = "          echo '"
+              suffix = "' | base64 -d > /tmp/apply-softening.py"
+              if line.startswith(marker) and line.endswith(suffix):
+                  encoded = line[len(marker):-len(suffix)]
+                  break
+          if encoded is None:
               raise SystemExit('embedded softening patch not found')
-          Path('/tmp/apply-softening.py').write_bytes(base64.b64decode(match.group(1)))
+          Path('/tmp/apply-softening.py').write_bytes(base64.b64decode(encoded))
           PY
           python /tmp/apply-softening.py
       - run: pnpm install --frozen-lockfile
