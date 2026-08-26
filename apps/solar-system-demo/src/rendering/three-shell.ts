@@ -24,6 +24,11 @@ const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
 // constants that require another rebuild for every visual iteration.
 const BLOOM_COMPOSER_PIXEL_RATIO = 0.5;
 const BLOOM_THRESHOLD = 0.0;
+// The base scene is rendered through EffectComposer now, so WebGLRenderer's
+// default-framebuffer antialiasing no longer covers orbit/guide geometry. Keep
+// the final composer's offscreen targets multisampled to preserve the smooth
+// thin-line appearance we had before postprocessing was introduced.
+const FINAL_COMPOSER_MSAA_SAMPLES = 4;
 const ATMOSPHERE_SHADER_BASE_KEY = "orbitInspectorAtmosphereBaseFragmentShader";
 const ATMOSPHERE_SHADER_TUNING_KEY = "orbitInspectorAtmosphereTuningSignature";
 
@@ -288,6 +293,8 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   bloomComposer.addPass(bloomPass);
 
   const finalComposer = new EffectComposer(renderer);
+  finalComposer.renderTarget1.samples = FINAL_COMPOSER_MSAA_SAMPLES;
+  finalComposer.renderTarget2.samples = FINAL_COMPOSER_MSAA_SAMPLES;
   const finalScenePass = new RenderPass(scene, camera);
   finalComposer.addPass(finalScenePass);
 
