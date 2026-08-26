@@ -34,9 +34,7 @@ jobs:
                   raise SystemExit(f"anchor not found in {path}: {old[:120]!r}")
               p.write_text(text.replace(old, new, 1))
 
-          # Presentation-domain transition constants: start the exterior fade
-          # earlier and keep the surface-to-shell gain handoff spanning both
-          # sides of the physical limb instead of completing at the silhouette.
+          # Shared presentation helpers.
           replace_once(
               "packages/orbit-engine-three/src/presentation/atmosphere-math.ts",
               "export const ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION = 0.35;\nexport const ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS = -1.5;\nexport const ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS = 0.1;",
@@ -44,39 +42,66 @@ jobs:
           )
           replace_once(
               "packages/orbit-engine-three/src/presentation/atmosphere-math.ts",
-              "export function atmosphereSurfaceCompositeBlend(signedLimbShellWidths: number, bodyIntersectsView: boolean): number {\n  finite(\"signed limb shell widths\", signedLimbShellWidths);\n  if (!bodyIntersectsView) return 0;\n  const width = ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS;\n  return 1 - smoothstep01((signedLimbShellWidths - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS) / width);\n}",
-              "export function atmosphereSurfaceCompositeBlend(signedLimbShellWidths: number, bodyIntersectsView: boolean): number {\n  finite(\"signed limb shell widths\", signedLimbShellWidths);\n  // A real exterior ray has a non-negative signed limb distance. Preserve the\n  // defensive invalid-state behavior for callers that claim no body hit while\n  // supplying an interior distance, but otherwise let the blend continue\n  // across the silhouette so presentation gain cannot form a one-pixel ring.\n  if (!bodyIntersectsView && signedLimbShellWidths < 0) return 0;\n  const width = ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS;\n  return 1 - smoothstep01((signedLimbShellWidths - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS) / width);\n}",
+              "  if (!bodyIntersectsView) return 0;\n  const width = ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS;",
+              "  // Let the presentation gain cross the physical silhouette instead of\n  // ending at it. A negative distance without a body hit is invalid input.\n  if (!bodyIntersectsView && signedLimbShellWidths < 0) return 0;\n  const width = ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS;",
           )
 
-          # The previous shader made the exact tangent path the brightest place:
-          # high shell gain + explicit limb gain + long-path integration. Keep
-          # the physical RGB result, but compress only its presentation amplitude
-          # near very long tangent paths and make the gain handoff continuous.
-          replace_once(
-              "packages/orbit-engine-three/src/view.ts",
-              "const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};\nconst float LIMB_DISPLAY_GAIN = 1.25;",
-              "const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};\nconst float SURFACE_DISPLAY_GAIN = ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)};\nconst float LIMB_DISPLAY_GAIN = 1.25;",
-          )
-          replace_once(
-              "packages/orbit-engine-three/src/view.ts",
-              "  float surfaceCompositeBlend = bodyIntersectsView\n    ? 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths)\n    : 0.0;\n  float exteriorShellFraction = max(signedLimbShellWidths, 0.0);\n  float outerFade = 1.0 - smoothstep(OUTER_FADE_START, 1.0, exteriorShellFraction);\n\n  // A body hit only limits the integrated path to the front shell. Its\n  // atmosphere remains visible over the already-rendered opaque surface.\n  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94) * outerFade;\n  float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));\n  // Keep the existing inspector-tunable gains, but hand off continuously at\n  // the silhouette instead of switching from disk gain to shell gain in one\n  // pixel. Deeper on the disk the bounded composite gain still protects texture.\n  float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;\n  displayGain = mix(DISPLAY_GAIN, displayGain, surfaceCompositeBlend);\n  vec3 radiance = integratedScattering * displayGain * limbGain;",
-              "  float surfaceCompositeBlend = 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths);\n  float exteriorShellFraction = max(signedLimbShellWidths, 0.0);\n  float outerFade = 1.0 - smoothstep(OUTER_FADE_START, 1.0, exteriorShellFraction);\n\n  // A body hit only limits the integrated path to the front shell. Its\n  // atmosphere remains visible over the already-rendered opaque surface.\n  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94) * outerFade;\n\n  // Long tangent paths are physically brighter, but allowing path length, the\n  // shell display gain and a separate limb boost to multiply without a soft\n  // knee creates a high-contrast wire ring at the exact silhouette. Compress\n  // presentation amplitude only; the integrated RGB scattering/transmittance\n  // and therefore its body-specific chromaticity remain untouched.\n  float longPathExcess = max(densityPath - 1.0, 0.0);\n  float tangentCompression = inversesqrt(1.0 + 0.30 * longPathExcess * longPathExcess);\n  float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));\n\n  // Blend the disk and shell gains across both sides of the silhouette. The\n  // exterior atmosphere then grows out of the disk atmosphere instead of\n  // beginning as a separate bright circle.\n  float displayGain = mix(DISPLAY_GAIN, SURFACE_DISPLAY_GAIN, surfaceCompositeBlend);\n  vec3 radiance = integratedScattering * displayGain * limbGain * tangentCompression;",
-          )
+          # Shader: remove the tangent wire-ring amplification while preserving
+          # the physically integrated RGB scattering/transmittance result.
+          view_path = Path("packages/orbit-engine-three/src/view.ts")
+          view = view_path.read_text()
+          old = "const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};\nconst float LIMB_DISPLAY_GAIN = 1.25;"
+          new = "const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};\nconst float SURFACE_DISPLAY_GAIN = ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)};\nconst float LIMB_DISPLAY_GAIN = 1.25;"
+          if old not in view:
+              raise SystemExit("view shader constant anchor not found")
+          view = view.replace(old, new, 1)
+          old_blend = "  float surfaceCompositeBlend = bodyIntersectsView\n    ? 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths)\n    : 0.0;"
+          new_blend = "  float surfaceCompositeBlend = 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths);"
+          if old_blend not in view:
+              raise SystemExit("view surface blend anchor not found")
+          view = view.replace(old_blend, new_blend, 1)
+          start = view.index("  // A body hit only limits the integrated path to the front shell. Its\n", view.index("float outerFade"))
+          end_marker = "  vec3 radiance = integratedScattering * displayGain * limbGain;"
+          end = view.index(end_marker, start) + len(end_marker)
+          replacement = """  // A body hit only limits the integrated path to the front shell. Its
+  // atmosphere remains visible over the already-rendered opaque surface.
+  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94) * outerFade;
 
-          # Keep demo runtime tuning compatible with the new explicit surface
-          # gain shader constant rather than patching an obsolete conditional.
-          replace_once(
-              "apps/solar-system-demo/src/rendering/three-shell.ts",
-              "    .replace(\n      /float displayGain = bodyIntersectsView \\\\? [-+0-9.eE]+ : DISPLAY_GAIN;/,\n      `float displayGain = bodyIntersectsView ? ${tuning.atmosphereSurfaceCompositeGain.toFixed(4)} : DISPLAY_GAIN;`,\n    );",
-              "    .replace(\n      /const float SURFACE_DISPLAY_GAIN = [-+0-9.eE]+;/,\n      `const float SURFACE_DISPLAY_GAIN = ${tuning.atmosphereSurfaceCompositeGain.toFixed(4)};`,\n    );",
-          )
+  // The physical integral naturally rises on tangent paths. Combining that
+  // peak with a large shell display gain and an extra limb multiplier produced
+  // the visible cyan wire ring. Apply a presentation-only soft knee to long
+  // paths; RGB ratios and optical transport remain unchanged.
+  float longPathExcess = max(densityPath - 1.0, 0.0);
+  float tangentCompression = inversesqrt(1.0 + 0.30 * longPathExcess * longPathExcess);
+  float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
 
-          # Default presentation now favors a broad low-frequency halo over a
-          # narrow bright shell. Bump the storage key so stale local inspector
-          # values from the previous experiment cannot silently restore the ring.
+  // Blend disk and exterior gains continuously across the physical silhouette.
+  // The exterior halo therefore grows out of the disk atmosphere rather than
+  // beginning as a separate bright circular outline.
+  float displayGain = mix(DISPLAY_GAIN, SURFACE_DISPLAY_GAIN, surfaceCompositeBlend);
+  vec3 radiance = integratedScattering * displayGain * limbGain * tangentCompression;"""
+          view = view[:start] + replacement + view[end:]
+          view_path.write_text(view)
+
+          # Demo runtime tuning must patch the new surface-gain constant.
+          shell_path = Path("apps/solar-system-demo/src/rendering/three-shell.ts")
+          lines = shell_path.read_text().splitlines()
+          match = next((i for i, line in enumerate(lines) if "float displayGain = bodyIntersectsView" in line and "DISPLAY_GAIN" in line), None)
+          if match is None or match < 1 or match + 2 >= len(lines):
+              raise SystemExit("three-shell runtime patch anchor not found")
+          lines[match - 1:match + 3] = [
+              "    .replace(",
+              "      /const float SURFACE_DISPLAY_GAIN = [-+0-9.eE]+;/,",
+              "      `const float SURFACE_DISPLAY_GAIN = ${tuning.atmosphereSurfaceCompositeGain.toFixed(4)};`,",
+              "    );",
+          ]
+          shell_path.write_text("\n".join(lines) + "\n")
+
+          # Shift default energy from the narrow shell into the broad bloom and
+          # invalidate stale browser-local tuning from the previous experiment.
           tuning_path = Path("apps/solar-system-demo/src/ui/lighting-inspector.ts")
           tuning = tuning_path.read_text()
-          replacements = {
+          for old, new in {
               "  atmosphereShellDisplayGain: 3.5,": "  atmosphereShellDisplayGain: 1.8,",
               "  atmosphereSurfaceCompositeGain: 0.38,": "  atmosphereSurfaceCompositeGain: 0.55,",
               "  atmosphereLimbGain: 1.25,": "  atmosphereLimbGain: 1,",
@@ -84,20 +109,39 @@ jobs:
               "  bloomRadius: 0.85,": "  bloomRadius: 0.95,",
               "  bloomCompositeGain: 0.75,": "  bloomCompositeGain: 0.9,",
               'const STORAGE_KEY = "orbit-engine-demo-lighting-inspector-v2";': 'const STORAGE_KEY = "orbit-engine-demo-lighting-inspector-v3";',
-          }
-          for old, new in replacements.items():
+          }.items():
               if old not in tuning:
                   raise SystemExit(f"lighting tuning anchor not found: {old}")
               tuning = tuning.replace(old, new, 1)
           tuning_path.write_text(tuning)
 
-          # Deterministic tests prove the blend remains non-zero just outside the
-          # physical limb and only reaches the full shell gain gradually.
-          replace_once(
-              "packages/orbit-engine-three/tests/atmosphere-math.test.mjs",
-              "test(\"presentation shell fades continuously to zero before the finite mesh edge\", () => {\n  assert.equal(atmosphereOuterShellFade(-0.5), 1);\n  assert.equal(atmosphereOuterShellFade(0), 1);\n  assert.equal(atmosphereOuterShellFade(0.35), 1);\n  const middle = atmosphereOuterShellFade(0.7);\n  assert.ok(middle > 0 && middle < 1);\n  assert.equal(atmosphereOuterShellFade(1), 0);\n  assert.equal(atmosphereOuterShellFade(2), 0);\n});\n\ntest(\"surface composite gain hands off continuously to the exterior limb gain\", () => {\n  assert.equal(atmosphereSurfaceCompositeBlend(-2, true), 1);\n  const inner = atmosphereSurfaceCompositeBlend(-1, true);\n  const nearLimb = atmosphereSurfaceCompositeBlend(-0.1, true);\n  assert.ok(inner > nearLimb);\n  assert.ok(nearLimb > 0 && nearLimb < 1);\n  assert.equal(atmosphereSurfaceCompositeBlend(0.1, true), 0);\n  assert.equal(atmosphereSurfaceCompositeBlend(-2, false), 0);\n});",
-              "test(\"presentation shell fades continuously to zero before the finite mesh edge\", () => {\n  assert.equal(atmosphereOuterShellFade(-0.5), 1);\n  assert.equal(atmosphereOuterShellFade(0), 1);\n  assert.equal(atmosphereOuterShellFade(0.15), 1);\n  const middle = atmosphereOuterShellFade(0.55);\n  assert.ok(middle > 0 && middle < 1);\n  assert.equal(atmosphereOuterShellFade(1), 0);\n  assert.equal(atmosphereOuterShellFade(2), 0);\n});\n\ntest(\"surface composite gain crosses the physical limb continuously\", () => {\n  assert.equal(atmosphereSurfaceCompositeBlend(-2, true), 1);\n  const inner = atmosphereSurfaceCompositeBlend(-0.4, true);\n  const nearLimb = atmosphereSurfaceCompositeBlend(-0.05, true);\n  const exterior = atmosphereSurfaceCompositeBlend(0.4, false);\n  assert.ok(inner > nearLimb);\n  assert.ok(nearLimb > exterior);\n  assert.ok(exterior > 0 && exterior < 1);\n  assert.equal(atmosphereSurfaceCompositeBlend(0.8, false), 0);\n  assert.equal(atmosphereSurfaceCompositeBlend(-2, false), 0);\n});",
-          )
+          # Replace the two presentation helper tests as one bounded section.
+          test_path = Path("packages/orbit-engine-three/tests/atmosphere-math.test.mjs")
+          tests = test_path.read_text()
+          start = tests.index('test("presentation shell fades continuously to zero before the finite mesh edge"')
+          replacement_tests = '''test("presentation shell fades continuously to zero before the finite mesh edge", () => {
+  assert.equal(atmosphereOuterShellFade(-0.5), 1);
+  assert.equal(atmosphereOuterShellFade(0), 1);
+  assert.equal(atmosphereOuterShellFade(0.15), 1);
+  const middle = atmosphereOuterShellFade(0.55);
+  assert.ok(middle > 0 && middle < 1);
+  assert.equal(atmosphereOuterShellFade(1), 0);
+  assert.equal(atmosphereOuterShellFade(2), 0);
+});
+
+test("surface composite gain crosses the physical limb continuously", () => {
+  assert.equal(atmosphereSurfaceCompositeBlend(-2, true), 1);
+  const inner = atmosphereSurfaceCompositeBlend(-0.4, true);
+  const nearLimb = atmosphereSurfaceCompositeBlend(-0.05, true);
+  const exterior = atmosphereSurfaceCompositeBlend(0.4, false);
+  assert.ok(inner > nearLimb);
+  assert.ok(nearLimb > exterior);
+  assert.ok(exterior > 0 && exterior < 1);
+  assert.equal(atmosphereSurfaceCompositeBlend(0.8, false), 0);
+  assert.equal(atmosphereSurfaceCompositeBlend(-2, false), 0);
+});'''
+          tests = tests[:start] + replacement_tests + "\n"
+          test_path.write_text(tests)
 
           replace_once(
               "docs/19-celestial-appearance-atmospheres-and-lighting.md",
