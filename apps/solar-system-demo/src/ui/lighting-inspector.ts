@@ -189,7 +189,7 @@ export function installLightingInspector(
       label.htmlFor = id;
       label.textContent = control.label;
       const output = document.createElement("output");
-      output.htmlFor = id;
+      output.setAttribute("for", id);
       output.value = formatValue(current[control.key], control.step);
       const input = document.createElement("input");
       input.id = id;
