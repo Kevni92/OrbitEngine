@@ -1,0 +1,204 @@
+name: Apply atmosphere softening patch
+
+on:
+  push:
+    branches:
+      - fix/244-atmosphere-radiance
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/244-atmosphere-radiance
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Apply presentation softening
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          math_path = Path('packages/orbit-engine-three/src/presentation/atmosphere-math.ts')
+          math = math_path.read_text()
+          anchor = 'const ZERO_RGB: AtmosphereRgb = Object.freeze({ r: 0, g: 0, b: 0 });\n'
+          insert = '''const ZERO_RGB: AtmosphereRgb = Object.freeze({ r: 0, g: 0, b: 0 });
+
+// Presentation-only limb shaping. These values are expressed in atmosphere
+// shell widths so adaptive visual sizing changes thickness without changing
+// the shape of the transition. They do not feed transport or physical optics.
+export const ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION = 0.35;
+export const ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS = -1.5;
+export const ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS = 0.1;
+
+function smoothstep01(value: number): number {
+  const t = Math.min(1, Math.max(0, value));
+  return t * t * (3 - 2 * t);
+}
+
+export function atmosphereOuterShellFade(signedLimbShellWidths: number): number {
+  finite("signed limb shell widths", signedLimbShellWidths);
+  const exteriorFraction = Math.max(0, signedLimbShellWidths);
+  const width = 1 - ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION;
+  return 1 - smoothstep01((exteriorFraction - ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION) / width);
+}
+
+export function atmosphereSurfaceCompositeBlend(signedLimbShellWidths: number, bodyIntersectsView: boolean): number {
+  finite("signed limb shell widths", signedLimbShellWidths);
+  if (!bodyIntersectsView) return 0;
+  const width = ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS;
+  return 1 - smoothstep01((signedLimbShellWidths - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS) / width);
+}
+'''
+          if anchor not in math:
+              raise SystemExit('atmosphere-math anchor not found')
+          math = math.replace(anchor, insert, 1)
+          math_path.write_text(math)
+
+          view_path = Path('packages/orbit-engine-three/src/view.ts')
+          view = view_path.read_text()
+          old_import = 'import { normalizeAtmosphereOpticsForTransport } from "./presentation/atmosphere-math.js";'
+          new_import = '''import {
+  ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION,
+  ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS,
+  ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS,
+  normalizeAtmosphereOpticsForTransport,
+} from "./presentation/atmosphere-math.js";'''
+          if old_import not in view:
+              raise SystemExit('view import anchor not found')
+          view = view.replace(old_import, new_import, 1)
+
+          old_constants = '''const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
+const float LIMB_DISPLAY_GAIN = 1.25;
+const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);'''
+          new_constants = '''const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
+const float LIMB_DISPLAY_GAIN = 1.25;
+const float OUTER_FADE_START = ${ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION.toFixed(2)};
+const float SURFACE_BLEND_INNER = ${ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS.toFixed(2)};
+const float SURFACE_BLEND_OUTER = ${ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS.toFixed(2)};
+const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);'''
+          if old_constants not in view:
+              raise SystemExit('shader constants anchor not found')
+          view = view.replace(old_constants, new_constants, 1)
+
+          old_tail = '''  float densityPath = integratedDensityScaleHeights / verticalIntegral;
+  float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
+  // A body hit only limits the integrated path to the front shell. Its
+  // atmosphere remains visible over the already-rendered opaque surface.
+  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
+  float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
+  // Keep the physical shell readable without turning it into a hard outline;
+  // the selective post-process owns the softer low-frequency exterior glow.
+  float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;
+  vec3 radiance = integratedScattering * displayGain * limbGain;
+  gl_FragColor = vec4(radiance * alpha, alpha);'''
+          new_tail = '''  float densityPath = integratedDensityScaleHeights / verticalIntegral;
+  float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
+
+  // Presentation shaping is derived from the ray's projected distance to the
+  // physical limb, measured in shell widths. It is deliberately applied only
+  // after transport integration: scattering, extinction and optical depth stay
+  // physically driven while the finite presentation shell becomes visually
+  // continuous across the disk limb and fades to zero before its mesh boundary.
+  float closestRayDistance = max(dot(uBodyCenter - rayOrigin, rayDirection), 0.0);
+  float impactRadius = length(rayOrigin + rayDirection * closestRayDistance - uBodyCenter);
+  float signedLimbShellWidths = (impactRadius - uBodyRadius) / presentationThickness;
+  float surfaceCompositeBlend = bodyIntersectsView
+    ? 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths)
+    : 0.0;
+  float exteriorShellFraction = max(signedLimbShellWidths, 0.0);
+  float outerFade = 1.0 - smoothstep(OUTER_FADE_START, 1.0, exteriorShellFraction);
+
+  // A body hit only limits the integrated path to the front shell. Its
+  // atmosphere remains visible over the already-rendered opaque surface.
+  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94) * outerFade;
+  float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
+  // Keep the existing inspector-tunable gains, but blend between them instead
+  // of switching exactly at the opaque sphere silhouette. Near the limb the
+  // outside-shell gain takes over continuously; deeper on the disk the bounded
+  // surface-composite gain still protects texture contrast.
+  float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;
+  displayGain = mix(DISPLAY_GAIN, displayGain, surfaceCompositeBlend);
+  vec3 radiance = integratedScattering * displayGain * limbGain;
+  gl_FragColor = vec4(radiance * alpha, alpha);'''
+          if old_tail not in view:
+              raise SystemExit('shader tail anchor not found')
+          view = view.replace(old_tail, new_tail, 1)
+          view_path.write_text(view)
+
+          test_path = Path('packages/orbit-engine-three/tests/atmosphere-math.test.mjs')
+          tests = test_path.read_text()
+          old_test_import = '''  atmosphereCompositeAlpha,
+  atmosphereCompositeRadiance,
+  atmosphereOpticalDepth,'''
+          new_test_import = '''  atmosphereCompositeAlpha,
+  atmosphereCompositeRadiance,
+  atmosphereOpticalDepth,
+  atmosphereOuterShellFade,
+  atmosphereSurfaceCompositeBlend,'''
+          if old_test_import not in tests:
+              raise SystemExit('test import anchor not found')
+          tests = tests.replace(old_test_import, new_test_import, 1)
+          tests += '''
+
+test("presentation shell fades continuously to zero before the finite mesh edge", () => {
+  assert.equal(atmosphereOuterShellFade(-0.5), 1);
+  assert.equal(atmosphereOuterShellFade(0), 1);
+  assert.equal(atmosphereOuterShellFade(0.35), 1);
+  const middle = atmosphereOuterShellFade(0.7);
+  assert.ok(middle > 0 && middle < 1);
+  assert.equal(atmosphereOuterShellFade(1), 0);
+  assert.equal(atmosphereOuterShellFade(2), 0);
+});
+
+test("surface composite gain hands off continuously to the exterior limb gain", () => {
+  assert.equal(atmosphereSurfaceCompositeBlend(-2, true), 1);
+  const inner = atmosphereSurfaceCompositeBlend(-1, true);
+  const nearLimb = atmosphereSurfaceCompositeBlend(-0.1, true);
+  assert.ok(inner > nearLimb);
+  assert.ok(nearLimb > 0 && nearLimb < 1);
+  assert.equal(atmosphereSurfaceCompositeBlend(0.1, true), 0);
+  assert.equal(atmosphereSurfaceCompositeBlend(-2, false), 0);
+});
+'''
+          test_path.write_text(tests)
+
+          docs_path = Path('docs/19-celestial-appearance-atmospheres-and-lighting.md')
+          docs = docs_path.read_text()
+          old_doc = '- The default atmosphere renderer is a transparent shell shader with bounded fixed-cost view integration and an analytic light-path optical-depth approximation. It produces view- and light-dependent Rayleigh/Mie-like scattering without global high-cost volumetric raymarching.\n'
+          new_doc = '- The default atmosphere renderer is a transparent shell shader with bounded fixed-cost view integration and an analytic light-path optical-depth approximation. It produces view- and light-dependent Rayleigh/Mie-like scattering without global high-cost volumetric raymarching. Presentation-only limb shaping continuously blends disk and exterior gains and fades radiance to zero before the finite shell boundary; this shaping is applied after transport and never changes physical optics or irradiance.\n'
+          if old_doc not in docs:
+              raise SystemExit('docs anchor not found')
+          docs_path.write_text(docs.replace(old_doc, new_doc, 1))
+          PY
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test Three.js package
+        run: pnpm --filter orbit-engine-three test
+      - name: Build solar-system demo
+        run: pnpm demo:build
+      - name: Verify no accidental broad changes
+        run: git diff --check
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          git rm .github/workflows/apply-atmosphere-softening.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/orbit-engine-three/src/view.ts \
+                  packages/orbit-engine-three/src/presentation/atmosphere-math.ts \
+                  packages/orbit-engine-three/tests/atmosphere-math.test.mjs \
+                  docs/19-celestial-appearance-atmospheres-and-lighting.md
+          git commit -m "fix: soften atmosphere limb transition"
+          git push origin HEAD:fix/244-atmosphere-radiance
