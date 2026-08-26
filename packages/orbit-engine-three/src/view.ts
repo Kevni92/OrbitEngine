@@ -20,7 +20,12 @@ import { createAdaptiveSizingConfiguration, resolveBodySizing, type AdaptiveSizi
 import { OrbitPathRenderer, type OrbitPathRendererOptions, type OrbitPathRendererWorkDiagnostics, type OrbitPathStyle } from "./orbit-renderer.js";
 import { SelectionIndicator, type SelectionIndicatorOptions } from "./selection.js";
 import { applyTexturedBodyPoleAlignment } from "./texture-orientation.js";
-import { normalizeAtmosphereOpticsForTransport } from "./presentation/atmosphere-math.js";
+import {
+  ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION,
+  ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS,
+  ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS,
+  normalizeAtmosphereOpticsForTransport,
+} from "./presentation/atmosphere-math.js";
 
 const MAX_LIGHTS = 4;
 const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
@@ -120,6 +125,9 @@ const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
 const float LIMB_DISPLAY_GAIN = 1.25;
+const float OUTER_FADE_START = ${ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION.toFixed(2)};
+const float SURFACE_BLEND_INNER = ${ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS.toFixed(2)};
+const float SURFACE_BLEND_OUTER = ${ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS.toFixed(2)};
 const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
 
 float rayleighPhase(float cosine) {
@@ -267,13 +275,29 @@ void main() {
 
   float densityPath = integratedDensityScaleHeights / verticalIntegral;
   float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
+
+  // Presentation shaping is derived from the ray's projected distance to the
+  // physical limb, measured in shell widths. It is applied only after the
+  // bounded transport integration so physical scattering/extinction stays
+  // untouched while the finite render shell gets a continuous visual edge.
+  float closestRayDistance = max(dot(uBodyCenter - rayOrigin, rayDirection), 0.0);
+  float impactRadius = length(rayOrigin + rayDirection * closestRayDistance - uBodyCenter);
+  float signedLimbShellWidths = (impactRadius - uBodyRadius) / presentationThickness;
+  float surfaceCompositeBlend = bodyIntersectsView
+    ? 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths)
+    : 0.0;
+  float exteriorShellFraction = max(signedLimbShellWidths, 0.0);
+  float outerFade = 1.0 - smoothstep(OUTER_FADE_START, 1.0, exteriorShellFraction);
+
   // A body hit only limits the integrated path to the front shell. Its
   // atmosphere remains visible over the already-rendered opaque surface.
-  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
+  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94) * outerFade;
   float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
-  // Keep the physical shell readable without turning it into a hard outline;
-  // the selective post-process owns the softer low-frequency exterior glow.
+  // Keep the existing inspector-tunable gains, but hand off continuously at
+  // the silhouette instead of switching from disk gain to shell gain in one
+  // pixel. Deeper on the disk the bounded composite gain still protects texture.
   float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;
+  displayGain = mix(DISPLAY_GAIN, displayGain, surfaceCompositeBlend);
   vec3 radiance = integratedScattering * displayGain * limbGain;
   gl_FragColor = vec4(radiance * alpha, alpha);
 #include <tonemapping_fragment>

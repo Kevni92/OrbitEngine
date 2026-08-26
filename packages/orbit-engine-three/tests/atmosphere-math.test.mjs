@@ -4,6 +4,8 @@ import {
   atmosphereCompositeAlpha,
   atmosphereCompositeRadiance,
   atmosphereOpticalDepth,
+  atmosphereOuterShellFade,
+  atmosphereSurfaceCompositeBlend,
   atmosphereSingleScatteringSample,
   atmosphereTransmittance,
   normalizeAtmosphereOpticsForTransport,
@@ -134,4 +136,25 @@ test("display exposure changes atmosphere presentation without changing physical
   assert.equal(mapIrradianceToSceneIntensity(physicalIrradiance), illumination.contributions[0].exposureMappedIrradiance);
   assert.equal(exposed.b / baseline.b, 4);
   assert.equal(displayExposureForIrradiance(physicalIrradiance), 512);
+});
+
+
+test("presentation shell fades continuously to zero before the finite mesh edge", () => {
+  assert.equal(atmosphereOuterShellFade(-0.5), 1);
+  assert.equal(atmosphereOuterShellFade(0), 1);
+  assert.equal(atmosphereOuterShellFade(0.35), 1);
+  const middle = atmosphereOuterShellFade(0.7);
+  assert.ok(middle > 0 && middle < 1);
+  assert.equal(atmosphereOuterShellFade(1), 0);
+  assert.equal(atmosphereOuterShellFade(2), 0);
+});
+
+test("surface composite gain hands off continuously to the exterior limb gain", () => {
+  assert.equal(atmosphereSurfaceCompositeBlend(-2, true), 1);
+  const inner = atmosphereSurfaceCompositeBlend(-1, true);
+  const nearLimb = atmosphereSurfaceCompositeBlend(-0.1, true);
+  assert.ok(inner > nearLimb);
+  assert.ok(nearLimb > 0 && nearLimb < 1);
+  assert.equal(atmosphereSurfaceCompositeBlend(0.1, true), 0);
+  assert.equal(atmosphereSurfaceCompositeBlend(-2, false), 0);
 });
