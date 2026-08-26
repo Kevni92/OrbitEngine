@@ -36,6 +36,7 @@ jobs:
           PY
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:ts
+      - run: pnpm build:three
       - run: pnpm --filter orbit-engine-solar-system-demo test:unit
       - run: git diff --check
       - name: Commit validated test fix
