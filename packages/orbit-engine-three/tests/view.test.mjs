@@ -151,7 +151,9 @@ test("view creates composed star, planet, moon, and bounded atmosphere resources
   assert.match(atmosphereShader, /integrateLightTransmittance\(samplePosition, lightDirection\)/);
   assert.doesNotMatch(atmosphereShader, /dayFactor/);
   assert.match(atmosphereShader, /bodyIntersectsView = true/);
-  assert.match(atmosphereShader, /float displayGain = bodyIntersectsView/);
+  assert.match(atmosphereShader, /const float SURFACE_DISPLAY_GAIN/);
+  assert.match(atmosphereShader, /float tangentCompression = inversesqrt/);
+  assert.match(atmosphereShader, /float displayGain = mix\(DISPLAY_GAIN, SURFACE_DISPLAY_GAIN, surfaceCompositeBlend\)/);
   assert.doesNotMatch(atmosphereShader, /bodyIntersectsView\s*\?\s*0\.0/);
   assert.match(atmosphereShader, /gl_FragColor = vec4\(radiance \* alpha, alpha\)/);
   assert.match(atmosphereShader, /#include <tonemapping_fragment>/);
