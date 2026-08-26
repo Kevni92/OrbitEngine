@@ -6,6 +6,9 @@ export interface LightingInspectorTuning {
   readonly atmosphereAbsorptionGain: number;
   readonly atmosphereOpticalDepthGain: number;
   readonly atmosphereAnisotropyScale: number;
+  readonly atmosphereShellDisplayGain: number;
+  readonly atmosphereSurfaceCompositeGain: number;
+  readonly atmosphereLimbGain: number;
   readonly bloomStrength: number;
   readonly bloomRadius: number;
   readonly bloomCompositeGain: number;
@@ -23,6 +26,9 @@ export const DEFAULT_LIGHTING_INSPECTOR_TUNING: LightingInspectorTuning = Object
   atmosphereAbsorptionGain: 1,
   atmosphereOpticalDepthGain: 1,
   atmosphereAnisotropyScale: 1,
+  atmosphereShellDisplayGain: 3.5,
+  atmosphereSurfaceCompositeGain: 0.38,
+  atmosphereLimbGain: 1.25,
   bloomStrength: 0.28,
   bloomRadius: 0.85,
   bloomCompositeGain: 0.75,
@@ -41,7 +47,7 @@ interface InspectorControl {
   readonly step: number;
 }
 
-const STORAGE_KEY = "orbit-engine-demo-lighting-inspector-v1";
+const STORAGE_KEY = "orbit-engine-demo-lighting-inspector-v2";
 
 const CONTROL_GROUPS: readonly Readonly<{
   readonly title: string;
@@ -65,6 +71,15 @@ const CONTROL_GROUPS: readonly Readonly<{
       { key: "atmosphereAbsorptionGain", label: "Absorption gain", help: "Strengthens wavelength-dependent atmospheric absorption; higher values remove more light along long paths.", min: 0, max: 4, step: 0.05 },
       { key: "atmosphereOpticalDepthGain", label: "Optical depth", help: "Scales total atmospheric path density/opacity without changing the authored RGB coefficient ratios.", min: 0.1, max: 4, step: 0.05 },
       { key: "atmosphereAnisotropyScale", label: "Mie anisotropy scale", help: "Scales the authored aerosol forward-scattering anisotropy. 0 makes the anisotropic component isotropic; 1 uses the dataset value.", min: 0, max: 1.5, step: 0.05 },
+    ],
+  },
+  {
+    title: "Atmosphere shell presentation",
+    description: "These are the three shader presentation gains that were previously hard-coded and repeatedly tuned during the atmosphere fixes.",
+    controls: [
+      { key: "atmosphereShellDisplayGain", label: "Shell display gain", help: "Brightness of atmosphere pixels outside the opaque planet silhouette before bloom.", min: 0, max: 10, step: 0.1 },
+      { key: "atmosphereSurfaceCompositeGain", label: "Surface composite gain", help: "Brightness of front-side atmosphere composited over the visible planet disk. Too high washes out textures and drives the limb white.", min: 0, max: 2, step: 0.02 },
+      { key: "atmosphereLimbGain", label: "Limb gain", help: "Extra brightness for long tangent paths near the atmospheric rim. Higher values emphasize the thin outline before bloom.", min: 1, max: 4, step: 0.05 },
     ],
   },
   {
@@ -126,7 +141,7 @@ function ensureInspectorStyles(): void {
 #lighting-inspector .lighting-inspector-control input[type=range] { grid-column: 1 / -1; width: 100%; margin: 2px 0 0; accent-color: #60a5fa; }
 #lighting-inspector .lighting-inspector-control small { grid-column: 1 / -1; color: var(--muted, #94a3b8); font-size: .65rem; line-height: 1.3; }
 #lighting-inspector .lighting-inspector-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-#lighting-inspector .lighting-inspector-copy-status { margin: 8px 0 0; min-height: 1em; font-size: .68rem; color: #93c5fd; }
+#lighting-inspector .lighting-inspector-copy-status { margin: 8px 0 0; min-height: 1em; font-size: .68rem; color: #93c5fd; white-space: pre-wrap; }
 `;
   document.head.append(style);
 }
