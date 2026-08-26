@@ -24,6 +24,8 @@ const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
 // constants that require another rebuild for every visual iteration.
 const BLOOM_COMPOSER_PIXEL_RATIO = 0.5;
 const BLOOM_THRESHOLD = 0.0;
+const ATMOSPHERE_SHADER_BASE_KEY = "orbitInspectorAtmosphereBaseFragmentShader";
+const ATMOSPHERE_SHADER_TUNING_KEY = "orbitInspectorAtmosphereTuningSignature";
 
 export class WebGL2UnavailableError extends Error {
   constructor() {
@@ -119,6 +121,39 @@ function ensureAtmosphereShellBlending(material: THREE.ShaderMaterial): void {
     material.premultipliedAlpha = true;
     material.needsUpdate = true;
   }
+}
+
+function applyAtmosphereShaderPresentationTuning(
+  material: THREE.ShaderMaterial,
+  tuning: LightingInspectorTuning,
+): void {
+  const data = material.userData as Record<string, unknown>;
+  const storedBase = data[ATMOSPHERE_SHADER_BASE_KEY];
+  const baseFragmentShader = typeof storedBase === "string" ? storedBase : material.fragmentShader;
+  if (storedBase === undefined) data[ATMOSPHERE_SHADER_BASE_KEY] = baseFragmentShader;
+  const signature = [
+    tuning.atmosphereShellDisplayGain,
+    tuning.atmosphereSurfaceCompositeGain,
+    tuning.atmosphereLimbGain,
+  ].map((value) => value.toFixed(4)).join(":");
+  if (data[ATMOSPHERE_SHADER_TUNING_KEY] === signature) return;
+
+  const patched = baseFragmentShader
+    .replace(
+      /const float DISPLAY_GAIN = [-+0-9.eE]+;/,
+      `const float DISPLAY_GAIN = ${tuning.atmosphereShellDisplayGain.toFixed(4)};`,
+    )
+    .replace(
+      /const float LIMB_DISPLAY_GAIN = [-+0-9.eE]+;/,
+      `const float LIMB_DISPLAY_GAIN = ${tuning.atmosphereLimbGain.toFixed(4)};`,
+    )
+    .replace(
+      /float displayGain = bodyIntersectsView \? [-+0-9.eE]+ : DISPLAY_GAIN;/,
+      `float displayGain = bodyIntersectsView ? ${tuning.atmosphereSurfaceCompositeGain.toFixed(4)} : DISPLAY_GAIN;`,
+    );
+  material.fragmentShader = patched;
+  material.needsUpdate = true;
+  data[ATMOSPHERE_SHADER_TUNING_KEY] = signature;
 }
 
 function captureAtmosphereMaterial(material: THREE.ShaderMaterial): AtmosphereMaterialState | undefined {
@@ -343,6 +378,7 @@ void main() {
         }
         if (object.userData.atmosphereBloomSource === true) {
           ensureAtmosphereShellBlending(material);
+          applyAtmosphereShaderPresentationTuning(material, tuning);
           const runtimeState = applyRuntimeAtmosphereTuning(material, tuning);
           if (runtimeState !== undefined) runtimeAtmosphereStates.push(runtimeState);
           const bloomState = prepareAtmosphereBloomMaterial(material, tuning);
