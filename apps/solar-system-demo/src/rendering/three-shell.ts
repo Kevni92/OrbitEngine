@@ -9,33 +9,21 @@ import {
   MAX_DISPLAY_EXPOSURE,
   MIN_DISPLAY_EXPOSURE,
 } from "orbit-engine-three/presentation";
+import {
+  DEFAULT_LIGHTING_INSPECTOR_TUNING,
+  installLightingInspector,
+  type LightingInspectorTuning,
+} from "../ui/lighting-inspector.js";
 
 const DEFAULT_DISPLAY_EXPOSURE = 1;
 const DISPLAY_TONE_MAPPING_MODE = "ACESFilmic" as const;
 const SCENE_UP_VECTOR = Object.freeze({ x: 0, y: 0, z: 1 });
 
-// Bloom is deliberately presentation-only and atmosphere-only. Keep the source
-// at half resolution so the fixed UnrealBloom mip chain produces a compact,
-// photographic falloff without turning weak tail values into a scene-wide fog.
+// Bloom resolution stays fixed for predictable cost. All perceptual bloom
+// controls are exposed through the runtime inspector instead of being hidden
+// constants that require another rebuild for every visual iteration.
 const BLOOM_COMPOSER_PIXEL_RATIO = 0.5;
-const BLOOM_STRENGTH = 0.28;
-const BLOOM_RADIUS = 0.85;
 const BLOOM_THRESHOLD = 0.0;
-const BLOOM_COMPOSITE_GAIN = 0.75;
-const BLOOM_SURFACE_WEIGHT = 0.16;
-
-// Dense atmospheres can become almost black in the bounded single-scattering
-// source pass even though a photographic atmosphere still has a visible halo
-// through multiple scattering. The base scene keeps the physical optical depth;
-// only the bloom-source render uses this bounded presentation cap.
-const BLOOM_SOURCE_MAX_OPTICAL_DEPTH = 1.25;
-
-// Spectrally coloured aerosols should colour their own bloom. These gains are
-// derived from the existing Mie spectral contrast, never from body IDs. A
-// strongly coloured dust/haze atmosphere therefore lets Mie dominate its halo,
-// while near-neutral aerosols remain close to the physical source balance.
-const BLOOM_SOURCE_MIE_CHROMA_GAIN = 4.0;
-const BLOOM_SOURCE_RAYLEIGH_CHROMA_REDUCTION = 0.90;
 
 export class WebGL2UnavailableError extends Error {
   constructor() {
@@ -108,11 +96,13 @@ export function isWebGL2Available(canvas: HTMLCanvasElement): boolean {
   return canvas.getContext("webgl2") !== null;
 }
 
-interface AtmosphereBloomMaterialState {
+interface AtmosphereMaterialState {
   readonly material: THREE.ShaderMaterial;
   readonly rayleigh: THREE.Vector3;
   readonly mie: THREE.Vector3;
+  readonly absorption: THREE.Vector3;
   readonly opticalDepth: number;
+  readonly anisotropy: number;
 }
 
 function linearRgbLuminance(value: THREE.Vector3): number {
@@ -131,49 +121,93 @@ function ensureAtmosphereShellBlending(material: THREE.ShaderMaterial): void {
   }
 }
 
-function prepareAtmosphereBloomMaterial(material: THREE.ShaderMaterial): AtmosphereBloomMaterialState | undefined {
+function captureAtmosphereMaterial(material: THREE.ShaderMaterial): AtmosphereMaterialState | undefined {
   const rayleigh = material.uniforms.uRayleighScattering?.value;
   const mie = material.uniforms.uMieScattering?.value;
+  const absorption = material.uniforms.uAbsorption?.value;
   const opticalDepth = material.uniforms.uReferenceVerticalOpticalDepth?.value;
+  const anisotropy = material.uniforms.uMieAnisotropy?.value;
   if (!(rayleigh instanceof THREE.Vector3)
     || !(mie instanceof THREE.Vector3)
+    || !(absorption instanceof THREE.Vector3)
     || typeof opticalDepth !== "number"
-    || !Number.isFinite(opticalDepth)) {
+    || !Number.isFinite(opticalDepth)
+    || typeof anisotropy !== "number"
+    || !Number.isFinite(anisotropy)) {
     return undefined;
   }
-
-  const state: AtmosphereBloomMaterialState = {
+  return {
     material,
     rayleigh: rayleigh.clone(),
     mie: mie.clone(),
+    absorption: absorption.clone(),
     opticalDepth,
+    anisotropy,
   };
+}
 
-  const mieLuminance = Math.max(linearRgbLuminance(mie), Number.EPSILON);
-  const spectralContrast = THREE.MathUtils.clamp(Math.abs(mie.x - mie.z) / mieLuminance, 0, 1);
-  const mieGain = 1 + BLOOM_SOURCE_MIE_CHROMA_GAIN * spectralContrast;
-  const rayleighGain = 1 - BLOOM_SOURCE_RAYLEIGH_CHROMA_REDUCTION * spectralContrast;
+function restoreAtmosphereMaterial(state: AtmosphereMaterialState): void {
+  const rayleigh = state.material.uniforms.uRayleighScattering?.value;
+  const mie = state.material.uniforms.uMieScattering?.value;
+  const absorption = state.material.uniforms.uAbsorption?.value;
+  if (rayleigh instanceof THREE.Vector3) rayleigh.copy(state.rayleigh);
+  if (mie instanceof THREE.Vector3) mie.copy(state.mie);
+  if (absorption instanceof THREE.Vector3) absorption.copy(state.absorption);
+  if (state.material.uniforms.uReferenceVerticalOpticalDepth !== undefined) {
+    state.material.uniforms.uReferenceVerticalOpticalDepth.value = state.opticalDepth;
+  }
+  if (state.material.uniforms.uMieAnisotropy !== undefined) {
+    state.material.uniforms.uMieAnisotropy.value = state.anisotropy;
+  }
+}
 
-  // This modifies only the off-screen bloom source. The actual atmosphere shell
-  // is restored before the base scene render, so physical transport diagnostics
-  // and the visible in-shell scattering remain unchanged.
-  rayleigh.multiplyScalar(rayleighGain);
-  mie.multiplyScalar(mieGain);
-  material.uniforms.uReferenceVerticalOpticalDepth!.value = Math.min(
-    Math.max(opticalDepth, 0),
-    BLOOM_SOURCE_MAX_OPTICAL_DEPTH,
+function applyRuntimeAtmosphereTuning(
+  material: THREE.ShaderMaterial,
+  tuning: LightingInspectorTuning,
+): AtmosphereMaterialState | undefined {
+  const state = captureAtmosphereMaterial(material);
+  if (state === undefined) return undefined;
+  const rayleigh = material.uniforms.uRayleighScattering!.value as THREE.Vector3;
+  const mie = material.uniforms.uMieScattering!.value as THREE.Vector3;
+  const absorption = material.uniforms.uAbsorption!.value as THREE.Vector3;
+  rayleigh.multiplyScalar(tuning.atmosphereRayleighGain);
+  mie.multiplyScalar(tuning.atmosphereMieGain);
+  absorption.multiplyScalar(tuning.atmosphereAbsorptionGain);
+  material.uniforms.uReferenceVerticalOpticalDepth!.value = Math.max(
+    0,
+    state.opticalDepth * tuning.atmosphereOpticalDepthGain,
+  );
+  material.uniforms.uMieAnisotropy!.value = THREE.MathUtils.clamp(
+    state.anisotropy * tuning.atmosphereAnisotropyScale,
+    -0.95,
+    0.95,
   );
   return state;
 }
 
-function restoreAtmosphereBloomMaterial(state: AtmosphereBloomMaterialState): void {
-  const rayleigh = state.material.uniforms.uRayleighScattering?.value;
-  const mie = state.material.uniforms.uMieScattering?.value;
-  if (rayleigh instanceof THREE.Vector3) rayleigh.copy(state.rayleigh);
-  if (mie instanceof THREE.Vector3) mie.copy(state.mie);
-  if (state.material.uniforms.uReferenceVerticalOpticalDepth !== undefined) {
-    state.material.uniforms.uReferenceVerticalOpticalDepth.value = state.opticalDepth;
-  }
+function prepareAtmosphereBloomMaterial(
+  material: THREE.ShaderMaterial,
+  tuning: LightingInspectorTuning,
+): AtmosphereMaterialState | undefined {
+  const state = captureAtmosphereMaterial(material);
+  if (state === undefined) return undefined;
+  const rayleigh = material.uniforms.uRayleighScattering!.value as THREE.Vector3;
+  const mie = material.uniforms.uMieScattering!.value as THREE.Vector3;
+  const mieLuminance = Math.max(linearRgbLuminance(mie), Number.EPSILON);
+  const spectralContrast = THREE.MathUtils.clamp(Math.abs(mie.x - mie.z) / mieLuminance, 0, 1);
+  const mieGain = 1 + tuning.bloomSourceMieChromaGain * spectralContrast;
+  const rayleighGain = 1 - tuning.bloomSourceRayleighReduction * spectralContrast;
+
+  // This modifies only the off-screen bloom source. The actual atmosphere shell
+  // is restored before the base scene render, so physical transport diagnostics
+  // and the visible in-shell scattering remain unchanged.
+  rayleigh.multiplyScalar(Math.max(0, rayleighGain));
+  mie.multiplyScalar(Math.max(0, mieGain));
+  material.uniforms.uReferenceVerticalOpticalDepth!.value = Math.min(
+    Math.max(state.opticalDepth, 0),
+    tuning.bloomSourceOpticalDepthCap,
+  );
+  return state;
 }
 
 export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
@@ -199,33 +233,37 @@ export function createRenderShell(canvas: HTMLCanvasElement): RenderShell {
   controls.update();
   updateCameraClipPlanes(camera, controls.target);
 
+  let tuning: LightingInspectorTuning = { ...DEFAULT_LIGHTING_INSPECTOR_TUNING };
+  let resolvedDisplayExposure = DEFAULT_DISPLAY_EXPOSURE;
+
   // Atmosphere shells are marked by orbit-engine-three at their source. The
   // bloom composer temporarily hides every other renderable, so guides,
   // selection indicators, cloud overlays and body surfaces can never
-  // contribute to the halo. The reduced-resolution fixed mip chain supplies a
-  // bounded exterior falloff instead of enlarging the physical atmosphere.
+  // contribute to the halo.
   const bloomComposer = new EffectComposer(renderer);
   bloomComposer.setPixelRatio(BLOOM_COMPOSER_PIXEL_RATIO);
   bloomComposer.renderToScreen = false;
   bloomComposer.addPass(new RenderPass(scene, camera));
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(512, 512), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD);
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(512, 512),
+    tuning.bloomStrength,
+    tuning.bloomRadius,
+    BLOOM_THRESHOLD,
+  );
   bloomComposer.addPass(bloomPass);
 
   const finalComposer = new EffectComposer(renderer);
   const finalScenePass = new RenderPass(scene, camera);
   finalComposer.addPass(finalScenePass);
 
-  // Keep base radiance and the selective atmosphere bloom in the same linear
-  // HDR domain. Renderer exposure, ACES and the sRGB transfer happen only after
-  // both sources have been combined. Do not remap low-light bloom values: the
-  // blur itself owns the spatial falloff. A small in-surface contribution lets
-  // the atmosphere's own chroma tint the immediate limb without washing out the
-  // planetary disk; the full bloom contribution is reserved for dark exterior
-  // pixels.
+  // Base radiance and selective atmosphere bloom stay in the same linear HDR
+  // domain. Exposure, ACES and sRGB happen exactly once in OutputPass.
   const finalPass = new ShaderPass(new THREE.ShaderMaterial({
     uniforms: {
       tBase: { value: null },
       tBloom: { value: bloomComposer.renderTarget2.texture },
+      uBloomCompositeGain: { value: tuning.bloomCompositeGain },
+      uBloomSurfaceWeight: { value: tuning.bloomSurfaceWeight },
     },
     vertexShader: `
 varying vec2 vUv;
@@ -237,16 +275,16 @@ void main() {
     fragmentShader: `
 uniform sampler2D tBase;
 uniform sampler2D tBloom;
+uniform float uBloomCompositeGain;
+uniform float uBloomSurfaceWeight;
 varying vec2 vUv;
 const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
-const float BLOOM_COMPOSITE_GAIN = ${BLOOM_COMPOSITE_GAIN.toFixed(2)};
-const float BLOOM_SURFACE_WEIGHT = ${BLOOM_SURFACE_WEIGHT.toFixed(2)};
 void main() {
   vec4 base = texture2D(tBase, vUv);
-  vec3 bloom = texture2D(tBloom, vUv).rgb * BLOOM_COMPOSITE_GAIN;
+  vec3 bloom = texture2D(tBloom, vUv).rgb * uBloomCompositeGain;
   float baseLuminance = max(dot(base.rgb, LINEAR_LUMINANCE), 0.0);
   float exteriorWeight = 1.0 - smoothstep(0.04, 0.20, baseLuminance);
-  float bloomWeight = mix(BLOOM_SURFACE_WEIGHT, 1.0, exteriorWeight);
+  float bloomWeight = mix(uBloomSurfaceWeight, 1.0, exteriorWeight);
   gl_FragColor = vec4(base.rgb + bloom * bloomWeight, base.a);
 }
 `,
@@ -256,12 +294,30 @@ void main() {
   }), "tBase");
   finalComposer.addPass(finalPass);
 
-  // EffectComposer renders the preceding passes into offscreen targets, where
-  // WebGLRenderer intentionally disables tone mapping. OutputPass is therefore
-  // the single authoritative display transform: it reads the renderer's
-  // toneMappingExposure and applies ACES + output color-space conversion once.
+  // EffectComposer renders preceding passes into offscreen targets, where the
+  // renderer intentionally does not apply its final tone mapping. OutputPass is
+  // therefore the single authoritative display transform.
   const outputPass = new OutputPass();
   finalComposer.addPass(outputPass);
+
+  function applyDisplayExposure(): void {
+    renderer.toneMappingExposure = THREE.MathUtils.clamp(
+      resolvedDisplayExposure * tuning.exposureMultiplier,
+      MIN_DISPLAY_EXPOSURE,
+      MAX_DISPLAY_EXPOSURE,
+    );
+  }
+
+  function applyInspectorTuning(next: LightingInspectorTuning): void {
+    tuning = { ...next };
+    bloomPass.strength = tuning.bloomStrength;
+    bloomPass.radius = tuning.bloomRadius;
+    finalPass.material.uniforms.uBloomCompositeGain!.value = tuning.bloomCompositeGain;
+    finalPass.material.uniforms.uBloomSurfaceWeight!.value = tuning.bloomSurfaceWeight;
+    applyDisplayExposure();
+  }
+
+  const lightingInspector = installLightingInspector(applyInspectorTuning);
 
   function isRenderable(object: THREE.Object3D): boolean {
     const candidate = object as THREE.Object3D & {
@@ -275,31 +331,43 @@ void main() {
 
   function render(): void {
     const hidden = new Map<THREE.Object3D, boolean>();
-    const atmosphereStates: AtmosphereBloomMaterialState[] = [];
+    const runtimeAtmosphereStates: AtmosphereMaterialState[] = [];
+    const bloomAtmosphereStates: AtmosphereMaterialState[] = [];
+
     scene.traverse((object) => {
       if (!isRenderable(object)) return;
-      if (object.userData.atmosphereBloomSource === true) {
-        const material = (object as THREE.Mesh).material;
-        if (material instanceof THREE.ShaderMaterial) {
-          ensureAtmosphereShellBlending(material);
-          const state = prepareAtmosphereBloomMaterial(material);
-          if (state !== undefined) atmosphereStates.push(state);
+      const material = (object as THREE.Mesh).material;
+      if (material instanceof THREE.ShaderMaterial) {
+        if (material.uniforms.uSurfaceRadianceDisplayGain !== undefined) {
+          material.uniforms.uSurfaceRadianceDisplayGain.value = tuning.surfaceRadianceGain;
         }
-        return;
+        if (object.userData.atmosphereBloomSource === true) {
+          ensureAtmosphereShellBlending(material);
+          const runtimeState = applyRuntimeAtmosphereTuning(material, tuning);
+          if (runtimeState !== undefined) runtimeAtmosphereStates.push(runtimeState);
+          const bloomState = prepareAtmosphereBloomMaterial(material, tuning);
+          if (bloomState !== undefined) bloomAtmosphereStates.push(bloomState);
+          return;
+        }
       }
       hidden.set(object, object.visible);
       object.visible = false;
     });
+
     const previousBackground = scene.background;
     scene.background = null;
     try {
-      bloomComposer.render();
+      try {
+        bloomComposer.render();
+      } finally {
+        scene.background = previousBackground;
+        for (const state of bloomAtmosphereStates) restoreAtmosphereMaterial(state);
+        for (const [object, visible] of hidden) object.visible = visible;
+      }
+      finalComposer.render();
     } finally {
-      scene.background = previousBackground;
-      for (const state of atmosphereStates) restoreAtmosphereBloomMaterial(state);
-      for (const [object, visible] of hidden) object.visible = visible;
+      for (const state of runtimeAtmosphereStates) restoreAtmosphereMaterial(state);
     }
-    finalComposer.render();
   }
 
   function resize(width: number, height: number): void {
@@ -312,6 +380,7 @@ void main() {
   }
 
   function dispose(): void {
+    lightingInspector.dispose();
     controls.dispose();
     bloomPass.dispose();
     bloomComposer.dispose();
@@ -352,7 +421,8 @@ void main() {
     if (!Number.isFinite(exposure) || exposure < MIN_DISPLAY_EXPOSURE || exposure > MAX_DISPLAY_EXPOSURE) {
       throw new RangeError(`Display exposure must be finite and within [${MIN_DISPLAY_EXPOSURE}, ${MAX_DISPLAY_EXPOSURE}]`);
     }
-    renderer.toneMappingExposure = exposure;
+    resolvedDisplayExposure = exposure;
+    applyDisplayExposure();
   }
 
   return {
