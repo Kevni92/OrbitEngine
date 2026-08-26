@@ -26,12 +26,12 @@ export const DEFAULT_LIGHTING_INSPECTOR_TUNING: LightingInspectorTuning = Object
   atmosphereAbsorptionGain: 1,
   atmosphereOpticalDepthGain: 1,
   atmosphereAnisotropyScale: 1,
-  atmosphereShellDisplayGain: 3.5,
-  atmosphereSurfaceCompositeGain: 0.38,
-  atmosphereLimbGain: 1.25,
-  bloomStrength: 0.28,
-  bloomRadius: 0.85,
-  bloomCompositeGain: 0.75,
+  atmosphereShellDisplayGain: 1.8,
+  atmosphereSurfaceCompositeGain: 0.55,
+  atmosphereLimbGain: 1,
+  bloomStrength: 0.38,
+  bloomRadius: 0.95,
+  bloomCompositeGain: 0.9,
   bloomSurfaceWeight: 0.16,
   bloomSourceOpticalDepthCap: 1.25,
   bloomSourceMieChromaGain: 4,
@@ -47,7 +47,7 @@ interface InspectorControl {
   readonly step: number;
 }
 
-const STORAGE_KEY = "orbit-engine-demo-lighting-inspector-v2";
+const STORAGE_KEY = "orbit-engine-demo-lighting-inspector-v3";
 
 const CONTROL_GROUPS: readonly Readonly<{
   readonly title: string;

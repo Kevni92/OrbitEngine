@@ -148,8 +148,8 @@ function applyAtmosphereShaderPresentationTuning(
       `const float LIMB_DISPLAY_GAIN = ${tuning.atmosphereLimbGain.toFixed(4)};`,
     )
     .replace(
-      /float displayGain = bodyIntersectsView \? [-+0-9.eE]+ : DISPLAY_GAIN;/,
-      `float displayGain = bodyIntersectsView ? ${tuning.atmosphereSurfaceCompositeGain.toFixed(4)} : DISPLAY_GAIN;`,
+      /const float SURFACE_DISPLAY_GAIN = [-+0-9.eE]+;/,
+      `const float SURFACE_DISPLAY_GAIN = ${tuning.atmosphereSurfaceCompositeGain.toFixed(4)};`,
     );
   material.fragmentShader = patched;
   material.needsUpdate = true;

@@ -124,6 +124,7 @@ const int LIGHT_SAMPLES = ${ATMOSPHERE_LIGHT_SAMPLES};
 const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
+const float SURFACE_DISPLAY_GAIN = ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)};
 const float LIMB_DISPLAY_GAIN = 1.25;
 const float OUTER_FADE_START = ${ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION.toFixed(2)};
 const float SURFACE_BLEND_INNER = ${ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS.toFixed(2)};
@@ -283,22 +284,26 @@ void main() {
   float closestRayDistance = max(dot(uBodyCenter - rayOrigin, rayDirection), 0.0);
   float impactRadius = length(rayOrigin + rayDirection * closestRayDistance - uBodyCenter);
   float signedLimbShellWidths = (impactRadius - uBodyRadius) / presentationThickness;
-  float surfaceCompositeBlend = bodyIntersectsView
-    ? 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths)
-    : 0.0;
+  float surfaceCompositeBlend = 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths);
   float exteriorShellFraction = max(signedLimbShellWidths, 0.0);
   float outerFade = 1.0 - smoothstep(OUTER_FADE_START, 1.0, exteriorShellFraction);
 
   // A body hit only limits the integrated path to the front shell. Its
   // atmosphere remains visible over the already-rendered opaque surface.
   float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94) * outerFade;
+
+  // Tangent paths are physically bright, but multiplying that peak with a
+  // large shell gain creates a narrow wire ring. Compress presentation
+  // amplitude only; the integrated RGB transport remains unchanged.
+  float longPathExcess = max(densityPath - 1.0, 0.0);
+  float tangentCompression = inversesqrt(1.0 + 0.30 * longPathExcess * longPathExcess);
   float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
-  // Keep the existing inspector-tunable gains, but hand off continuously at
-  // the silhouette instead of switching from disk gain to shell gain in one
-  // pixel. Deeper on the disk the bounded composite gain still protects texture.
-  float displayGain = bodyIntersectsView ? ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)} : DISPLAY_GAIN;
-  displayGain = mix(DISPLAY_GAIN, displayGain, surfaceCompositeBlend);
-  vec3 radiance = integratedScattering * displayGain * limbGain;
+
+  // Cross-fade disk and shell gains across both sides of the silhouette so
+  // atmosphere grows continuously out of the planet instead of starting as
+  // a separately visible circular outline.
+  float displayGain = mix(DISPLAY_GAIN, SURFACE_DISPLAY_GAIN, surfaceCompositeBlend);
+  vec3 radiance = integratedScattering * displayGain * limbGain * tangentCompression;
   gl_FragColor = vec4(radiance * alpha, alpha);
 #include <tonemapping_fragment>
 #include <colorspace_fragment>

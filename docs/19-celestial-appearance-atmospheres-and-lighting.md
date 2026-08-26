@@ -469,7 +469,7 @@ performance guarantee): overview with no shell resources `2.04 ms` average /
 
 This produces the required qualitative behavior:
 
-- bright limb/horizon glow from longer optical path length;
+- broad limb/horizon glow from longer optical path length, with presentation-domain soft-knee compression and a continuous disk-to-shell gain handoff so the finite shell does not appear as a narrow circular wire rim;
 - view-dependent scattering;
 - star-direction-dependent day/night transition;
 - Rayleigh-dominated blue/short-wavelength scattering when coefficients support it;

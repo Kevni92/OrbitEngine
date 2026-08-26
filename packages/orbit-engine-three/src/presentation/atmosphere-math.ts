@@ -37,9 +37,9 @@ const ZERO_RGB: AtmosphereRgb = Object.freeze({ r: 0, g: 0, b: 0 });
 // Presentation-only limb shaping. Values are expressed in atmosphere shell
 // widths so adaptive sizing changes thickness without changing the transition.
 // They are applied after transport and never feed physical optics.
-export const ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION = 0.35;
-export const ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS = -1.5;
-export const ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS = 0.1;
+export const ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION = 0.15;
+export const ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS = -0.5;
+export const ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS = 0.8;
 
 function smoothstep01(value: number): number {
   const t = Math.min(1, Math.max(0, value));
@@ -55,7 +55,9 @@ export function atmosphereOuterShellFade(signedLimbShellWidths: number): number 
 
 export function atmosphereSurfaceCompositeBlend(signedLimbShellWidths: number, bodyIntersectsView: boolean): number {
   finite("signed limb shell widths", signedLimbShellWidths);
-  if (!bodyIntersectsView) return 0;
+  // Let the presentation gain cross the physical silhouette instead of
+  // ending at it. A negative distance without a body hit is invalid input.
+  if (!bodyIntersectsView && signedLimbShellWidths < 0) return 0;
   const width = ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS;
   return 1 - smoothstep01((signedLimbShellWidths - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS) / width);
 }
