@@ -1,4 +1,4 @@
-name: Apply atmosphere softening patch
+name: Validate atmosphere softening patch
 
 on:
   push:
@@ -6,17 +6,13 @@ on:
       - fix/244-atmosphere-radiance
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply:
-    if: github.actor != 'github-actions[bot]'
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: fix/244-atmosphere-radiance
-          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -61,10 +57,8 @@ export function atmosphereSurfaceCompositeBlend(signedLimbShellWidths: number, b
   return 1 - smoothstep01((signedLimbShellWidths - ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS) / width);
 }
 '''
-          if anchor not in math:
-              raise SystemExit('atmosphere-math anchor not found')
-          math = math.replace(anchor, insert, 1)
-          math_path.write_text(math)
+          assert anchor in math
+          math_path.write_text(math.replace(anchor, insert, 1))
 
           view_path = Path('packages/orbit-engine-three/src/view.ts')
           view = view_path.read_text()
@@ -75,10 +69,8 @@ export function atmosphereSurfaceCompositeBlend(signedLimbShellWidths: number, b
   ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS,
   normalizeAtmosphereOpticsForTransport,
 } from "./presentation/atmosphere-math.js";'''
-          if old_import not in view:
-              raise SystemExit('view import anchor not found')
+          assert old_import in view
           view = view.replace(old_import, new_import, 1)
-
           old_constants = '''const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
 const float LIMB_DISPLAY_GAIN = 1.25;
 const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);'''
@@ -88,10 +80,8 @@ const float OUTER_FADE_START = ${ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION.toFi
 const float SURFACE_BLEND_INNER = ${ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS.toFixed(2)};
 const float SURFACE_BLEND_OUTER = ${ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS.toFixed(2)};
 const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);'''
-          if old_constants not in view:
-              raise SystemExit('shader constants anchor not found')
+          assert old_constants in view
           view = view.replace(old_constants, new_constants, 1)
-
           old_tail = '''  float densityPath = integratedDensityScaleHeights / verticalIntegral;
   float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
   // A body hit only limits the integrated path to the front shell. Its
@@ -132,10 +122,8 @@ const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);'''
   displayGain = mix(DISPLAY_GAIN, displayGain, surfaceCompositeBlend);
   vec3 radiance = integratedScattering * displayGain * limbGain;
   gl_FragColor = vec4(radiance * alpha, alpha);'''
-          if old_tail not in view:
-              raise SystemExit('shader tail anchor not found')
-          view = view.replace(old_tail, new_tail, 1)
-          view_path.write_text(view)
+          assert old_tail in view
+          view_path.write_text(view.replace(old_tail, new_tail, 1))
 
           test_path = Path('packages/orbit-engine-three/tests/atmosphere-math.test.mjs')
           tests = test_path.read_text()
@@ -147,8 +135,7 @@ const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);'''
   atmosphereOpticalDepth,
   atmosphereOuterShellFade,
   atmosphereSurfaceCompositeBlend,'''
-          if old_test_import not in tests:
-              raise SystemExit('test import anchor not found')
+          assert old_test_import in tests
           tests = tests.replace(old_test_import, new_test_import, 1)
           tests += '''
 
@@ -178,27 +165,16 @@ test("surface composite gain hands off continuously to the exterior limb gain", 
           docs = docs_path.read_text()
           old_doc = '- The default atmosphere renderer is a transparent shell shader with bounded fixed-cost view integration and an analytic light-path optical-depth approximation. It produces view- and light-dependent Rayleigh/Mie-like scattering without global high-cost volumetric raymarching.\n'
           new_doc = '- The default atmosphere renderer is a transparent shell shader with bounded fixed-cost view integration and an analytic light-path optical-depth approximation. It produces view- and light-dependent Rayleigh/Mie-like scattering without global high-cost volumetric raymarching. Presentation-only limb shaping continuously blends disk and exterior gains and fades radiance to zero before the finite shell boundary; this shaping is applied after transport and never changes physical optics or irradiance.\n'
-          if old_doc not in docs:
-              raise SystemExit('docs anchor not found')
+          assert old_doc in docs
           docs_path.write_text(docs.replace(old_doc, new_doc, 1))
           PY
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Test Three.js package
-        run: pnpm --filter orbit-engine-three test
-      - name: Build solar-system demo
-        run: pnpm demo:build
-      - name: Verify no accidental broad changes
-        run: git diff --check
-      - name: Commit patch and remove temporary workflow
-        shell: bash
-        run: |
-          git rm .github/workflows/apply-atmosphere-softening.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/orbit-engine-three/src/view.ts \
-                  packages/orbit-engine-three/src/presentation/atmosphere-math.ts \
-                  packages/orbit-engine-three/tests/atmosphere-math.test.mjs \
-                  docs/19-celestial-appearance-atmospheres-and-lighting.md
-          git commit -m "fix: soften atmosphere limb transition"
-          git push origin HEAD:fix/244-atmosphere-radiance
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter orbit-engine-three test
+      - run: pnpm demo:build
+      - run: git diff --check
+      - name: Save patch
+        run: git diff --binary > atmosphere-softening.patch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atmosphere-softening-patch
+          path: atmosphere-softening.patch
