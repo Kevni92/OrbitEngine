@@ -28,7 +28,7 @@ It does not define aerodynamic atmosphere physics, weather simulation, terrain g
 - A small versioned optical library maps stable semantic material/species identifiers to approximate visible optical characteristics. Sourced calibrated reflectance may override composition-derived reflectance when available.
 - All color-space math for derived reflectance and illumination is performed in linear RGB; conversion to display sRGB happens only at the renderer output boundary.
 - Atmosphere data includes semantic gas composition plus independently sourceable bulk/optical information such as pressure, scale height, optical depth, haze, and cloud layers.
-- The default atmosphere renderer is a transparent shell shader with bounded fixed-cost view integration and an analytic light-path optical-depth approximation. It produces view- and light-dependent Rayleigh/Mie-like scattering without global high-cost volumetric raymarching.
+- The default atmosphere renderer is a transparent shell shader with bounded fixed-cost view integration and an analytic light-path optical-depth approximation. It produces view- and light-dependent Rayleigh/Mie-like scattering without global high-cost volumetric raymarching. Presentation-only limb shaping continuously blends disk and exterior gains and fades radiance to zero before the finite shell boundary; this shaping is applied after transport and never changes physical optics or irradiance.
 - Stellar emitters provide effective temperature and luminosity. Light chromaticity derives deterministically from a blackbody approximation; irradiance derives from luminosity and authoritative star/body distance using inverse-square falloff.
 - `Physical` lighting contains stellar illumination only. `Enhanced` lighting preserves the same stellar solution and adds a bounded presentation-only inspection fill.
 - Illumination is computed from authoritative SI-space state. Adaptive sphere radius, atmosphere rim exaggeration, render-space units, and marker size never feed physical irradiance calculations.
@@ -354,7 +354,7 @@ W/m² is not passed off as a literal display luminance. The renderer uses one do
 
 A useful reference normalization may map the solar constant at 1 AU to a named unit exposure, but the normalization is presentation policy only. Tone mapping/exposure must not feed back into physical irradiance calculations.
 
-The demo's photographic display policy uses one shared `ACESFilmic` renderer tone map for celestial surfaces and atmosphere shells. The active exposure is selected from the focused body's total physical stellar irradiance: `clamp(1361 / irradiance, 0.18, 512)`, with the default exposure of `1` when the focus has no contributing emitter. This is a bounded camera/display multiplier applied after physical lighting derivation; it does not alter the stored W/m² value, inverse-square ratios, or Enhanced inspection-fill semantics. Diagnostics expose the pre-exposure mapped irradiance, active exposure, and tone-mapping mode.
+The demo's photographic display policy uses one shared `ACESFilmic` renderer tone map for celestial surfaces and atmosphere shells. The active exposure is selected from the focused body's total physical stellar irradiance: `clamp(1361 / irradiance, 0.18, 512)`, with the default exposure of `1` when the focus has no contributing emitter. This is the only exposure multiplier and is applied once at the shared renderer output; it does not alter the stored W/m² value, inverse-square ratios, or Enhanced inspection-fill semantics. Low-albedo texture layers may use a bounded material/layer pre-display radiance calibration to remain readable in a wide scene. That calibration is not per-body exposure and not incident-light or simulation data; cloud-deck maps may use a stronger fixed calibration than solid-surface maps because their source maps are low-contrast disk-albedo records. Diagnostics expose the pre-exposure mapped irradiance, active exposure, and tone-mapping mode.
 
 ## Surface lighting model
 
@@ -386,10 +386,12 @@ The UI exposes exactly two canonical lighting modes.
 
 Rules:
 
-- no artificial ambient or camera fill is applied to non-emissive celestial surfaces;
+- no artificial ambient or camera fill is applied to non-emissive celestial surfaces in `physical` mode;
 - inverse-square stellar irradiance and stellar chromaticity remain visible;
 - night sides may be black except for atmosphere scattering and contributions from additional stars;
 - exposure/tone mapping is allowed because it is a camera/display operation, not fake incident light.
+
+Texture-backed cloud shells use the same direct stellar direction, chromaticity, and exposure-mapped irradiance contract as their companion surface. Their coverage alpha is preserved, and their night-side visibility falls to zero rather than being rendered as an unlit `MeshBasicMaterial` overlay.
 
 The mode is the reference for physically motivated illumination semantics, not a claim of full photometric realism because BRDFs, eclipses and spectral radiative transfer are simplified.
 
@@ -442,7 +444,9 @@ The default WebGL 2 path uses a bounded fixed-cost single-scattering approximati
 4. approximate optical depth toward each light analytically from local altitude, scale height, and light zenith angle instead of nesting a second full raymarch;
 5. apply Rayleigh phase and Henyey-Greenstein-like Mie phase functions;
 6. accumulate stellar contributions in linear RGB;
-7. output premultiplied/transparent HDR scattering and extinction compatible with normal scene depth; final exposure/tone mapping is applied once by the shared renderer output. Where the ray intersects the opaque body, the shell yields to the body disk and remains visible on the projected limb, so dense atmospheres cannot repaint an opaque surface white.
+7. output premultiplied/transparent scattering and extinction compatible with normal scene depth; final exposure/tone mapping is applied once by the shared renderer output. Where the ray intersects the opaque body, the shell yields to the body disk and remains visible on the projected limb, so dense atmospheres cannot repaint an opaque surface white.
+
+The demo may add a selective atmosphere-only bloom after the normal scene render. It renders only meshes explicitly marked as atmosphere bloom sources into a fixed half-resolution `UnrealBloomPass` and composites the result additively. Body surfaces, cloud layers, orbit guides, axes, grids, and selection indicators are excluded. Airless bodies therefore produce no atmospheric halo, and the bloom is a presentation effect that never changes physical radiance or simulation state.
 
 The initial target is 6–8 fixed view samples per atmosphere fragment. The exact selected value is a presentation constant validated by the shader implementation tests and browser profiling; adaptive/unbounded sample counts are forbidden in the default path.
 
@@ -465,7 +469,7 @@ performance guarantee): overview with no shell resources `2.04 ms` average /
 
 This produces the required qualitative behavior:
 
-- bright limb/horizon glow from longer optical path length;
+- broad limb/horizon glow from longer optical path length, with presentation-domain soft-knee compression and a continuous disk-to-shell gain handoff so the finite shell does not appear as a narrow circular wire rim;
 - view-dependent scattering;
 - star-direction-dependent day/night transition;
 - Rayleigh-dominated blue/short-wavelength scattering when coefficients support it;

@@ -3,7 +3,6 @@ import type { ObjectId } from "orbit-engine";
 import {
   blackbodyTemperatureToLinearRgb,
   deriveSurfaceReflectance,
-  displayExposureDiagnostics,
   resolveAtmosphereOptics,
   resolveStellarIllumination,
   inspectionFillContribution,
@@ -21,12 +20,24 @@ import { createAdaptiveSizingConfiguration, resolveBodySizing, type AdaptiveSizi
 import { OrbitPathRenderer, type OrbitPathRendererOptions, type OrbitPathRendererWorkDiagnostics, type OrbitPathStyle } from "./orbit-renderer.js";
 import { SelectionIndicator, type SelectionIndicatorOptions } from "./selection.js";
 import { applyTexturedBodyPoleAlignment } from "./texture-orientation.js";
+import {
+  ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION,
+  ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS,
+  ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS,
+  normalizeAtmosphereOpticsForTransport,
+} from "./presentation/atmosphere-math.js";
 
 const MAX_LIGHTS = 4;
 const ATMOSPHERE_PHYSICAL_EXTENT_SCALE_HEIGHTS = 4;
 const ATMOSPHERE_RIM_THICKNESS_PIXELS = 4;
 const ATMOSPHERE_MAX_RIM_FRACTION = 0.08;
-const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 25;
+const DEFAULT_TEXTURE_REFERENCE_LUMINANCE = 0.18;
+// Presentation gains stay shared across every body. Semantic optics determine
+// body-specific color/strength; the renderer must not contain planet-specific
+// gain branches or a different photometric scale for cloud-deck planets.
+const ATMOSPHERE_SCATTERING_DISPLAY_GAIN = 3.5;
+const ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN = 0.38;
+const SURFACE_RADIANCE_DISPLAY_GAIN = 1.6;
 const ATMOSPHERE_VIEW_SAMPLES = 8;
 const ATMOSPHERE_LIGHT_SAMPLES = 2;
 const SURFACE_VERTEX_SHADER = `
@@ -43,7 +54,8 @@ uniform vec3 uBaseColor;
 uniform vec3 uEmissionColor;
 uniform float uEmissionStrength;
 uniform float uInspectionFill;
-uniform float uDisplayExposure;
+uniform float uSurfaceRadianceDisplayGain;
+uniform float uTextureReferenceLuminance;
 uniform bool uUseTexture;
 uniform sampler2D uSurfaceMap;
 uniform int uLightCount;
@@ -52,9 +64,21 @@ uniform vec3 uLightColors[${MAX_LIGHTS}];
 uniform float uLightIntensity[${MAX_LIGHTS}];
 varying vec3 vWorldNormal;
 varying vec2 vUv;
+const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
 void main() {
   vec3 base = uBaseColor;
-  if (uUseTexture) base *= texture2D(uSurfaceMap, vUv).rgb;
+  if (uUseTexture) {
+    vec3 textureColor = texture2D(uSurfaceMap, vUv).rgb;
+    float textureLuminance = max(dot(textureColor, LINEAR_LUMINANCE), 0.0001);
+    float semanticLuminance = max(dot(uBaseColor, LINEAR_LUMINANCE), 0.0001);
+    float referenceLuminance = max(uTextureReferenceLuminance, 0.01);
+    // Normalize only the asset-wide exposure, not each texel. This keeps the
+    // semantic appearance contract in charge of mean reflectance while
+    // preserving real local texture contrast (oceans/land, bands, craters).
+    vec3 textureChroma = clamp(textureColor / textureLuminance, vec3(0.25), vec3(4.0));
+    float relativeLuminance = clamp(textureLuminance / referenceLuminance, 0.25, 2.25);
+    base = textureChroma * semanticLuminance * relativeLuminance;
+  }
   vec3 incident = vec3(0.0);
   vec3 normal = normalize(vWorldNormal);
   for (int index = 0; index < ${MAX_LIGHTS}; index += 1) {
@@ -65,8 +89,10 @@ void main() {
   // Enhanced inspection light is an emissive presentation assist. Keep it
   // independent of a dark planet texture so a low-albedo map cannot cancel
   // the bounded readability contribution.
-  vec3 radiance = base * incident + vec3(uInspectionFill);
-  gl_FragColor = vec4(radiance * uDisplayExposure + uEmissionColor * uEmissionStrength, 1.0);
+  vec3 radiance = (base * incident + vec3(uInspectionFill)) * uSurfaceRadianceDisplayGain;
+  gl_FragColor = vec4(radiance + uEmissionColor * uEmissionStrength, 1.0);
+#include <tonemapping_fragment>
+#include <colorspace_fragment>
 }`;
 
 const ATMOSPHERE_VERTEX_SHADER = `
@@ -98,16 +124,34 @@ const int LIGHT_SAMPLES = ${ATMOSPHERE_LIGHT_SAMPLES};
 const float PI = 3.14159265359;
 const float EPSILON = 0.000001;
 const float DISPLAY_GAIN = ${ATMOSPHERE_SCATTERING_DISPLAY_GAIN.toFixed(2)};
-const float LIMB_DISPLAY_GAIN = 1.7;
+const float SURFACE_DISPLAY_GAIN = ${ATMOSPHERE_SURFACE_COMPOSITE_DISPLAY_GAIN.toFixed(2)};
+const float LIMB_DISPLAY_GAIN = 1.25;
+const float OUTER_FADE_START = ${ATMOSPHERE_OUTER_FADE_START_SHELL_FRACTION.toFixed(2)};
+const float SURFACE_BLEND_INNER = ${ATMOSPHERE_SURFACE_BLEND_INNER_SHELL_WIDTHS.toFixed(2)};
+const float SURFACE_BLEND_OUTER = ${ATMOSPHERE_SURFACE_BLEND_OUTER_SHELL_WIDTHS.toFixed(2)};
+const vec3 LINEAR_LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
 
 float rayleighPhase(float cosine) {
   return 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
 }
 
 float miePhase(float cosine, float anisotropy) {
-  float g2 = anisotropy * anisotropy;
-  float denominator = max(0.0001, pow(1.0 + g2 - 2.0 * anisotropy * cosine, 1.5));
-  return (1.0 - g2) / (4.0 * PI * denominator);
+  float g = clamp(anisotropy, -0.95, 0.95);
+  float g2 = g * g;
+  float denominator = max(0.0001, pow(1.0 + g2 - 2.0 * g * cosine, 1.5));
+  float henyeyGreenstein = (1.0 - g2) / (4.0 * PI * denominator);
+
+  // A single HG lobe makes spectrally strong aerosols almost disappear in
+  // back-scatter at the bounded 8x2 sample budget. Real dust/haze phase
+  // functions have a broader diffuse/back-scatter component. Derive that
+  // component from the semantic Mie spectral contrast rather than body IDs:
+  // neutral aerosols stay close to HG, strongly coloured aerosols retain their
+  // authored colour on the visible limb and dayside.
+  float mieLuminance = max(dot(uMieScattering, LINEAR_LUMINANCE), EPSILON);
+  float spectralContrast = clamp(abs(uMieScattering.r - uMieScattering.b) / mieLuminance, 0.0, 1.0);
+  float diffuseFraction = mix(0.12, 0.58, spectralContrast);
+  float isotropic = 1.0 / (4.0 * PI);
+  return mix(henyeyGreenstein, isotropic, diffuseFraction);
 }
 
 vec2 raySphereInterval(vec3 rayOrigin, vec3 rayDirection, float sphereRadius) {
@@ -173,10 +217,12 @@ void main() {
   if (segmentEnd <= segmentStart) discard;
 
   vec2 bodyInterval = raySphereInterval(rayOrigin, rayDirection, uBodyRadius);
-  bool bodyOccludesShell = false;
+  bool bodyIntersectsView = false;
   if (bodyInterval.y >= bodyInterval.x && bodyInterval.x > segmentStart) {
+    // The opaque surface truncates the view path, but the integrated
+    // front-side atmosphere still has to be composited over that surface.
     segmentEnd = min(segmentEnd, bodyInterval.x);
-    bodyOccludesShell = true;
+    bodyIntersectsView = true;
   }
   if (segmentEnd <= segmentStart) discard;
 
@@ -196,7 +242,6 @@ void main() {
     vec3 samplePosition = rayOrigin + rayDirection * distanceAlongRay;
     vec3 fromCenter = samplePosition - uBodyCenter;
     float radialDistance = length(fromCenter);
-    vec3 localNormal = normalize(fromCenter);
     float altitudeFraction = clamp((radialDistance - uBodyRadius) / presentationThickness, 0.0, 1.0);
     float altitudeScaleHeights = altitudeFraction * uPhysicalExtentScaleHeights;
     float density = exp(-altitudeScaleHeights);
@@ -205,18 +250,19 @@ void main() {
     float viewOpticalDepthAtSample = uReferenceVerticalOpticalDepth
       * (integratedDensityScaleHeights - sampleColumn * 0.5) / verticalIntegral;
     vec3 viewTransmittance = exp(-extinction * viewOpticalDepthAtSample);
-    float sampleOpticalDepth = uReferenceVerticalOpticalDepth * sampleColumn / verticalIntegral;
-    vec3 viewScatteringWeight = (vec3(1.0) - exp(-extinction * sampleOpticalDepth))
-      / max(extinction, vec3(EPSILON));
+    // The calibrated reference optical depth belongs to the view/light
+    // transmittance and compositing alpha. It must not also scale this source
+    // column or optically thin brightness becomes proportional to it twice.
+    vec3 viewScatteringWeight = vec3(sampleColumn / verticalIntegral);
 
     for (int lightIndex = 0; lightIndex < ${MAX_LIGHTS}; lightIndex++) {
       if (lightIndex >= uLightCount) break;
       vec3 lightDirection = normalize(uLightDirections[lightIndex]);
-      float lightZenithCosine = dot(localNormal, lightDirection);
-      float dayFactor = smoothstep(-0.18, 0.08, lightZenithCosine);
-      if (dayFactor <= 0.0001) continue;
       vec3 lightTransmittance = integrateLightTransmittance(samplePosition, lightDirection);
-      float phaseCosine = dot(viewDirection, lightDirection);
+      // uLightDirections points from the sample toward the emitter, while the
+      // scattering phase uses the incoming photon direction. The photon travels
+      // from the emitter to the sample, so the direction must be negated here.
+      float phaseCosine = dot(viewDirection, -lightDirection);
       vec3 scatteringSource = uRayleighScattering * rayleighPhase(phaseCosine)
         + uMieScattering * miePhase(phaseCosine, uMieAnisotropy);
       integratedScattering += scatteringSource
@@ -224,19 +270,43 @@ void main() {
         * uLightIntensity[lightIndex]
         * lightTransmittance
         * viewTransmittance
-        * dayFactor
         * viewScatteringWeight;
     }
   }
 
   float densityPath = integratedDensityScaleHeights / verticalIntegral;
   float viewOpticalDepth = uReferenceVerticalOpticalDepth * densityPath;
-  float alpha = bodyOccludesShell
-    ? 0.0
-    : clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94);
+
+  // Presentation shaping is derived from the ray's projected distance to the
+  // physical limb, measured in shell widths. It is applied only after the
+  // bounded transport integration so physical scattering/extinction stays
+  // untouched while the finite render shell gets a continuous visual edge.
+  float closestRayDistance = max(dot(uBodyCenter - rayOrigin, rayDirection), 0.0);
+  float impactRadius = length(rayOrigin + rayDirection * closestRayDistance - uBodyCenter);
+  float signedLimbShellWidths = (impactRadius - uBodyRadius) / presentationThickness;
+  float surfaceCompositeBlend = 1.0 - smoothstep(SURFACE_BLEND_INNER, SURFACE_BLEND_OUTER, signedLimbShellWidths);
+  float exteriorShellFraction = max(signedLimbShellWidths, 0.0);
+  float outerFade = 1.0 - smoothstep(OUTER_FADE_START, 1.0, exteriorShellFraction);
+
+  // A body hit only limits the integrated path to the front shell. Its
+  // atmosphere remains visible over the already-rendered opaque surface.
+  float alpha = clamp(1.0 - exp(-viewOpticalDepth), 0.0, 0.94) * outerFade;
+
+  // Tangent paths are physically bright, but multiplying that peak with a
+  // large shell gain creates a narrow wire ring. Compress presentation
+  // amplitude only; the integrated RGB transport remains unchanged.
+  float longPathExcess = max(densityPath - 1.0, 0.0);
+  float tangentCompression = inversesqrt(1.0 + 0.30 * longPathExcess * longPathExcess);
   float limbGain = mix(1.0, LIMB_DISPLAY_GAIN, smoothstep(1.0, 4.0, densityPath));
-  vec3 radiance = integratedScattering * DISPLAY_GAIN * limbGain;
+
+  // Cross-fade disk and shell gains across both sides of the silhouette so
+  // atmosphere grows continuously out of the planet instead of starting as
+  // a separately visible circular outline.
+  float displayGain = mix(DISPLAY_GAIN, SURFACE_DISPLAY_GAIN, surfaceCompositeBlend);
+  vec3 radiance = integratedScattering * displayGain * limbGain * tangentCompression;
   gl_FragColor = vec4(radiance * alpha, alpha);
+#include <tonemapping_fragment>
+#include <colorspace_fragment>
 }`;
 
 export interface SurfaceTextureResource {
@@ -355,8 +425,6 @@ function cameraProjectionMetrics(position: RenderVector3, camera: THREE.Camera, 
   const insideBody = physicalRadiusSceneUnits > 0 && cameraWorldPosition.distanceTo(worldPosition) <= physicalRadiusSceneUnits;
   const distance = cameraWorldPosition.distanceTo(worldPosition);
   const cameraDepth = perspective ? (insideBody ? physicalRadiusSceneUnits : -cameraSpace.z) : 1;
-  // Physical marker sizing remains useful for bodies behind the camera, but
-  // keeps the true view-space depth whenever the body is in front of it.
   const depth = perspective
     ? Math.max(insideBody || cameraDepth <= 0 ? (insideBody ? physicalRadiusSceneUnits : distance) : cameraDepth, Number.EPSILON)
     : 1;
@@ -463,22 +531,66 @@ function createLightUniforms(): Record<string, THREE.IUniform> {
   };
 }
 
+function srgbChannelToLinear(value: number): number {
+  return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+}
+
+function estimateTextureReferenceLuminance(texture: THREE.Texture | undefined): number {
+  if (texture === undefined || typeof document === "undefined") return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+  const image = texture.image as (CanvasImageSource & {
+    readonly width?: number;
+    readonly height?: number;
+    readonly naturalWidth?: number;
+    readonly naturalHeight?: number;
+  }) | undefined;
+  if (image === undefined) return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+  const sourceWidth = image.naturalWidth ?? image.width ?? 0;
+  const sourceHeight = image.naturalHeight ?? image.height ?? 0;
+  if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0) {
+    return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 48;
+    canvas.height = 24;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (context === null) return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let total = 0;
+    let weight = 0;
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      const alpha = (pixels[offset + 3] ?? 255) / 255;
+      if (alpha <= 0.01) continue;
+      const r = srgbChannelToLinear((pixels[offset] ?? 0) / 255);
+      const g = srgbChannelToLinear((pixels[offset + 1] ?? 0) / 255);
+      const b = srgbChannelToLinear((pixels[offset + 2] ?? 0) / 255);
+      total += (r * 0.2126 + g * 0.7152 + b * 0.0722) * alpha;
+      weight += alpha;
+    }
+    if (weight <= Number.EPSILON) return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+    return THREE.MathUtils.clamp(total / weight, 0.03, 0.85);
+  } catch {
+    return DEFAULT_TEXTURE_REFERENCE_LUMINANCE;
+  }
+}
+
 function createSurfaceMaterial(body: CelestialBodyRenderState, texture: SurfaceTextureResource | undefined): THREE.ShaderMaterial {
   const isEmitter = body.appearance?.stellarEmission !== undefined;
   const emission = isEmitter ? blackbodyTemperatureToLinearRgb(body.appearance!.stellarEmission!.effectiveTemperatureKelvin) : { r: 0, g: 0, b: 0 };
   const reflectance = isEmitter
     ? emission
     : deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).linearReflectance;
-  const baseColor = texture === undefined ? reflectance : { r: 1, g: 1, b: 1 };
   const uniforms = createLightUniforms();
   return new THREE.ShaderMaterial({
     uniforms: {
       ...uniforms,
-      uBaseColor: { value: new THREE.Color(baseColor.r, baseColor.g, baseColor.b) },
+      uBaseColor: { value: new THREE.Color(reflectance.r, reflectance.g, reflectance.b) },
       uEmissionColor: { value: new THREE.Color(emission.r, emission.g, emission.b) },
       uEmissionStrength: { value: isEmitter ? 1 : 0 },
       uInspectionFill: { value: 0 },
-      uDisplayExposure: { value: 1 },
+      uSurfaceRadianceDisplayGain: { value: SURFACE_RADIANCE_DISPLAY_GAIN },
+      uTextureReferenceLuminance: { value: estimateTextureReferenceLuminance(texture?.texture) },
       uUseTexture: { value: texture !== undefined },
       uSurfaceMap: { value: texture?.texture ?? null },
     },
@@ -498,17 +610,9 @@ function updateSurfaceMaterialAppearance(material: THREE.ShaderMaterial, body: C
     : deriveSurfaceReflectance(body.appearance, body.accentColor ?? 0x808080).linearReflectance;
   const baseColor = material.uniforms.uBaseColor!.value as THREE.Color;
   const emissionColor = material.uniforms.uEmissionColor!.value as THREE.Color;
-  const textured = material.uniforms.uUseTexture?.value === true;
-  const visibleColor = textured ? { r: 1, g: 1, b: 1 } : reflectance;
-  baseColor.setRGB(emissionGlow ? 0 : visibleColor.r, emissionGlow ? 0 : visibleColor.g, emissionGlow ? 0 : visibleColor.b);
+  baseColor.setRGB(emissionGlow ? 0 : reflectance.r, emissionGlow ? 0 : reflectance.g, emissionGlow ? 0 : reflectance.b);
   emissionColor.setRGB(emission.r, emission.g, emission.b);
   material.uniforms.uEmissionStrength!.value = emissionGlow ? 0.22 : isEmitter ? 1 : 0;
-}
-
-function surfaceDisplayExposure(illumination: StellarIllumination): number {
-  return displayExposureDiagnostics(
-    illumination.contributions.length === 0 ? undefined : illumination.totalIrradianceWattsPerSquareMeter,
-  ).displayExposure;
 }
 
 function atmosphereShellRadius(
@@ -541,6 +645,7 @@ function createAtmosphereMaterial(
   cameraPosition: RenderVector3,
 ): THREE.ShaderMaterial {
   const uniforms = createLightUniforms();
+  const transport = normalizeAtmosphereOpticsForTransport(optics);
   return new THREE.ShaderMaterial({
     uniforms: {
       ...uniforms,
@@ -549,9 +654,9 @@ function createAtmosphereMaterial(
       uBodyRadius: { value: bodyRadiusSceneUnits },
       uShellRadius: { value: shellRadiusSceneUnits },
       uPhysicalExtentScaleHeights: { value: 4 },
-      uRayleighScattering: { value: new THREE.Vector3(optics.rayleighScattering.r, optics.rayleighScattering.g, optics.rayleighScattering.b) },
-      uMieScattering: { value: new THREE.Vector3(optics.mieScattering.r, optics.mieScattering.g, optics.mieScattering.b) },
-      uAbsorption: { value: new THREE.Vector3(optics.absorption.r, optics.absorption.g, optics.absorption.b) },
+      uRayleighScattering: { value: new THREE.Vector3(transport.rayleighScattering.r, transport.rayleighScattering.g, transport.rayleighScattering.b) },
+      uMieScattering: { value: new THREE.Vector3(transport.mieScattering.r, transport.mieScattering.g, transport.mieScattering.b) },
+      uAbsorption: { value: new THREE.Vector3(transport.absorption.r, transport.absorption.g, transport.absorption.b) },
       uReferenceVerticalOpticalDepth: { value: optics.referenceVerticalOpticalDepth },
       uMieAnisotropy: { value: optics.mieAnisotropy },
     },
@@ -560,7 +665,7 @@ function createAtmosphereMaterial(
     transparent: true,
     depthWrite: false,
     side: THREE.FrontSide,
-    blending: THREE.NormalBlending,
+    blending: THREE.AdditiveBlending,
     lights: false,
     toneMapped: true,
     premultipliedAlpha: true,
@@ -932,6 +1037,7 @@ export class CelestialSystemView {
           atmosphere = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), createAtmosphereMaterial(optics, radius, shellRadius, center, camera));
           atmosphere.name = `Atmosphere shell ${body.objectId}`;
           atmosphere.userData.objectId = body.objectId;
+          atmosphere.userData.atmosphereBloomSource = true;
           atmosphere.scale.setScalar(shellRadius);
           atmosphere.renderOrder = 2;
           anchor.add(atmosphere);
@@ -998,7 +1104,6 @@ export class CelestialSystemView {
         updateSurfaceMaterialAppearance(resource.surface.material, body);
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.surface.material, illumination, this.#renderSpace);
-        resource.surface.material.uniforms.uDisplayExposure!.value = surfaceDisplayExposure(illumination);
         resource.surface.material.uniforms.uInspectionFill!.value = context.lightingMode === undefined
           ? 0
           : inspectionFillContribution(context.lightingMode) * (
@@ -1013,6 +1118,7 @@ export class CelestialSystemView {
       if (resource.atmosphere !== undefined) {
         const optics = resolveAtmosphereOptics(body.appearance);
         if (optics === undefined) throw new Error(`atmosphere resource for ${body.objectId} has no resolved optics`);
+        const transport = normalizeAtmosphereOpticsForTransport(optics);
         const illumination = prepared.illuminations.get(body.objectId) ?? resolveStellarIllumination(body.positionRelativeToOriginMeters, [], { maxStellarContributors: this.#maxStellarContributors });
         setLightUniforms(resource.atmosphere.material, illumination, this.#renderSpace);
         const presentedRadius = decision.sizing.presentedRadiusSceneUnits || sceneRadius(body, this.#renderSpace);
@@ -1029,9 +1135,9 @@ export class CelestialSystemView {
         const absorption = resource.atmosphere.material.uniforms.uAbsorption!.value as THREE.Vector3;
         resource.atmosphere.material.uniforms.uBodyRadius!.value = presentedRadius;
         resource.atmosphere.material.uniforms.uShellRadius!.value = shellRadius;
-        rayleigh.set(optics.rayleighScattering.r, optics.rayleighScattering.g, optics.rayleighScattering.b);
-        mie.set(optics.mieScattering.r, optics.mieScattering.g, optics.mieScattering.b);
-        absorption.set(optics.absorption.r, optics.absorption.g, optics.absorption.b);
+        rayleigh.set(transport.rayleighScattering.r, transport.rayleighScattering.g, transport.rayleighScattering.b);
+        mie.set(transport.mieScattering.r, transport.mieScattering.g, transport.mieScattering.b);
+        absorption.set(transport.absorption.r, transport.absorption.g, transport.absorption.b);
         resource.atmosphere.material.uniforms.uReferenceVerticalOpticalDepth!.value = optics.referenceVerticalOpticalDepth;
         resource.atmosphere.material.uniforms.uMieAnisotropy!.value = optics.mieAnisotropy;
       }

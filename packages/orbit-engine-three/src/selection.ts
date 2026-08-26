@@ -3,7 +3,9 @@ import type { ObjectId } from "orbit-engine";
 import { projectedPixelsToSceneRadius } from "./sizing.js";
 import type { RenderVector3 } from "./render-space.js";
 
-export const DEFAULT_SELECTION_GAP_PIXELS = 2;
+// Keep the selection affordance clearly outside the body/atmosphere edge so
+// it never reads as part of a planet's limb, atmosphere, or bloom.
+export const DEFAULT_SELECTION_GAP_PIXELS = 14;
 export const DEFAULT_SELECTION_THICKNESS_PIXELS = 1.25;
 export const DEFAULT_SELECTION_COLOR = 0xbfe8ff;
 
@@ -84,10 +86,19 @@ varying vec2 vUv;
 void main() {
   vec2 centered = vUv * 2.0 - vec2(1.0);
   float radius = length(centered);
-  float feather = max(fwidth(radius), 0.002);
-  float outerMask = 1.0 - smoothstep(1.0 - feather, 1.0 + feather, radius);
-  float innerMask = smoothstep(uInnerRadius - feather, uInnerRadius + feather, radius);
-  float alpha = outerMask * innerMask * uOpacity;
+  float radialFeather = max(fwidth(radius), 0.002);
+  float outerMask = 1.0 - smoothstep(1.0 - radialFeather, 1.0 + radialFeather, radius);
+  float innerMask = smoothstep(uInnerRadius - radialFeather, uInnerRadius + radialFeather, radius);
+
+  // Four short tangential arcs at the cardinal directions replace the old
+  // continuous selection ring. This preserves the circular/orbital visual
+  // language without covering the planet or being mistaken for atmosphere.
+  float angle = atan(centered.y, centered.x);
+  float cardinalDistance = abs(sin(2.0 * angle));
+  float angularFeather = max(fwidth(cardinalDistance), 0.01);
+  float arcMask = 1.0 - smoothstep(0.34, 0.34 + angularFeather * 1.5, cardinalDistance);
+
+  float alpha = outerMask * innerMask * arcMask * uOpacity;
   if (alpha <= 0.001) discard;
   gl_FragColor = vec4(uColor, alpha);
 }`;
@@ -126,7 +137,7 @@ export class SelectionIndicator {
     });
     this.#mesh = new THREE.Mesh(geometry, material);
     this.#mesh.name = "orbit-engine-three selection indicator";
-    this.#mesh.userData.representation = "selection-indicator";
+    this.#mesh.userData.representation = "selection-indicator-segments";
     this.#mesh.renderOrder = 20;
     this.#mesh.frustumCulled = false;
     this.#mesh.visible = false;
@@ -204,5 +215,5 @@ export class SelectionIndicator {
   }
 }
 
-/** Backwards-compatible descriptive alias for consumers that call it a halo. */
+/** Backwards-compatible descriptive alias retained for consumers. */
 export const SelectionHalo = SelectionIndicator;
